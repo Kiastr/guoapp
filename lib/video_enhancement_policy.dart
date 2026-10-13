@@ -54,6 +54,26 @@ const int kThermalStatusLimit = 3;
 /// ⚠️ 改回 0.85 可恢复上游保守行为。
 const double kThermalHeadroomLimit = 0.95;
 
+/// [移植改造] 神经超分（Anime4K / FSRCNNX）允许的最高播放倍速，含边界值。
+///
+/// 原始值为 `rate < 1.5`，即 ≥1.5x 就失去神经超分资格；由于该函数位于 anime 分支之前，
+/// 实际效果是「1.5x 及以上永远拿不到 Anime4K」，且界面不会给出任何提示。
+/// 放宽到 2.0 后，常用倍速（1.5x / 1.75x / 2x）仍可使用 Anime4K。
+///
+/// ⚠️ 高倍速意味着单位时间需处理的帧数成倍增加，叠加超分会显著提高 GPU 负载。
+///    若出现掉帧或发热，调低本值；设为 0 即完全禁用倍速下的神经超分。
+const double kNeuralMaxRate = 2.0;
+
+/// [移植改造] 完全保留画质增强允许的最高播放倍速，超过才开始降级。
+///
+/// 原始值为 `rate >= 1.75`，即 ≥1.75x 直接回落到高质量缩放（对应提示「倍速播放，已降低增强」）。
+/// 放宽到 2.5 后，≤2.5x 都不会因倍速降级。
+///
+/// ⚠️ 超过本值后画面并非立刻回到原画，而是交由 ravu / scaling 承担，
+///    加之 video_enhancement.dart 的 _monitor() 掉帧熔断，形成多级兜底。
+///    设为 double.infinity 可彻底取消倍速限制（不推荐）。
+const double kEnhancedMaxRate = 2.5;
+
 class VideoEnhancementPower {
   const VideoEnhancementPower({
     this.batterySaver = false,
@@ -253,15 +273,19 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // Anime4K 刚启用就被降级。现改为具名常量 kThermalStatusLimit / kThermalHeadroomLimit，
   // 详见其定义处的等级说明与回退方式。
   //
-  // 保留：batterySaver（用户手动开了省电就该降级）与 rate >= 1.75（倍速时超分无意义）。
+  // 保留的上游保护：batterySaver（用户手动开了省电就该降级）。
+  // 放宽项：原 `rate >= 1.75` 改为 `rate > kEnhancedMaxRate`（默认 2.5），
+  // 使常用倍速不再被直接降级，详见常量定义处说明。
   if (power.batterySaver ||
-      rate >= 1.75 ||
+      rate > kEnhancedMaxRate ||
       power.thermalStatus >= kThermalStatusLimit ||
       (power.headroom ?? 0) >= kThermalHeadroomLimit) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
       output,
-      rate >= 1.75 ? '倍速播放，已降低增强' : '省电或温控限制，已降低增强',
+      rate > kEnhancedMaxRate
+          ? '倍速播放，已降低增强'
+          : '省电或温控限制，已降低增强',
     );
   }
   final squarePixels =
@@ -305,7 +329,10 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // 仍受显存预算 memory（安卓 128MB / 低内存机 64MB，桌面 512MB）与
   // GLES >= 3.0（`android && power.gles < 0x30000` 分支）的双重限制，
   // 内存不够或 GLES 版本不足时由这些条件自然回退，而不是在此处一刀切禁用。
-  final neural = neuralMemory <= memory && rate < 1.5;
+  // [移植改造] 末端的 `rate < 1.5` 改为 `rate <= kNeuralMaxRate`（默认 2.0）：
+  // 该条件直接决定能否进入下方 `animation && neural && allowed(anime)` 分支，
+  // 原值会让 1.5x 及以上的播放**静默失去** Anime4K（界面无任何提示）。
+  final neural = neuralMemory <= memory && rate <= kNeuralMaxRate;
   if (preferences.mode == VideoEnhancementMode.quality &&
       !animation &&
       hardware &&
