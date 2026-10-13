@@ -28,6 +28,32 @@ enum VideoEnhancementBackend {
 /// 调整此处即为安卓端画质/性能的全局开关：调到 2 可退回"仅 ravu 轻量增强"的保守行为。
 const int kAndroidBackendCostLimit = 3;
 
+/// [移植改造] 温控降级门槛：`PowerManager.currentThermalStatus` 达到该等级才降级。
+///
+/// 等级对照：NONE(0) / LIGHT(1) / MODERATE(2) / SEVERE(3) / CRITICAL(4) / EMERGENCY(5) / SHUTDOWN(6)
+/// 原始值为 2，即 MODERATE 就降级。
+///
+/// 实测问题：真机（Android 12+）在未开省电模式、未明显发热的情况下仍稳定触发降级，
+/// Anime4K 几乎无法持续运行。常见原因是厂商 ROM 对 currentThermalStatus 上报偏保守。
+///
+/// 放宽到 3（SEVERE）后，仍有 CRITICAL / EMERGENCY / SHUTDOWN 三级余量，
+/// 且还有独立防线兜底：video_enhancement.dart 的 _monitor() 会按实际掉帧采样
+/// 动态收敛 _costLimit 并熔断后端（performance 层保护，不依赖温控上报）。
+///
+/// ⚠️ 若出现机身明显发烫、掉帧加剧或耗电异常，改回 2 即可恢复上游保守行为。
+const int kThermalStatusLimit = 3;
+
+/// [移植改造] 热余量降级门槛：`PowerManager.getThermalHeadroom(0)` 阈值。
+///
+/// 取值语义：0.0 = 无性能限制，1.0 = 已限制到最低频率。
+/// 原始值为 0.85。
+///
+/// 同理放宽：部分中高端机该预测值常态偏高，0.85 过于敏感。
+/// 注意该值在 MainActivity.kt 中每 10 秒才刷新一次，存在滞后性。
+///
+/// ⚠️ 改回 0.85 可恢复上游保守行为。
+const double kThermalHeadroomLimit = 0.95;
+
 class VideoEnhancementPower {
   const VideoEnhancementPower({
     this.batterySaver = false,
@@ -220,10 +246,18 @@ VideoEnhancementDecision chooseVideoEnhancement({
       '手机自动档优先流畅；需要 Anime4K 请手动切换到「清晰优先」',
     );
   }
+  // [移植改造] 原始实现为：
+  //     power.thermalStatus >= 2
+  //     (power.headroom ?? 0) >= .85
+  // 这两个硬编码阈值在真机（Android 12+、省电模式已关闭）上过于敏感，导致
+  // Anime4K 刚启用就被降级。现改为具名常量 kThermalStatusLimit / kThermalHeadroomLimit，
+  // 详见其定义处的等级说明与回退方式。
+  //
+  // 保留：batterySaver（用户手动开了省电就该降级）与 rate >= 1.75（倍速时超分无意义）。
   if (power.batterySaver ||
       rate >= 1.75 ||
-      power.thermalStatus >= 2 ||
-      (power.headroom ?? 0) >= .85) {
+      power.thermalStatus >= kThermalStatusLimit ||
+      (power.headroom ?? 0) >= kThermalHeadroomLimit) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
       output,
