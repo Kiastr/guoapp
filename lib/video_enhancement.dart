@@ -24,7 +24,22 @@ class VideoEnhancementController extends ChangeNotifier {
   }) : _preferences = preferences,
        _animationHint = videoHasAnimationTags(category, tags) {
     final native = player.platform;
-    supported = video != null && native is NativePlayer && Platform.isWindows;
+    // [移植改造] 原始实现为：
+    //     supported = video != null && native is NativePlayer && Platform.isWindows;
+    // 即画质增强（含 Anime4K）仅对 Windows 放行。
+    //
+    // Android 自 PR#2（Android 播放回归 media_kit/libmpv）起已满足条件：
+    //   1. player_screen.dart 移除了 `Platform.isAndroid ? LunaExoPlayer() : Player(...)` 分支，
+    //      全平台统一使用 media_kit 的 Player，因此 native 在 Android 上同样是 NativePlayer（libmpv）；
+    //   2. `_video = widget.videoBuilder == null ? VideoController(...) : null`，
+    //      去掉了 `&& !Platform.isAndroid`，Android 也会创建 VideoController，
+    //      画面走 `Video(controller: _video!)`，进入 mpv 自己的 GL 渲染管线，
+    //      `glsl-shaders` 注入点随之成立。
+    //
+    // 因此这里去掉 Platform.isWindows 限制。风险控制不在此处做，而是交给
+    // video_enhancement_policy.dart 的分层降级：GLES >= 3.0 探测、输入分辨率上限、
+    // 倍率封顶、显存预算、温控/省电/倍速自动回落，任一不满足都会自动回退到原画或高质量缩放。
+    supported = video != null && native is NativePlayer;
     if (!supported) {
       _status = '当前平台暂不支持画质增强';
       return;

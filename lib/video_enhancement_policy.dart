@@ -19,6 +19,15 @@ enum VideoEnhancementBackend {
   final String label;
 }
 
+/// [移植改造] 安卓端允许使用的最大增强成本档位。
+///
+/// 取值说明：3 恰好等于 `anime`（Anime4K 动漫神经超分）与 `fsrcnnx`（通用神经超分）的成本；
+/// 桌面端为 4（额外允许 `hardware` 硬件增强）。之所以不直接给安卓 4，是因为
+/// `hardware` 分支依赖 d3d11va 等 Windows 专有通路径，安卓不适用。
+///
+/// 调整此处即为安卓端画质/性能的全局开关：调到 2 可退回"仅 ravu 轻量增强"的保守行为。
+const int kAndroidBackendCostLimit = 3;
+
 class VideoEnhancementPower {
   const VideoEnhancementPower({
     this.batterySaver = false,
@@ -200,11 +209,15 @@ VideoEnhancementDecision chooseVideoEnhancement({
   if (ratio <= 1.2 || preferences.mode == VideoEnhancementMode.economy) {
     return scaling;
   }
+  // [移植改造] 原始原因文案为：'手机自动档优先流畅，使用高质量缩放'。
+  // 此处**保留**自动档在安卓上不启用神经超分的保守行为（避免普通用户被后台自动触发
+  // 发热与耗电），但把原因文案写清楚：想用 Anime4K 必须手动切到「清晰优先」，
+  // 否则用户会以为功能没移植成功。
   if (android && preferences.mode == VideoEnhancementMode.automatic) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
       output,
-      '手机自动档优先流畅，使用高质量缩放',
+      '手机自动档优先流畅；需要 Anime4K 请手动切换到「清晰优先」',
     );
   }
   if (power.batterySaver ||
@@ -226,17 +239,39 @@ VideoEnhancementDecision chooseVideoEnhancement({
   }
   final pixels = (parameters.w ?? 0) * (parameters.h ?? 0);
   if (pixels <= 0) return scaling;
+  // [移植改造] 原始实现为：
+  //     final limit = math.min(costLimit, television || power.lowMemory || android ? 2 : 4);
+  // gles 之外最隐蔽的一道门槛在这里：VideoEnhancementBackend 的成本分级为
+  //   original(0) / scaling(1) / ravu(2) / fsrcnnx(3) / anime(3) / hardware(4)
+  // 安卓被封顶到 cost <= 2，而 Anime4K（anime）与通用神经超分（fsrcnnx）成本都是 3，
+  // 于是 `allowed(VideoEnhancementBackend.anime)` 在安卓上恒为 false，Anime4K 永远选不中。
+  //
+  // 现在把安卓放宽到 cost <= kAndroidBackendCostLimit(3)，使其能够命中 anime；
+  // 电视端（需走原生硬件直通）与低内存机仍严格保持 2，避免内存与发热失控。
   final limit = math.min(
     costLimit,
-    television || power.lowMemory || android ? 2 : 4,
+    television || power.lowMemory
+        ? 2
+        : android
+        ? kAndroidBackendCostLimit
+        : 4,
   );
   bool allowed(VideoEnhancementBackend backend) =>
       backend.cost <= limit && !rejected.contains(backend);
   final memory = android ? (power.lowMemory ? 64 : 128) : 512;
   final neuralMemory =
       (pixels * 8 * 18 + output.width * output.height * 8 * 3) / (1024 * 1024);
-  final neuralSize = !android;
-  final neural = neuralSize && neuralMemory <= memory && rate < 1.5;
+  // [移植改造] 原始实现为：
+  //     final neuralSize = !android;
+  //     final neural = neuralSize && neuralMemory <= memory && rate < 1.5;
+  // 安卓被硬性排除在"神经超分"之外，导致下一句 `animation && neural && allowed(anime)`
+  // 恒为 false，Anime4K 即使在 resources 与 costLimit 都放行的情况下也永远选不中。
+  //
+  // 放开方式：安卓同样参与神经超分候选，但**不绕过任何资源约束**——
+  // 仍受显存预算 memory（安卓 128MB / 低内存机 64MB，桌面 512MB）与
+  // GLES >= 3.0（`android && power.gles < 0x30000` 分支）的双重限制，
+  // 内存不够或 GLES 版本不足时由这些条件自然回退，而不是在此处一刀切禁用。
+  final neural = neuralMemory <= memory && rate < 1.5;
   if (preferences.mode == VideoEnhancementMode.quality &&
       !animation &&
       hardware &&
