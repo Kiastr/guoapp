@@ -31,6 +31,9 @@ func mediaRequestHeaders(request *http.Request, referer string) {
 	if origin, err := url.Parse(referer); err == nil && origin.Host != "" {
 		request.Header.Set("Origin", origin.Scheme+"://"+origin.Host)
 	}
+	if strings.HasPrefix(strings.ToLower(request.Header.Get("Range")), "bytes=") {
+		request.Header.Set("Accept-Encoding", "identity")
+	}
 }
 
 func (d *Downloader) isHuangguoVideoURL(address *url.URL) bool {
