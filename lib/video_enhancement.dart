@@ -115,6 +115,14 @@ class VideoEnhancementController extends ChangeNotifier {
   String _status = '画质增强已关闭';
   String _downgradeReason = '';
   String _lastFailure = '';
+  // [诊断·2026-10] 最近一次增强失败的细节，经 detail 展示到设置面板。
+  // 安卓端真机实测 anime 应用后确认失败（「增强不可用，已自动回退」），
+  // 但失败可能来自三个不同环节（mpv 报错 / 渲染链未带上了 shader /
+  // 表面尺寸不匹配），修法完全不同，故先采集再修：
+  //   - _lastFailureDetail：阶段 + 尺寸比对 + 渲染链 pass 描述 + 最近 mpv 日志
+  //   - _monitorSnapshot：最近一次确认未通过时的 _monitor 现场快照
+  String _lastFailureDetail = '';
+  String _monitorSnapshot = '';
   Size _viewport = Size.zero;
 
   VideoEnhancementPreferences get preferences => _preferences;
@@ -149,6 +157,9 @@ class VideoEnhancementController extends ChangeNotifier {
           (_applied?.backend.cost ?? 0) >= 3)
         '安卓端按源尺寸呈现，超分在渲染链内部完成',
       if (_downgradeReason.isNotEmpty) _downgradeReason,
+      // [诊断·2026-10] 最近一次增强失败的技术细节（阶段/尺寸比对/渲染链
+      // pass 描述/mpv 日志）。空串时自动过滤，不影响正常态排版。
+      if (_lastFailureDetail.isNotEmpty) _lastFailureDetail,
     ].where((item) => item.isNotEmpty).join(' · ');
   }
 
@@ -175,6 +186,9 @@ class VideoEnhancementController extends ChangeNotifier {
     _rejected.clear();
     _downgradeReason = '';
     _lastFailure = '';
+    // [诊断·2026-10] 用户主动改设置 = 新的一次尝试，旧失败现场全部作废。
+    _lastFailureDetail = '';
+    _monitorSnapshot = '';
     _failureCount = 0;
     _circuitOpen = false;
     _schedule(immediate: true);
@@ -214,6 +228,9 @@ class VideoEnhancementController extends ChangeNotifier {
     _costLimit = 4;
     _downgradeReason = '';
     _lastFailure = '';
+    // [诊断·2026-10] 换集 = 全新播放会话，上一集的失败现场不带过来。
+    _lastFailureDetail = '';
+    _monitorSnapshot = '';
     _previousDrops = null;
     _previousSample = null;
     _renderSamples.clear();
@@ -564,6 +581,22 @@ class VideoEnhancementController extends ChangeNotifier {
     }
     _lastFailure = error is VideoEnhancementFailure ? error.stage : 'resource';
     _downgradeReason = '增强不可用，已自动回退';
+    // [诊断·2026-10] 汇总「阶段 + 确认现场 + 最近渲染日志」三段，经 detail
+    // 展示到设置面板。阶段告诉你从哪条路径失败的；现场快照区分尺寸/渲染链
+    // 两种根因；日志兜住 shader 编译失败等 render 路径（mpv 的报错只在
+    // _onLog 里闪现，不落盘，必须在此刻抓取）。
+    final logs = _recentEnhancementErrors
+        .take(2)
+        .map((item) => item.length <= 80 ? item : '${item.substring(0, 80)}…')
+        .join(' | ');
+    final assembled = <String>[
+      '阶段:$_lastFailure',
+      if (_monitorSnapshot.isNotEmpty) _monitorSnapshot,
+      if (logs.isNotEmpty) '日志:$logs',
+    ].join(' ');
+    _lastFailureDetail = assembled.length <= 360
+        ? assembled
+        : '${assembled.substring(0, 360)}…';
     _applied = null;
     _confirmed = false;
     _setStatus('正在恢复原画播放');
@@ -592,6 +625,49 @@ class VideoEnhancementController extends ChangeNotifier {
       return;
     }
     _schedule(immediate: true);
+  }
+
+  // [诊断·2026-10] 把一次「确认未通过」的现场整理成可读文本，供 detail 展示。
+  //
+  // 安卓端真机实测：高级档 anime 应用后走到「正在确认」却始终不 confirmed，
+  // 连续 5 次 miss 后回退。失败只可能来自三个环节，修法完全不同：
+  //   1. 尺寸不匹配：rect / osd-dimensions 与 decision.output 对不上
+  //      （安卓 surfaceOutput=源尺寸，rect 由 media_kit 维护，理论上应一致，
+  //      若不一致说明 media_kit 的表面同步链有意外行为）；
+  //   2. 渲染链未带 shader：vo-passes 的 fresh 描述里找不到 Anime4K /
+  //      Depth-to-Space（libmpv VO 下 vo-passes 的报告口径可能与桌面端
+  //      gpu VO 不同，或 shader 实际没进渲染链）；
+  //   3. 两者都过但仍失败（理论不存在，会归到 render-pass）。
+  // 不分辨根因就动手修，大概率修错方向，故先采集。
+  String _describeConfirmation({
+    required Size? actual,
+    required Object? surfaceWidth,
+    required Object? surfaceHeight,
+    required Size? expected,
+    required bool sizeMatches,
+    required bool effectFound,
+    required String descriptions,
+  }) {
+    String formatNum(Object? value) => value is num ? '${value.round()}' : '无';
+    String formatBox(Size? size) =>
+        size == null ? '无' : '${size.width.round()}×${size.height.round()}';
+    final buffer = StringBuffer(
+      '尺寸${sizeMatches ? '匹配' : '不匹配'}'
+      '/渲染链${effectFound ? '已带shader' : '未带shader'}',
+    );
+    buffer.write(' 期望${formatBox(expected)}');
+    buffer.write(' 表面${formatBox(actual)}');
+    buffer.write(' osd${formatNum(surfaceWidth)}×${formatNum(surfaceHeight)}');
+    final lines = descriptions
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .take(8)
+        .map((line) => line.length <= 60 ? line : '${line.substring(0, 60)}…')
+        .toList();
+    buffer.write(' passes:${lines.isEmpty ? '空' : lines.join(' | ')}');
+    final text = buffer.toString();
+    return text.length <= 360 ? text : '${text.substring(0, 360)}…';
   }
 
   void _startMonitor() {
@@ -708,10 +784,26 @@ class VideoEnhancementController extends ChangeNotifier {
       if (sizeMatches && effectFound) {
         _confirmed = true;
         _confirmationMisses = 0;
+        // [诊断·2026-10] 确认通过即恢复，此前积压的失败现场作废，
+        // 避免把已解决的后端失败细节继续挂在详情里误导排查。
+        _monitorSnapshot = '';
+        _lastFailureDetail = '';
       } else if (player.state.playing && !player.state.buffering) {
         _confirmed = false;
         _confirmationMisses++;
         if (_confirmationMisses >= 5) {
+          // [诊断·2026-10] 确认失败先留现场再回退：尺寸比对与渲染链
+          // pass 描述是区分 render-pass / output-size 两种根因的唯一依据，
+          // 修法完全不同（前者改 vo-passes 检测，后者查表面尺寸链路）。
+          _monitorSnapshot = _describeConfirmation(
+            actual: actual,
+            surfaceWidth: surfaceWidth,
+            surfaceHeight: surfaceHeight,
+            expected: selected.output,
+            sizeMatches: sizeMatches,
+            effectFound: effectFound,
+            descriptions: descriptions,
+          );
           _failBackend(
             VideoEnhancementFailure(
               sizeMatches ? 'render-pass' : 'output-size',
