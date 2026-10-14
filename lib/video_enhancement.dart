@@ -141,6 +141,13 @@ class VideoEnhancementController extends ChangeNotifier {
         : '';
     return [
       dimensions,
+      // [移植改造·安卓专用] 安卓端表面恒为源尺寸（Anime4K 内部按 2× 源重建后
+      // 适配表面，见 video_output_size.dart 类注释），仅看 dimensions 的
+      // "同 → 同" 容易被误认为没生效，补一句说明。
+      if (Platform.isAndroid &&
+          dimensions.isNotEmpty &&
+          (_applied?.backend.cost ?? 0) >= 3)
+        '安卓端按源尺寸呈现，超分在渲染链内部完成',
       if (_downgradeReason.isNotEmpty) _downgradeReason,
     ].where((item) => item.isNotEmpty).join(' · ');
   }
@@ -647,8 +654,15 @@ class VideoEnhancementController extends ChangeNotifier {
         opaque8Bit: _opaque8Bit,
       );
       if (!_comparing && reassessed != selected) {
+        // [移植改造] 此处原先硬编码 `thermalStatus >= 2 || headroom >= .85`，
+        // 与 video_enhancement_policy.dart 放宽后的具名常量不一致：真机上
+        // thermalStatus=2 很常见（正是当初放宽策略层阈值的原因），导致任何
+        // 一次决策变化都会把 _costLimit 永久压低（_costLimit 只在新设置/
+        // 下一集/熔断时重置），表现为"进全屏后再也不超分"。
+        // 现与策略层共用 kThermalStatusLimit / kThermalHeadroomLimit。
         if (reassessed.backend.cost < selected.backend.cost &&
-            (_power.thermalStatus >= 2 || (_power.headroom ?? 0) >= .85)) {
+            (_power.thermalStatus >= kThermalStatusLimit ||
+                (_power.headroom ?? 0) >= kThermalHeadroomLimit)) {
           _costLimit = math.min(_costLimit, reassessed.backend.cost);
           _downgradeReason = '本集已因温控降低增强';
         }

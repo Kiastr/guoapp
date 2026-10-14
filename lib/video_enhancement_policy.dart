@@ -243,16 +243,28 @@ VideoEnhancementDecision chooseVideoEnhancement({
     math.max(2, (source.width * scale).round() ~/ 2 * 2).toDouble(),
     math.max(2, (source.height * scale).round() ~/ 2 * 2).toDouble(),
   );
+  // [移植改造·安卓专用] 安卓端不放大渲染表面（原因详见 video_output_size.dart
+  /// 类注释：放大表面会引发 media_kit 的 VO 重建 + seek 转圈、与 media_kit 自身
+  /// videoParams 监听乒乓、并误触增强自愈把后端拉黑）。因此返回给调用方的
+  /// output 必须是"实际表面尺寸"——安卓上即视频显示尺寸，桌面端仍为放大尺寸。
+  /// video_enhancement.dart 的 _monitor 用 output 与实际表面
+  /// （rect / osd-dimensions）比对来确认增强生效；安卓若返回放大尺寸，
+  /// sizeMatches 永远不成立，连续 5 次即 _failBackend 拉黑后端。
+  final surfaceOutput = android ? source : output;
   final scaling = VideoEnhancementDecision(
     VideoEnhancementBackend.scaling,
-    output,
+    surfaceOutput,
     targetScale <= 1 ? '当前尺寸无需超分，使用高质量缩放' : '',
   );
   final ratio = math.min(
     output.width / source.width,
     output.height / source.height,
   );
-  if (ratio <= 1.2 || preferences.mode == VideoEnhancementMode.economy) {
+  // [移植改造·安卓专用] ratio 是"表面放大倍率"；安卓表面恒为源尺寸时比值恒为 1，
+  /// 是否值得上神经超分改看"显示端需要的放大倍率" targetScale（视口/源）。
+  /// 桌面端语义不变（仍看 ratio）。
+  final upscale = android ? targetScale : ratio;
+  if (upscale <= 1.2 || preferences.mode == VideoEnhancementMode.economy) {
     return scaling;
   }
   // [移植改造] 原始原因文案为：'手机自动档优先流畅，使用高质量缩放'。
@@ -262,7 +274,7 @@ VideoEnhancementDecision chooseVideoEnhancement({
   if (android && preferences.mode == VideoEnhancementMode.automatic) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
-      output,
+      surfaceOutput,
       '手机自动档优先流畅；需要 Anime4K 请手动切换到「清晰优先」',
     );
   }
@@ -282,7 +294,7 @@ VideoEnhancementDecision chooseVideoEnhancement({
       (power.headroom ?? 0) >= kThermalHeadroomLimit) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
-      output,
+      surfaceOutput,
       rate > kEnhancedMaxRate
           ? '倍速播放，已降低增强'
           : '省电或温控限制，已降低增强',
@@ -317,8 +329,14 @@ VideoEnhancementDecision chooseVideoEnhancement({
   bool allowed(VideoEnhancementBackend backend) =>
       backend.cost <= limit && !rejected.contains(backend);
   final memory = android ? (power.lowMemory ? 64 : 128) : 512;
+  // [移植改造·安卓专用] 显存预算第二项（输出 FBO）按 surfaceOutput 计算：
+  // 安卓端表面恒为源尺寸，而 Anime4K 链内部按 2× 源渲染，成本只与源分辨率
+  // 相关、与视口无关。若沿用视口放大后的 output，全屏时预算会无谓爆掉，
+  // 表现为"半屏能超分、全屏只剩高质量缩放"。桌面端 surfaceOutput == output，
+  // 行为与上游一致。
   final neuralMemory =
-      (pixels * 8 * 18 + output.width * output.height * 8 * 3) / (1024 * 1024);
+      (pixels * 8 * 18 + surfaceOutput.width * surfaceOutput.height * 8 * 3) /
+      (1024 * 1024);
   // [移植改造] 原始实现为：
   //     final neuralSize = !android;
   //     final neural = neuralSize && neuralMemory <= memory && rate < 1.5;
@@ -340,12 +358,16 @@ VideoEnhancementDecision chooseVideoEnhancement({
       allowed(VideoEnhancementBackend.hardware)) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.hardware,
-      output,
+      surfaceOutput,
       '驱动增强效果以原画对比为准',
     );
   }
   if (animation && neural && allowed(VideoEnhancementBackend.anime)) {
-    return VideoEnhancementDecision(VideoEnhancementBackend.anime, output, '');
+    return VideoEnhancementDecision(
+      VideoEnhancementBackend.anime,
+      surfaceOutput,
+      '',
+    );
   }
   if (preferences.mode == VideoEnhancementMode.quality &&
       !animation &&
@@ -356,16 +378,21 @@ VideoEnhancementDecision chooseVideoEnhancement({
       allowed(VideoEnhancementBackend.fsrcnnx)) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.fsrcnnx,
-      output,
+      surfaceOutput,
       '',
     );
   }
   final ravuMemory =
-      (pixels * 8 * 10 + output.width * output.height * 8 * 3) / (1024 * 1024);
-  if (ratio > 1.42 &&
+      (pixels * 8 * 10 + surfaceOutput.width * surfaceOutput.height * 8 * 3) /
+      (1024 * 1024);
+  if (upscale > 1.42 &&
       ravuMemory <= memory &&
       allowed(VideoEnhancementBackend.ravu)) {
-    return VideoEnhancementDecision(VideoEnhancementBackend.ravu, output, '');
+    return VideoEnhancementDecision(
+      VideoEnhancementBackend.ravu,
+      surfaceOutput,
+      '',
+    );
   }
   return scaling;
 }
