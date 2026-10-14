@@ -107,6 +107,32 @@ class VideoEnhancementSettings extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(_modeHelper(mode), style: helperStyle),
+          if (mode == VideoEnhancementMode.advanced) ...[
+            const SizedBox(height: 16),
+            const Text('增强档位'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final tier in VideoEnhancementTier.values)
+                  _choice(
+                    id: 'enhancement-tier-${tier.name}',
+                    label: tier.label,
+                    selected: preferences.tier == tier,
+                    enabled: supported,
+                    action: () => onChanged(preferences.copyWith(tier: tier)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              preferences.tier == VideoEnhancementTier.quality
+                  ? '质量档：Kazumi 质量平权（VL 重建 + VL 超分），效果最好，但负载显著更高；低端设备可能自动降级，卡顿时请回轻量档。'
+                  : '轻量档：Kazumi 轻量平权（M+S 重建），流畅优先；安卓端为同分辨率重建/降噪，桌面端含 2× 超分。',
+              style: helperStyle,
+            ),
+          ],
           if (autoFamily) ...[
             const SizedBox(height: 16),
             const Text('画质增强模式'),
@@ -192,6 +218,6 @@ class VideoEnhancementSettings extends StatelessWidget {
     VideoEnhancementMode.economy || VideoEnhancementMode.quality =>
       '实验性：自动按画面和设备选择增强，命中与效果可能变化；省电使用轻量缩放，清晰优先允许更高负载。追求稳定效果请用高级档。建议先选择源站高清画质。',
     VideoEnhancementMode.advanced =>
-      '高级模式直接强制 Anime4K 神经增强链（Kazumi 同款：安卓端为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。',
+      '高级模式直接强制 Anime4K 神经增强链（Kazumi 同款：安卓端为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选轻量/质量档位。',
   };
 }

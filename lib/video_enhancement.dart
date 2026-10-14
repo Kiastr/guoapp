@@ -96,6 +96,11 @@ class VideoEnhancementController extends ChangeNotifier {
   DateTime _ignorePerformanceUntil = DateTime.fromMillisecondsSinceEpoch(0);
   VideoEnhancementPower _power = const VideoEnhancementPower();
   VideoEnhancementDecision? _applied;
+  /// [_appliedTier·2026-10] _applied 生效时所用的 Anime4K 档位。
+  /// decision 不含 tier（档位只换链、不换后端/尺寸），播放中切档位时
+  /// `selected == _applied` 仍成立，需靠本字段识别「同后端不同链」
+  /// 从而触发重注；非 anime 后端无所谓档位。
+  VideoEnhancementTier _appliedTier = VideoEnhancementTier.lite;
   VideoEnhancementBackend? _applyingBackend;
   bool _ready = false;
   bool _initialized = false;
@@ -331,7 +336,11 @@ class VideoEnhancementController extends ChangeNotifier {
             '原画对比中',
           )
         : decision;
-    if (selected == _applied) {
+    // [档位·2026-10] anime 后端播放中切 tier 时 decision 不变但链不同，
+    // 必须重注；其他后端切 tier 无意义，保持提前返回避免无谓重注入。
+    final tierMatters = selected.backend == VideoEnhancementBackend.anime;
+    if (selected == _applied &&
+        (!tierMatters || _appliedTier == _preferences.tier)) {
       _publishStatus();
       return;
     }
@@ -346,7 +355,13 @@ class VideoEnhancementController extends ChangeNotifier {
         VideoEnhancementBackend.fsrcnnx => <String>[
           VideoEnhancementAssets.fsrcnnx,
         ],
-        VideoEnhancementBackend.anime => VideoEnhancementAssets.animeChain,
+        // [档位·2026-10] 高级档按 tier 选链：质量档=VL 平权（Kazumi
+        // mpvAnime4KShaders），轻量档=M/S 平权（+87 默认，Kazumi
+        // mpvAnime4KShadersLite）。两链 WHEN 均保留，平台筛选由 mpv 完成。
+        VideoEnhancementBackend.anime =>
+          _preferences.tier == VideoEnhancementTier.quality
+              ? VideoEnhancementAssets.animeChainQuality
+              : VideoEnhancementAssets.animeChainLite,
         _ => null,
       };
       final shaderPaths = shaders == null
@@ -383,6 +398,7 @@ class VideoEnhancementController extends ChangeNotifier {
         }
       }
       _applied = selected;
+      _appliedTier = _preferences.tier;
       _confirmationMisses = 0;
       _confirmed = selected.backend == VideoEnhancementBackend.original;
       ignorePerformance();

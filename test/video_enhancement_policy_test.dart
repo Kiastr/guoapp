@@ -304,4 +304,52 @@ void main() {
       );
     });
   });
+
+  group('增强档位（2026-10 tier 新增）', () {
+    test('默认 lite，与 +87 起的默认链一致', () {
+      expect(
+        const VideoEnhancementPreferences().tier,
+        VideoEnhancementTier.lite,
+      );
+    });
+
+    test('quality 往返序列化保持', () {
+      const preferences = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        tier: VideoEnhancementTier.quality,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson(preferences.toJson()),
+        preferences,
+      );
+    });
+
+    test('旧 JSON 无 tier 键回落 lite，非法值同样回落', () {
+      expect(
+        VideoEnhancementPreferences.fromJson({'mode': 'advanced'}).tier,
+        VideoEnhancementTier.lite,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson({
+          'mode': 'advanced',
+          'tier': 'garbage',
+        }).tier,
+        VideoEnhancementTier.lite,
+      );
+    });
+
+    test('copyWith 切档位不影响 mode/content', () {
+      const preferences = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        content: VideoEnhancementContent.animation,
+      );
+      final switched = preferences.copyWith(
+        tier: VideoEnhancementTier.quality,
+      );
+      expect(switched.mode, VideoEnhancementMode.advanced);
+      expect(switched.content, VideoEnhancementContent.animation);
+      expect(switched.tier, VideoEnhancementTier.quality);
+      expect(switched, isNot(preferences));
+    });
+  });
 }
