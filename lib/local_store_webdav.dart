@@ -41,7 +41,10 @@ class WebDavSettings {
       return null;
     }
     final path = base.path.endsWith('/') ? base.path : '${base.path}/';
-    return base.replace(path: '$path$folder');
+    // 结尾必须带斜杠：目录 URI 少了尾斜杠时，Uri.resolve 会把文件名当作
+    // 「替换最后一段」，导致文件被写到上一级目录或直接写到站点根
+    // （坚果云表现为 404 / 410）。
+    return base.replace(path: '$path$folder/');
   }
 
   factory WebDavSettings.fromJson(Object? value) {

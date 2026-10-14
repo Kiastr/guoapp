@@ -127,6 +127,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   String? _saveWarning;
   PlaybackPlan? _plan;
   double _speed = 1;
+  double _holdSpeed = defaultHoldSpeed;
   double _aspectRatio = 9 / 16;
   double _resumePosition = 0;
   bool _rotating = false;
@@ -171,6 +172,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _profileEpoch = widget.handoff?.profileEpoch ?? widget.store.profileEpoch;
     final preferences = widget.store.playbackPreferences;
     _speed = preferences.speed;
+    _holdSpeed = preferences.holdSpeed;
     _requestedQuality = preferences.quality;
     _autoAdvance = true;
     _danmakuEnabled = preferences.danmaku;
@@ -215,6 +217,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           _foreground &&
           !_panelOpen,
       baseSpeed: () => _speed,
+      holdSpeed: () => _holdSpeed,
       onTogglePlayback: _togglePlayback,
       onSeek: _seekTo,
       onFullscreen: _rotate,
@@ -1207,6 +1210,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _enhancement.setPreferences(nextPreferences.enhancement);
     setState(() {
       _speed = nextPreferences.speed;
+      _holdSpeed = nextPreferences.holdSpeed;
       _requestedQuality = nextPreferences.quality;
       _autoAdvance = true;
       _danmakuEnabled = nextPreferences.danmaku;

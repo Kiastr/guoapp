@@ -27,6 +27,7 @@ class PlayerInteractions extends ChangeNotifier {
     required this.player,
     required this.available,
     required this.baseSpeed,
+    required this.holdSpeed,
     required this.onTogglePlayback,
     required this.onFullscreen,
     required this.onEpisode,
@@ -46,6 +47,7 @@ class PlayerInteractions extends ChangeNotifier {
   final Player player;
   final bool Function() available;
   final double Function() baseSpeed;
+  final double Function() holdSpeed;
   final VoidCallback onTogglePlayback;
   final VoidCallback onFullscreen;
   final String Function(int direction) onEpisode;
@@ -127,6 +129,12 @@ class PlayerInteractions extends ChangeNotifier {
   bool get suppressTap => DateTime.now().isBefore(_ignoreTapUntil);
   Future<void> get pendingRates => _rates;
 
+  String get _boostLabel =>
+      '${_speedText(holdSpeed())} 倍速 · 松开恢复';
+
+  static String _speedText(double value) =>
+      value == value.roundToDouble() ? value.toInt().toString() : '$value';
+
   void hint(String message, {bool persistent = false, bool compact = false}) {
     if (_disposed) return;
     _hintTimer?.cancel();
@@ -141,11 +149,7 @@ class PlayerInteractions extends ChangeNotifier {
         // _boosting 继续抑制（持久提示不走进这个分支）。
         _boostRestoring = false;
         _progressPreviewing = false;
-        hint(
-          _boosting ? '3 倍速 · 松开恢复' : '',
-          persistent: true,
-          compact: true,
-        );
+        hint(_boosting ? _boostLabel : '', persistent: true, compact: true);
       });
     }
   }
@@ -177,8 +181,8 @@ class PlayerInteractions extends ChangeNotifier {
       }
       _boosting = true;
       _held = true;
-      unawaited(_setRate(3));
-      hint('3 倍速 · 松开恢复', persistent: true, compact: true);
+      unawaited(_setRate(holdSpeed()));
+      hint(_boostLabel, persistent: true, compact: true);
     });
   }
 
@@ -193,7 +197,9 @@ class PlayerInteractions extends ChangeNotifier {
       unawaited(_setRate(baseSpeed()));
       // 恢复提示同样属进程态，抑制 chrome（+90：长按倍速不应拉出控件）。
       _boostRestoring = true;
-      if (!silent) hint('恢复 ${baseSpeed()} 倍速', compact: true);
+      if (!silent) {
+        hint('恢复 ${_speedText(baseSpeed())} 倍速', compact: true);
+      }
     } else if (tap && wasKeyboard) {
       seek(5);
     }

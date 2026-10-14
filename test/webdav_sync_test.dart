@@ -15,6 +15,9 @@ class FakeWebDavTransport implements WebDavTransport {
   final bool failWrite;
   final List<String> reads = [];
 
+  /// 写入时请求的完整地址，用于校验文件确实落在同步目录里。
+  final List<String> writes = [];
+
   @override
   Future<void> ensureDirectory(Uri directory) async {}
 
@@ -40,6 +43,7 @@ class FakeWebDavTransport implements WebDavTransport {
   @override
   Future<void> write(Uri file, String content) async {
     if (failWrite) throw StateError('模拟上传失败');
+    writes.add(file.toString());
     files[file.pathSegments.last] = content;
   }
 }
@@ -86,13 +90,17 @@ void main() {
     final saved = store.webDavSettings;
     expect(saved.enabled, isTrue);
     expect(saved.url, 'https://dav.example.com');
-    expect(saved.directoryUri.toString(), 'https://dav.example.com/zhenguoju-sync');
+    expect(
+      saved.directoryUri.toString(),
+      'https://dav.example.com/zhenguoju-sync/',
+    );
     expect(
       WebDavSettings(
         url: 'https://dav.example.com/dav/',
       ).directoryUri.toString(),
-      'https://dav.example.com/dav/zhenguoju-sync',
+      'https://dav.example.com/dav/zhenguoju-sync/',
     );
+    expect(saved.directoryUri!.path.endsWith('/'), isTrue);
     expect(WebDavSettings(url: 'ftp://dav.example.com').directoryUri, isNull);
     expect(
       WebDavSettings(url: 'https://dav.example.com', directory: 'a b').directoryUri,
@@ -201,6 +209,27 @@ void main() {
     expect(transport.reads, isNot(contains('$replica.json')));
     expect(transport.reads, contains('ffffffffffffffffffffffffffffffff.json'));
     expect(a.isFavorite(dramaA.id), isTrue);
+  });
+
+  test('upload lands inside the sync directory, not its parent', () async {
+    final a = await createStore();
+    // 坚果云形态：地址本身带 WebDAV 目录前缀，容易少一级路径
+    await a.saveWebDavSettings(
+      const WebDavSettings(
+        enabled: true,
+        url: 'https://dav.jianguoyun.com/dav/',
+        username: 'user',
+        password: 'pass',
+      ),
+    );
+    final transport = FakeWebDavTransport();
+    await a.toggleFavorite(dramaA);
+    await run(a, transport);
+    final replica = a.lanDocument.replica;
+    expect(
+      transport.writes.single,
+      'https://dav.jianguoyun.com/dav/zhenguoju-sync/$replica.json',
+    );
   });
 
   test('network failure keeps local records untouched', () async {

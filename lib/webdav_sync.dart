@@ -62,9 +62,12 @@ class HttpWebDavTransport implements WebDavTransport {
     return request.close();
   }
 
-  StateError _failure(int code, String action) => code == 401 || code == 403
-      ? StateError('$action：账号或密码不正确')
-      : StateError('$action（HTTP $code）');
+  /// 失败信息带上实际请求的路径：坚果云等服务要求地址包含 WebDAV 目录
+  /// （如 https://dav.jianguoyun.com/dav/），路径不对时只报状态码很难定位。
+  StateError _failure(int code, String action, Uri url) => code == 401 ||
+          code == 403
+      ? StateError('$action：账号或密码不正确（${url.host}）')
+      : StateError('$action（HTTP $code · ${url.host}${url.path}）');
 
   Future<String> _readBody(
     HttpClientResponse response,
@@ -87,7 +90,7 @@ class HttpWebDavTransport implements WebDavTransport {
     final response = await _send('MKCOL', directory);
     await response.drain<void>();
     if ({201, 200, 405}.contains(response.statusCode)) return;
-    throw _failure(response.statusCode, '创建同步目录失败');
+    throw _failure(response.statusCode, '创建同步目录失败', directory);
   }
 
   static const _propFindBody =
@@ -104,7 +107,7 @@ class HttpWebDavTransport implements WebDavTransport {
     );
     final text = await _readBody(response, '读取同步目录');
     if (!{207, 200}.contains(response.statusCode)) {
-      throw _failure(response.statusCode, '读取同步目录失败');
+      throw _failure(response.statusCode, '读取同步目录失败', directory);
     }
     final files = <WebDavRemoteFile>[];
     for (final block in RegExp(
@@ -133,7 +136,7 @@ class HttpWebDavTransport implements WebDavTransport {
     final response = await _send('GET', file);
     if (response.statusCode != 200) {
       await response.drain<void>();
-      throw _failure(response.statusCode, '下载同步文件失败');
+      throw _failure(response.statusCode, '下载同步文件失败', file);
     }
     if (response.contentLength > fileLimit) {
       await response.drain<void>();
@@ -147,7 +150,7 @@ class HttpWebDavTransport implements WebDavTransport {
     final response = await _send('PUT', file, body: content);
     await response.drain<void>();
     if (!{200, 201, 204}.contains(response.statusCode)) {
-      throw _failure(response.statusCode, '上传同步文件失败');
+      throw _failure(response.statusCode, '上传同步文件失败', file);
     }
   }
 }

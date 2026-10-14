@@ -185,6 +185,33 @@ class _PlayerMenuState extends State<PlayerMenu> {
             ],
           ),
           const SizedBox(height: 20),
+          const Text('长按倍速'),
+          const SizedBox(height: 4),
+          Text(
+            '按住画面时临时加速到这个倍速，松开自动恢复 ${preferences.speed}x。',
+            style: helperStyle,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final speed in holdSpeeds)
+                ChoiceChip(
+                  key: ValueKey('menu-hold-speed-$speed'),
+                  label: Text('${speed}x'),
+                  selected: speed == preferences.holdSpeed,
+                  onSelected: _busy
+                      ? null
+                      : (_) => _run(
+                          () => widget.onPreferences(
+                            preferences.copyWith(holdSpeed: speed),
+                          ),
+                        ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
         ],
         if (all || widget.section == PlayerMenuSection.quality) ...[
           const Text('清晰度'),

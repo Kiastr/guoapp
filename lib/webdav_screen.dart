@@ -216,7 +216,9 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
                     labelText: '服务器地址',
-                    hintText: 'https://dav.example.com',
+                    hintText: 'https://dav.jianguoyun.com/dav/',
+                    helperText:
+                        '填到服务提供的 WebDAV 目录为止，坚果云要在域名后带上 /dav/，Nextcloud 通常形如 /remote.php/dav/files/用户名/',
                   ),
                 ),
                 TextField(
