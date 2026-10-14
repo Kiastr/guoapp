@@ -81,7 +81,9 @@ class VideoEnhancementSettings extends StatelessWidget {
               ),
               _choice(
                 id: 'enhancement-mode-auto',
-                label: '自动',
+                // [实验性标记·2026-10] 自动族按画面类型/设备状态猜后端，
+                // 命中与效果稳定性都不如高级档确定，按产品要求标注实验性。
+                label: '自动（实验性）',
                 selected: autoFamily,
                 enabled: supported,
                 // 已在自动族内则保持当前子档；从关闭/高级切入时默认落省电增强
@@ -188,7 +190,7 @@ class VideoEnhancementSettings extends StatelessWidget {
   String _modeHelper(VideoEnhancementMode mode) => switch (mode) {
     VideoEnhancementMode.off => '默认关闭，不改变视频输出；开启后再配置画面类型和原画对比。',
     VideoEnhancementMode.economy || VideoEnhancementMode.quality =>
-      '自动按画面和设备选择增强；省电使用轻量缩放；清晰优先允许更高负载。建议先选择源站高清画质。',
+      '实验性：自动按画面和设备选择增强，命中与效果可能变化；省电使用轻量缩放，清晰优先允许更高负载。追求稳定效果请用高级档。建议先选择源站高清画质。',
     VideoEnhancementMode.advanced =>
       '高级模式直接强制 Anime4K 神经增强链（Kazumi 同款：安卓端为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。',
   };
