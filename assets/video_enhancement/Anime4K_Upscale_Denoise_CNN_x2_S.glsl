@@ -22,9 +22,17 @@
 // SOFTWARE.
 
 // ============================================================================
-// [改造·2026-10] guoapp 安卓端适配：删除本文件全部 5 处 //!WHEN 指令。
+// [改造·2026-10] guoapp 安卓端适配：删除本文件全部 5 处 WHEN 条件指令。
 // 原始文件自 bloc97/Anime4K 上游未改动（见 manifest.json 的 source 字段），
 // 本段及下方的 WHEN 移除是 guoapp 唯一的本地修改。
+//
+// 防回归警示（+86 修复记录）：mpv 解析用户 shader 的元数据时，是按「子串」
+// 而非「行首」查找指令起始标记的（双斜杠紧跟叹号的连写序列，见 mpv 源码
+// video/out/gpu/user_shaders.c 的 parse_user_shader / parse_hook）。注释
+// 文字中间一旦出现该连写序列，就会被误判为 pass 元数据指令。+85 版曾因
+// 本条注释里写下了带该前缀的 WHEN 字样，导致安卓端整链加载失败、设备报
+// Error while parsing WHEN!、增强整体回退原画。故本文件任何位置（包括
+// 注释）都不得出现双斜杠紧跟叹号的连写序列，后人修改时务必牢记。
 //
 // 背景（+84 真机诊断确认）：mpv 用户 shader 的 WHEN 指令在条件为假时
 // "silently be omitted"（mpv DOCS/man/options.rst --glsl-shaders 章节），
@@ -46,7 +54,7 @@
 // 但渲染链里没有任何 Anime4K pass。
 //
 // 修复：直接删除 5 处 WHEN，使 CNN 链无条件执行。链内部仍按 2× 源渲染
-// （末 pass 的 //!WIDTH conv2d_last_tf.w 2 * 未动），最终由 mpv 的输出
+// （末 pass 的 WIDTH 指令 conv2d_last_tf.w 2 * 未动），最终由 mpv 的输出
 // pass 缩放到表面尺寸——等价于 Anime4K 官方的 Restore（重建/降噪）语义：
 // CNN 重建与降噪效果完整保留，仅把「表面真放大」换成「内部 2× 渲染后缩回」。
 // 桌面端 WHEN 原本就为真，删除后行为不变，无回归。

@@ -20,11 +20,11 @@
       "license": "LGPL-3.0-or-later"
     },
     "Anime4K_Upscale_Denoise_CNN_x2_S.glsl": {
-      "sha256": "a62e0679f354dadd41eed9da4bec29e751d73e4eb74127e50305f2576e584efd",
-      "bytes": 20909,
+      "sha256": "a4eeffec9365fff22782e04636ce35ce7280afc7931c26f0dbcc7744655af6bb",
+      "bytes": 21600,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale%2BDenoise/Anime4K_Upscale_Denoise_CNN_x2_S.glsl",
       "license": "MIT",
-      "note": "本地修改版（+85）：删除全部 5 处 //!WHEN 指令。原因：安卓端表面恒为源尺寸（+82 放弃放大表面），OUTPUT≡MAIN 导致 WHEN 恒假、pass 被静默跳过，+84 真机诊断确认渲染链未带 shader。删除后桌面端行为不变（WHEN 原本就为真）。详见 shader 文件头注释。"
+      "note": "本地修改版（+86）：①删除全部 5 处 WHEN 指令——安卓端表面恒为源尺寸（+82 放弃放大表面），OUTPUT≡MAIN 导致 WHEN 恒假、pass 被静默跳过，+84 真机诊断确认渲染链未带 shader；②重写头部改造注释，消除注释行中间的指令前缀连写序列——mpv 按子串（非行首）解析指令，+85 版注释中的该连写被误判为 pass 元数据，安卓端报 Error while parsing WHEN! 整链回退。删除 WHEN 后桌面端行为不变（WHEN 原本就为真）。详见 shader 文件头注释。"
     }
   }
 }
