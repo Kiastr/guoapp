@@ -12,6 +12,16 @@ class VideoEnhancementAssets {
   static const ravuRgb = 'ravu-r2-rgb.hook';
   static const ravuLuma = 'ravu-lite-ar-r2.hook';
   static const fsrcnnx = 'FSRCNNX_x2_8-0-4-1.glsl';
+  /// Anime4K 极简档链（+95：轻量档的瘦身版，只留 S 档重建网络）。
+  /// Clamp_Highlights 3 个 pass + Restore_CNN_S 4 个 pass，去掉轻量档里的
+  /// Restore_CNN_M（8 pass）与 Upscale 链；安卓端 Upscale 本就被 WHEN 跳过，
+  /// 所以实际每帧从 15 个 pass 降到 7 个、卷积量约为原来的 30%，
+  /// 骁龙 865（Adreno 650）一类 GPU 能跑，仍保留同分辨率重建带来的清晰感。
+  static const animeChainMinimal = <String>[
+    'Anime4K_Clamp_Highlights.glsl',
+    'Anime4K_Restore_CNN_S.glsl',
+  ];
+
   /// Anime4K 轻量档链（+87：Kazumi 轻量档平权，顺序即注入顺序）。
   /// Clamp_Highlights + Restore_CNN_M + Restore_CNN_S + Upscale_CNN_x2_M
   /// + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_S。

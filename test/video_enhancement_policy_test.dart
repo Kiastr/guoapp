@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:duanju_app/video_enhancement_assets.dart';
 import 'package:duanju_app/video_enhancement_policy.dart';
 import 'package:duanju_app/video_enhancement_preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -311,6 +312,37 @@ void main() {
         const VideoEnhancementPreferences().tier,
         VideoEnhancementTier.lite,
       );
+    });
+
+    test('极简档是 Clamp + S 档重建，pass 数明显少于轻量档', () {
+      expect(VideoEnhancementAssets.animeChainMinimal, [
+        'Anime4K_Clamp_Highlights.glsl',
+        'Anime4K_Restore_CNN_S.glsl',
+      ]);
+      // 轻量档在安卓端真正执行的是 Clamp + M + S，极简档只保留 S。
+      expect(
+        VideoEnhancementAssets.animeChainMinimal.length,
+        lessThan(VideoEnhancementAssets.animeChainLite.length),
+      );
+      expect(
+        VideoEnhancementAssets.animeChainMinimal,
+        isNot(contains('Anime4K_Restore_CNN_M.glsl')),
+      );
+    });
+
+    test('极简档往返序列化保持，且不影响 mode/content', () {
+      const preferences = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        content: VideoEnhancementContent.animation,
+        tier: VideoEnhancementTier.minimal,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson(preferences.toJson()),
+        preferences,
+      );
+      final switched = preferences.copyWith(tier: VideoEnhancementTier.lite);
+      expect(switched.mode, VideoEnhancementMode.advanced);
+      expect(switched.content, VideoEnhancementContent.animation);
     });
 
     test('quality 往返序列化保持', () {

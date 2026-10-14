@@ -127,9 +127,15 @@ class VideoEnhancementSettings extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              preferences.tier == VideoEnhancementTier.quality
-                  ? '质量档：Kazumi 质量平权（VL 重建 + VL 超分），效果最好，但负载显著更高；低端设备可能自动降级，卡顿时请回轻量档。'
-                  : '轻量档：Kazumi 轻量平权（M+S 重建），流畅优先；安卓端为同分辨率重建/降噪，桌面端含 2× 超分。',
+              switch (preferences.tier) {
+                VideoEnhancementTier.quality =>
+                  '质量档：Kazumi 质量平权（VL 重建 + VL 超分），效果最好，但负载显著更高；低端设备可能自动降级，卡顿时请回轻量档。',
+                VideoEnhancementTier.minimal =>
+                  '极简档：只留高光钳制 + S 档重建（轻量档的瘦身版），去掉 M 档与超分链；'
+                      '每帧 7 个 pass、卷积量约为轻量档的 30%，骁龙 865 一类设备也能跑，仍保留重建带来的清晰感。',
+                VideoEnhancementTier.lite =>
+                  '轻量档：Kazumi 轻量平权（M+S 重建），流畅优先；安卓端为同分辨率重建/降噪，桌面端含 2× 超分。',
+              },
               style: helperStyle,
             ),
           ],

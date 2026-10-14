@@ -154,6 +154,7 @@ class VideoEnhancementController extends ChangeNotifier {
     // （桌面端放大、ravu 缩放等）维持原 dimensions 展示。
     if (Platform.isAndroid && (_applied?.backend.cost ?? 0) >= 3) {
       return [
+        // 三档在安卓端都是同分辨率重建/降噪，文案按 +88 的产品要求统一。
         '已执行超分降噪',
         if (_downgradeReason.isNotEmpty) _downgradeReason,
         // [诊断·2026-10] 最近一次增强失败的技术细节（阶段/尺寸比对/渲染链
@@ -358,10 +359,11 @@ class VideoEnhancementController extends ChangeNotifier {
         // [档位·2026-10] 高级档按 tier 选链：质量档=VL 平权（Kazumi
         // mpvAnime4KShaders），轻量档=M/S 平权（+87 默认，Kazumi
         // mpvAnime4KShadersLite）。两链 WHEN 均保留，平台筛选由 mpv 完成。
-        VideoEnhancementBackend.anime =>
-          _preferences.tier == VideoEnhancementTier.quality
-              ? VideoEnhancementAssets.animeChainQuality
-              : VideoEnhancementAssets.animeChainLite,
+        VideoEnhancementBackend.anime => switch (_preferences.tier) {
+          VideoEnhancementTier.quality => VideoEnhancementAssets.animeChainQuality,
+          VideoEnhancementTier.minimal => VideoEnhancementAssets.animeChainMinimal,
+          VideoEnhancementTier.lite => VideoEnhancementAssets.animeChainLite,
+        },
         _ => null,
       };
       final shaderPaths = shaders == null
@@ -799,7 +801,8 @@ class VideoEnhancementController extends ChangeNotifier {
           // +87 链改造后分平台生效形态不同：桌面端 Upscale pass 生效
           // （末 pass 为 Depth-to-Space），安卓端 Upscale 被 WHEN 跳过、
           // 仅 Clamp + Restore_CNN 生效（pass 描述含 Restore）。二者有其一
-          // 即视为链已加载，避免把安卓端的正常 Restore 形态误判为未生效。
+          // 即视为链已加载，避免把安卓端的正常 Restore 形态误判为未生效
+          // （+95 极简档只有 Clamp + Restore_S，同样命中 Restore）。
           descriptions.contains('Anime4K') &&
               (descriptions.contains('Depth-to-Space') ||
                   descriptions.contains('Restore')),
