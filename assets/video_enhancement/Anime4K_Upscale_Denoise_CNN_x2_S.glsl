@@ -21,6 +21,41 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// ============================================================================
+// [改造·2026-10] guoapp 安卓端适配：删除本文件全部 5 处 //!WHEN 指令。
+// 原始文件自 bloc97/Anime4K 上游未改动（见 manifest.json 的 source 字段），
+// 本段及下方的 WHEN 移除是 guoapp 唯一的本地修改。
+//
+// 背景（+84 真机诊断确认）：mpv 用户 shader 的 WHEN 指令在条件为假时
+// "silently be omitted"（mpv DOCS/man/options.rst --glsl-shaders 章节），
+// 本文件原有的 WHEN 为
+//     OUTPUT.w MAIN.w / 1.200 > OUTPUT.h MAIN.h / 1.200 > *
+// 即「仅当最终输出尺寸 ≥ 输入尺寸 1.2 倍时才执行本 pass」。其中 OUTPUT 是
+// mpv 官方定义的「最终输出图像」（表面/窗口尺寸，fixed 纹理），MAIN 是
+// 转换到 RGB 后的输入视频（resizable 纹理）。
+//
+// 桌面端：增强会把表面放大到 2× 源尺寸（OUTPUT = 2× MAIN），WHEN 为真，
+// 5 个 pass 全部执行——这是原设计的工作场景。
+// 安卓端：+82 起放弃放大表面（SetSurfaceSize 路径会引起 VO 重建 + seek
+// 转圈、与 media_kit 表面同步乒乓、误触自愈拉黑三个连锁问题，详见
+// lib/video_output_size.dart 类注释），表面恒为源尺寸（media_kit 自身把
+// android-surface-size 同步为 dw×dh），于是 OUTPUT ≡ MAIN，比值恒为 1.0，
+// WHEN 恒为假——5 个 pass 被静默跳过，vo-passes 里只剩 mpv 内部的上传与
+// 缩放 pass。+84 真机诊断原文：「阶段:render-pass 尺寸匹配/渲染链未带
+// shader 期望1920×1080 表面1920×1080 osd1920×1080」，即增强确实注入了
+// 但渲染链里没有任何 Anime4K pass。
+//
+// 修复：直接删除 5 处 WHEN，使 CNN 链无条件执行。链内部仍按 2× 源渲染
+// （末 pass 的 //!WIDTH conv2d_last_tf.w 2 * 未动），最终由 mpv 的输出
+// pass 缩放到表面尺寸——等价于 Anime4K 官方的 Restore（重建/降噪）语义：
+// CNN 重建与降噪效果完整保留，仅把「表面真放大」换成「内部 2× 渲染后缩回」。
+// 桌面端 WHEN 原本就为真，删除后行为不变，无回归。
+//
+// 代价：末 pass（Depth-to-Space）按 2× 源分辨率渲染，1080p 源即 4K 中间
+// 纹理。手机 GPU 可承受，且 lib/video_enhancement.dart 的 _watchPerformance
+// 会在 p95 超过帧预算 25% 时自动降级，策略层亦有显存/温控/倍速多重保护。
+// ============================================================================
+
 //!DESC Anime4K-v3.2-Upscale-Denoise-CNN-x2-(S)-Conv-4x3x3x3
 //!HOOK MAIN
 //!BIND MAIN
@@ -28,7 +63,6 @@
 //!WIDTH MAIN.w
 //!HEIGHT MAIN.h
 //!COMPONENTS 4
-//!WHEN OUTPUT.w MAIN.w / 1.200 > OUTPUT.h MAIN.h / 1.200 > *
 #define go_0(x_off, y_off) (MAIN_texOff(vec2(x_off, y_off)))
 vec4 hook() {
     vec4 result = mat4(6.5515305e-05, 0.09565814, -0.0022499533, 0.14627136, -0.0065872427, 0.1441769, 0.17772098, 0.16298898, 0.03727593, 0.02010636, 0.013131043, 0.07891907, 0.0, 0.0, 0.0, 0.0) * go_0(-1.0, -1.0);
@@ -50,7 +84,6 @@ vec4 hook() {
 //!WIDTH conv2d_tf.w
 //!HEIGHT conv2d_tf.h
 //!COMPONENTS 4
-//!WHEN OUTPUT.w MAIN.w / 1.200 > OUTPUT.h MAIN.h / 1.200 > *
 #define go_0(x_off, y_off) (max((conv2d_tf_texOff(vec2(x_off, y_off))), 0.0))
 #define go_1(x_off, y_off) (max(-(conv2d_tf_texOff(vec2(x_off, y_off))), 0.0))
 vec4 hook() {
@@ -82,7 +115,6 @@ vec4 hook() {
 //!WIDTH conv2d_1_tf.w
 //!HEIGHT conv2d_1_tf.h
 //!COMPONENTS 4
-//!WHEN OUTPUT.w MAIN.w / 1.200 > OUTPUT.h MAIN.h / 1.200 > *
 #define go_0(x_off, y_off) (max((conv2d_1_tf_texOff(vec2(x_off, y_off))), 0.0))
 #define go_1(x_off, y_off) (max(-(conv2d_1_tf_texOff(vec2(x_off, y_off))), 0.0))
 vec4 hook() {
@@ -114,7 +146,6 @@ vec4 hook() {
 //!WIDTH conv2d_2_tf.w
 //!HEIGHT conv2d_2_tf.h
 //!COMPONENTS 4
-//!WHEN OUTPUT.w MAIN.w / 1.200 > OUTPUT.h MAIN.h / 1.200 > *
 #define go_0(x_off, y_off) (max((conv2d_2_tf_texOff(vec2(x_off, y_off))), 0.0))
 #define go_1(x_off, y_off) (max(-(conv2d_2_tf_texOff(vec2(x_off, y_off))), 0.0))
 vec4 hook() {
@@ -146,7 +177,6 @@ vec4 hook() {
 //!SAVE MAIN
 //!WIDTH conv2d_last_tf.w 2 *
 //!HEIGHT conv2d_last_tf.h 2 *
-//!WHEN OUTPUT.w MAIN.w / 1.200 > OUTPUT.h MAIN.h / 1.200 > *
 vec4 hook() {
     vec2 f0 = fract(conv2d_last_tf_pos * conv2d_last_tf_size);
     ivec2 i0 = ivec2(f0 * vec2(2.0));
