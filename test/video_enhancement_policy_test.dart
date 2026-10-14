@@ -191,4 +191,117 @@ void main() {
       expect(decision.output, const Size(1080, 1942));
     });
   });
+
+  group('高级模式（2026-10 结构重构：彻底强制）', () {
+    // 极端不利条件全部拉满：通用内容 + 省电 + 温控拉满 + headroom 满 +
+    // 低内存 + 3 倍速 + anime 被拉黑 + 视口小于源（targetScale<1）。
+    // 用户已确认「全部绕过、彻底强制」，以上均应一律返回 anime。
+    const hostile = VideoEnhancementPower(
+      gles: 0x30001,
+      batterySaver: true,
+      thermalStatus: 3,
+      headroom: 1.0,
+      lowMemory: true,
+    );
+    const advancedGeneral = VideoEnhancementPreferences(
+      mode: VideoEnhancementMode.advanced,
+      content: VideoEnhancementContent.general,
+    );
+
+    test('全部不利条件拉满仍强制 anime，output 为源尺寸', () {
+      final decision = decide(
+        parameters: params(width: 544, height: 960),
+        viewport: const Size(272, 480), // targetScale=0.5
+        android: true,
+        preferences: advancedGeneral,
+        power: hostile,
+        rate: 3.0,
+        rejected: const {VideoEnhancementBackend.anime},
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.output, const Size(544, 960));
+      expect(decision.reason, '高级模式：强制 Anime4K 超分');
+    });
+
+    test('绕过色彩预检：非常见色彩空间仍强制 anime', () {
+      final decision = decide(
+        parameters: VideoParams(
+          pixelformat: 'yuv420p10le',
+          w: 544,
+          h: 960,
+          dw: 544,
+          dh: 960,
+          par: 1.0,
+          primaries: 'bt.2020',
+          gamma: 'pq',
+          rotate: 0,
+        ),
+        viewport: const Size(1080, 1344),
+        android: true,
+        preferences: advancedGeneral,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+    });
+
+    test('超大源仍强制 anime（安卓尺寸上限 inert，output=源尺寸）', () {
+      final decision = decide(
+        parameters: params(width: 4096, height: 2304),
+        viewport: const Size(1080, 2400),
+        android: true,
+        preferences: advancedGeneral,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.output, const Size(4096, 2304));
+    });
+
+    test('桌面端高级：anime 且 output 仍为放大尺寸', () {
+      final decision = decide(
+        parameters: params(width: 544, height: 960),
+        viewport: const Size(1080, 1344),
+        android: false,
+        preferences: advancedGeneral,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.output, const Size(762, 1344));
+    });
+  });
+
+  group('偏好迁移（2026-10 结构重构）', () {
+    test('旧 automatic 迁移为 economy（省电增强），零行为变化', () {
+      expect(
+        VideoEnhancementPreferences.fromJson({'mode': 'automatic'}).mode,
+        VideoEnhancementMode.economy,
+      );
+    });
+
+    test('advanced 往返序列化保持', () {
+      const preferences = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        content: VideoEnhancementContent.animation,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson(preferences.toJson()),
+        preferences,
+      );
+    });
+
+    test('未知 mode 与非法值回落 off', () {
+      expect(
+        VideoEnhancementPreferences.fromJson({'mode': 'garbage'}).mode,
+        VideoEnhancementMode.off,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson(null).mode,
+        VideoEnhancementMode.off,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson('not-a-map').mode,
+        VideoEnhancementMode.off,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson({'mode': 'advanced'}).content,
+        VideoEnhancementContent.automatic,
+      );
+    });
+  });
 }

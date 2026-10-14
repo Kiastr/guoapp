@@ -208,18 +208,9 @@ VideoEnhancementDecision chooseVideoEnhancement({
       !viewport.height.isFinite) {
     return const VideoEnhancementDecision(original, null, '等待播放画面');
   }
-  if (!videoHasSafeEnhancementColor(parameters, opaque8Bit: opaque8Bit)) {
-    return const VideoEnhancementDecision(original, null, '当前色彩或位深保持原画');
-  }
-  if (!gpu) {
-    return const VideoEnhancementDecision(original, null, '当前渲染环境保持原画');
-  }
-  if (costLimit < 1 ||
-      rejected.contains(VideoEnhancementBackend.scaling) ||
-      power.thermalStatus >= 3 ||
-      (power.headroom ?? 0) >= 1) {
-    return const VideoEnhancementDecision(original, null, '为保持流畅，已暂停增强');
-  }
+  // [结构重构·2026-10] 尺寸计算整体上移：高级强制档需要 surfaceOutput，
+  // 且按用户「全部绕过、彻底强制」的决策，必须排在色彩/GPU/温控预检之前。
+  // 本段是纯数学计算、无副作用，上移不改变自动族路径的语义与取值。
   final targetScale = math.min(
     viewport.width / source.width,
     viewport.height / source.height,
@@ -251,6 +242,35 @@ VideoEnhancementDecision chooseVideoEnhancement({
   /// （rect / osd-dimensions）比对来确认增强生效；安卓若返回放大尺寸，
   /// sizeMatches 永远不成立，连续 5 次即 _failBackend 拉黑后端。
   final surfaceOutput = android ? source : output;
+  // [结构重构·2026-10] 高级档：用户明确要求"直接开启 Anime4K"，全部绕过
+  // 自动判断——动画标签、温控/headroom、播放倍速、显存预算、targetScale、
+  // rejected 拉黑、色彩/GPU/GLES 预检一概不看。
+  // 保留的底线：上方 source/viewport 就绪检查（没有画面时无从增强）；
+  // 运行时若 shader 编译/渲染失败，由 VideoEnhancementController 的
+  // _onLog/handlePlaybackError -> _failBackend 兜底（4 次后熔断暂停），
+  // 不依赖本函数预判。
+  // 安卓端 scale/maxPixels 上限对渲染无实际影响（表面恒为源尺寸、shader
+  // 内部恒按 2× 源渲染）；桌面端沿用放大的 output，与上游 Kazumi 语义一致。
+  if (preferences.mode == VideoEnhancementMode.advanced) {
+    return VideoEnhancementDecision(
+      VideoEnhancementBackend.anime,
+      surfaceOutput,
+      '高级模式：强制 Anime4K 超分',
+    );
+  }
+  // 以下预检仅对自动族生效（高级档已在上面直接返回，不看这些条件）。
+  if (!videoHasSafeEnhancementColor(parameters, opaque8Bit: opaque8Bit)) {
+    return const VideoEnhancementDecision(original, null, '当前色彩或位深保持原画');
+  }
+  if (!gpu) {
+    return const VideoEnhancementDecision(original, null, '当前渲染环境保持原画');
+  }
+  if (costLimit < 1 ||
+      rejected.contains(VideoEnhancementBackend.scaling) ||
+      power.thermalStatus >= 3 ||
+      (power.headroom ?? 0) >= 1) {
+    return const VideoEnhancementDecision(original, null, '为保持流畅，已暂停增强');
+  }
   final scaling = VideoEnhancementDecision(
     VideoEnhancementBackend.scaling,
     surfaceOutput,
@@ -267,17 +287,9 @@ VideoEnhancementDecision chooseVideoEnhancement({
   if (upscale <= 1.2 || preferences.mode == VideoEnhancementMode.economy) {
     return scaling;
   }
-  // [移植改造] 原始原因文案为：'手机自动档优先流畅，使用高质量缩放'。
-  // 此处**保留**自动档在安卓上不启用神经超分的保守行为（避免普通用户被后台自动触发
-  // 发热与耗电），但把原因文案写清楚：想用 Anime4K 必须手动切到「清晰优先」，
-  // 否则用户会以为功能没移植成功。
-  if (android && preferences.mode == VideoEnhancementMode.automatic) {
-    return VideoEnhancementDecision(
-      VideoEnhancementBackend.scaling,
-      surfaceOutput,
-      '手机自动档优先流畅；需要 Anime4K 请手动切换到「清晰优先」',
-    );
-  }
+  // [结构重构·2026-10] 原「手机自动档优先流畅」分支随 mode.automatic
+  // 一并移除：旧 automatic 已迁移为 economy（省电增强），由上一行
+  // `mode == economy` 分支承接；需要 Anime4K 的用户改用清晰优先或高级档。
   // [移植改造] 原始实现为：
   //     power.thermalStatus >= 2
   //     (power.headroom ?? 0) >= .85
