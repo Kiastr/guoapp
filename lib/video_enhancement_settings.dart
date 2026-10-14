@@ -190,6 +190,6 @@ class VideoEnhancementSettings extends StatelessWidget {
     VideoEnhancementMode.economy || VideoEnhancementMode.quality =>
       '自动按画面和设备选择增强；省电使用轻量缩放；清晰优先允许更高负载。建议先选择源站高清画质。',
     VideoEnhancementMode.advanced =>
-      '高级模式直接强制 Anime4K（2×）超分，绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。',
+      '高级模式直接强制 Anime4K 神经增强链（Kazumi 同款：安卓端为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。',
   };
 }

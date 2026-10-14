@@ -332,18 +332,21 @@ class VideoEnhancementController extends ChangeNotifier {
     }
     _applyingBackend = selected.backend;
     try {
-      final shader = switch (selected.backend) {
-        VideoEnhancementBackend.ravu =>
+      final shaders = switch (selected.backend) {
+        VideoEnhancementBackend.ravu => <String>[
           _luma
               ? VideoEnhancementAssets.ravuLuma
               : VideoEnhancementAssets.ravuRgb,
-        VideoEnhancementBackend.fsrcnnx => VideoEnhancementAssets.fsrcnnx,
-        VideoEnhancementBackend.anime => VideoEnhancementAssets.anime,
+        ],
+        VideoEnhancementBackend.fsrcnnx => <String>[
+          VideoEnhancementAssets.fsrcnnx,
+        ],
+        VideoEnhancementBackend.anime => VideoEnhancementAssets.animeChain,
         _ => null,
       };
-      final shaderPath = shader == null
+      final shaderPaths = shaders == null
           ? null
-          : await VideoEnhancementAssets.prepare(shader);
+          : await Future.wait(shaders.map(VideoEnhancementAssets.prepare));
       if (_closed || revision != _revision) return;
       _applied = null;
       _clearEffects();
@@ -354,11 +357,11 @@ class VideoEnhancementController extends ChangeNotifier {
         _setOption('dscale', 'mitchell');
         _setOption('cscale', 'bilinear');
         _setOption('correct-downscaling', 'yes');
-        if (shaderPath != null) {
+        if (shaderPaths != null) {
           _setOption('fbo-format', 'rgba16f');
           final current = _shaderList();
-          _ownedShaders.add(shaderPath);
-          _mpv!.setStrings('glsl-shaders', [...current, shaderPath]);
+          _ownedShaders.addAll(shaderPaths);
+          _mpv!.setStrings('glsl-shaders', [...current, ...shaderPaths]);
         } else if (selected.backend == VideoEnhancementBackend.hardware) {
           final parameters = player.state.videoParams;
           final factor = math
@@ -772,8 +775,13 @@ class VideoEnhancementController extends ChangeNotifier {
           _luma ? 'RAVU-Lite-AR (step2' : 'RAVU (step4',
         ),
         VideoEnhancementBackend.anime =>
+          // +87 链改造后分平台生效形态不同：桌面端 Upscale pass 生效
+          // （末 pass 为 Depth-to-Space），安卓端 Upscale 被 WHEN 跳过、
+          // 仅 Clamp + Restore_CNN 生效（pass 描述含 Restore）。二者有其一
+          // 即视为链已加载，避免把安卓端的正常 Restore 形态误判为未生效。
           descriptions.contains('Anime4K') &&
-              descriptions.contains('Depth-to-Space'),
+              (descriptions.contains('Depth-to-Space') ||
+                  descriptions.contains('Restore')),
         VideoEnhancementBackend.fsrcnnx =>
           descriptions.contains('feature map') &&
               descriptions.contains('aggregation'),
