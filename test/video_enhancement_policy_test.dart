@@ -12,21 +12,18 @@ import 'package:media_kit/media_kit.dart';
 ///   - 安卓：是否上神经超分只看 targetScale（视口/源），与表面放大倍率解耦；
 ///   - 安卓：显存预算只跟源分辨率相关，半屏/全屏决策一致（进全屏不重新 apply）；
 ///   - 桌面：行为与上游一致，output 仍为放大后的尺寸。
-VideoParams params({
-  required int width,
-  required int height,
-  int rotate = 0,
-}) => VideoParams(
-  pixelformat: 'yuv420p',
-  w: width,
-  h: height,
-  dw: width,
-  dh: height,
-  par: 1.0,
-  primaries: 'bt.709',
-  gamma: 'bt.1886',
-  rotate: rotate,
-);
+VideoParams params({required int width, required int height, int rotate = 0}) =>
+    VideoParams(
+      pixelformat: 'yuv420p',
+      w: width,
+      h: height,
+      dw: width,
+      dh: height,
+      par: 1.0,
+      primaries: 'bt.709',
+      gamma: 'bt.1886',
+      rotate: rotate,
+    );
 
 const _qualityAnime = VideoEnhancementPreferences(
   mode: VideoEnhancementMode.quality,
@@ -116,10 +113,7 @@ void main() {
 
     test('源分辨率超出安卓显存预算时不选 anime（预算只看源，与视口无关）', () {
       final big = params(width: 890, height: 1600);
-      for (final viewport in const [
-        Size(1080, 1344),
-        Size(1080, 2400),
-      ]) {
+      for (final viewport in const [Size(1080, 1344), Size(1080, 2400)]) {
         final decision = decide(
           parameters: big,
           viewport: viewport,

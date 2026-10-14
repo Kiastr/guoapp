@@ -295,9 +295,7 @@ VideoEnhancementDecision chooseVideoEnhancement({
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
       surfaceOutput,
-      rate > kEnhancedMaxRate
-          ? '倍速播放，已降低增强'
-          : '省电或温控限制，已降低增强',
+      rate > kEnhancedMaxRate ? '倍速播放，已降低增强' : '省电或温控限制，已降低增强',
     );
   }
   final squarePixels =
