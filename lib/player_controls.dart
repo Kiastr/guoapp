@@ -998,6 +998,7 @@ class _PlayerControlsState extends State<PlayerControls> {
     builder: (context, _) {
       final hud = widget.interactions.hudState;
       final feedback = widget.interactions.feedback;
+      final compact = widget.interactions.compactFeedback;
       if (hud.type == SwipeAction.brightness) {
         final value = hud.value.clamp(0.0, 1.0);
         final percent = (value * 100).round();
@@ -1059,19 +1060,28 @@ class _PlayerControlsState extends State<PlayerControls> {
       if (feedback.isEmpty) return const SizedBox.shrink();
       return IgnorePointer(
         child: Align(
-          alignment: const Alignment(0, -.5),
+          alignment: compact
+              ? const Alignment(0, -.72)
+              : const Alignment(0, -.5),
           child: Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            margin: compact ? EdgeInsets.zero : const EdgeInsets.all(16),
+            padding: compact
+                ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
+                : const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(12),
+              color: compact
+                  ? Colors.black.withValues(alpha: .62)
+                  : Colors.black87,
+              borderRadius: BorderRadius.circular(compact ? 10 : 12),
               border: Border.all(color: Colors.white12),
             ),
             child: Text(
               feedback,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                fontSize: compact ? 12.5 : 14,
+                fontWeight: compact ? FontWeight.w600 : FontWeight.w500,
+              ),
             ),
           ),
         ),

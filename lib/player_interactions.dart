@@ -71,6 +71,7 @@ class PlayerInteractions extends ChangeNotifier {
   bool _progressPreviewing = false;
   double _unmutedVolume = 100;
   String _feedback = '';
+  bool _compact = false;
   DateTime _ignoreTapUntil = DateTime(2000);
   SwipeAction _swipeAction = SwipeAction.none;
   GestureHudState _hudState = const GestureHudState();
@@ -119,14 +120,19 @@ class PlayerInteractions extends ChangeNotifier {
   }
   String get feedback => _feedback;
   bool get boosting => _boosting;
+
+  /// 倍速进行中与恢复倍速的提示是长按期间常驻的，用小号紧凑样式并靠顶部
+  /// 呈现；切集、快进等一次性提示仍用常规尺寸，避免短提示看不清。
+  bool get compactFeedback => _compact;
   bool get suppressTap => DateTime.now().isBefore(_ignoreTapUntil);
   Future<void> get pendingRates => _rates;
 
-  void hint(String message, {bool persistent = false}) {
+  void hint(String message, {bool persistent = false, bool compact = false}) {
     if (_disposed) return;
     _hintTimer?.cancel();
-    if (_feedback != message) {
+    if (_feedback != message || _compact != compact) {
       _feedback = message;
+      _compact = compact;
       notifyListeners();
     }
     if (!persistent && message.isNotEmpty) {
@@ -135,7 +141,11 @@ class PlayerInteractions extends ChangeNotifier {
         // _boosting 继续抑制（持久提示不走进这个分支）。
         _boostRestoring = false;
         _progressPreviewing = false;
-        hint(_boosting ? '3 倍速 · 松开恢复' : '', persistent: true);
+        hint(
+          _boosting ? '3 倍速 · 松开恢复' : '',
+          persistent: true,
+          compact: true,
+        );
       });
     }
   }
@@ -168,7 +178,7 @@ class PlayerInteractions extends ChangeNotifier {
       _boosting = true;
       _held = true;
       unawaited(_setRate(3));
-      hint('3 倍速 · 松开恢复', persistent: true);
+      hint('3 倍速 · 松开恢复', persistent: true, compact: true);
     });
   }
 
@@ -183,7 +193,7 @@ class PlayerInteractions extends ChangeNotifier {
       unawaited(_setRate(baseSpeed()));
       // 恢复提示同样属进程态，抑制 chrome（+90：长按倍速不应拉出控件）。
       _boostRestoring = true;
-      if (!silent) hint('恢复 ${baseSpeed()} 倍速');
+      if (!silent) hint('恢复 ${baseSpeed()} 倍速', compact: true);
     } else if (tap && wasKeyboard) {
       seek(5);
     }
