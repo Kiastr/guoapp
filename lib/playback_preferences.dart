@@ -3,7 +3,7 @@ import 'video_enhancement_preferences.dart';
 const playbackSpeeds = [.5, .75, 1.0, 1.25, 1.5, 2.0, 3.0];
 
 /// 按住画面时临时使用的倍速档位（松开即回到 [PlaybackPreferences.speed]）。
-const holdSpeeds = [2.0, 2.5, 3.0, 4.0, 5.0];
+const holdSpeeds = [1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0];
 const defaultHoldSpeed = 3.0;
 
 class PlaybackPreferences {

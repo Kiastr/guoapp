@@ -35,5 +35,17 @@ void main() {
   test('hold speed options stay faster than normal playback', () {
     expect(holdSpeeds.every((speed) => speed > 1), isTrue);
     expect(holdSpeeds.contains(defaultHoldSpeed), isTrue);
+    expect(holdSpeeds, [1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0]);
+  });
+
+  test('hold speed survives a copyWith round trip used by the player menu', () {
+    // 播放菜单用当前字段重新组装偏好，漏传 holdSpeed 会让选中态跳回默认 3x。
+    var value = const PlaybackPreferences().copyWith(holdSpeed: 1.75);
+    value = PlaybackPreferences(
+      speed: value.speed,
+      holdSpeed: value.holdSpeed,
+      quality: value.quality,
+    );
+    expect(value.holdSpeed, 1.75);
   });
 }

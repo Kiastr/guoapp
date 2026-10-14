@@ -147,6 +147,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _enhancement.supported ? _enhancement : null;
   PlaybackPreferences get _preferences => PlaybackPreferences(
     speed: _speed,
+    holdSpeed: _holdSpeed,
     quality: _requestedQuality,
     autoAdvance: _autoAdvance,
     danmaku: _danmakuEnabled,

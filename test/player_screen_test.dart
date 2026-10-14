@@ -70,7 +70,8 @@ void main() {
       await mount(tester, repository, player);
       await tester.tap(find.byKey(const ValueKey('player-speed')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1.5x').last);
+      // 长按倍速档位里也有 1.5x，按 key 定位避免误点
+      await tester.tap(find.byKey(const ValueKey('menu-speed-1.5')));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('关闭菜单'));
       await tester.pumpAndSettle();
