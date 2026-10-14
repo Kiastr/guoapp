@@ -20,11 +20,14 @@ import 'package_smoke.dart';
 import 'lan_controller.dart';
 import 'player_screen.dart';
 import 'video_enhancement_assets.dart';
+import 'webdav_sync.dart';
 import 'diary_service.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
-  DiaryService.add('[App] 应用启动，版本: 0.2.64+71, 平台: ${Platform.operatingSystem}');
+  DiaryService.add(
+    '[App] 应用启动，版本: $appVersion+$duanjuBuildNumber，包名: $appPackageId，平台: ${Platform.operatingSystem}',
+  );
   if (Platform.isAndroid) {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(AppTheme.systemBars(Brightness.dark));
@@ -132,6 +135,26 @@ class _AppBootstrapState extends State<AppBootstrap>
                 : 'phone',
           );
           LanController.current = link;
+          final webDav = store!.webDavSettings;
+          if (webDav.enabled && webDav.autoSync) {
+            unawaited(
+              Future<void>.delayed(const Duration(seconds: 3), () async {
+                if (store == null || store!.locked) return;
+                final transport = HttpWebDavTransport(
+                  username: webDav.username,
+                  password: webDav.password,
+                );
+                try {
+                  await WebDavSynchronizer(
+                    store: store!,
+                    transport: transport,
+                  ).synchronize();
+                } finally {
+                  transport.close();
+                }
+              }).catchError((Object _) {}),
+            );
+          }
           link.openPlayback = (request) async {
             final epoch = request.profileEpoch;
             if (request.cancelled ||

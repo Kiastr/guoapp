@@ -19,6 +19,61 @@ enum VideoEnhancementBackend {
   final String label;
 }
 
+/// [移植改造] 安卓端允许使用的最大增强成本档位。
+///
+/// 取值说明：3 恰好等于 `anime`（Anime4K 动漫神经超分）与 `fsrcnnx`（通用神经超分）的成本；
+/// 桌面端为 4（额外允许 `hardware` 硬件增强）。之所以不直接给安卓 4，是因为
+/// `hardware` 分支依赖 d3d11va 等 Windows 专有通路径，安卓不适用。
+///
+/// 调整此处即为安卓端画质/性能的全局开关：调到 2 可退回"仅 ravu 轻量增强"的保守行为。
+const int kAndroidBackendCostLimit = 3;
+
+/// [移植改造] 温控降级门槛：`PowerManager.currentThermalStatus` 达到该等级才降级。
+///
+/// 等级对照：NONE(0) / LIGHT(1) / MODERATE(2) / SEVERE(3) / CRITICAL(4) / EMERGENCY(5) / SHUTDOWN(6)
+/// 原始值为 2，即 MODERATE 就降级。
+///
+/// 实测问题：真机（Android 12+）在未开省电模式、未明显发热的情况下仍稳定触发降级，
+/// Anime4K 几乎无法持续运行。常见原因是厂商 ROM 对 currentThermalStatus 上报偏保守。
+///
+/// 放宽到 3（SEVERE）后，仍有 CRITICAL / EMERGENCY / SHUTDOWN 三级余量，
+/// 且还有独立防线兜底：video_enhancement.dart 的 _monitor() 会按实际掉帧采样
+/// 动态收敛 _costLimit 并熔断后端（performance 层保护，不依赖温控上报）。
+///
+/// ⚠️ 若出现机身明显发烫、掉帧加剧或耗电异常，改回 2 即可恢复上游保守行为。
+const int kThermalStatusLimit = 3;
+
+/// [移植改造] 热余量降级门槛：`PowerManager.getThermalHeadroom(0)` 阈值。
+///
+/// 取值语义：0.0 = 无性能限制，1.0 = 已限制到最低频率。
+/// 原始值为 0.85。
+///
+/// 同理放宽：部分中高端机该预测值常态偏高，0.85 过于敏感。
+/// 注意该值在 MainActivity.kt 中每 10 秒才刷新一次，存在滞后性。
+///
+/// ⚠️ 改回 0.85 可恢复上游保守行为。
+const double kThermalHeadroomLimit = 0.95;
+
+/// [移植改造] 神经超分（Anime4K / FSRCNNX）允许的最高播放倍速，含边界值。
+///
+/// 原始值为 `rate < 1.5`，即 ≥1.5x 就失去神经超分资格；由于该函数位于 anime 分支之前，
+/// 实际效果是「1.5x 及以上永远拿不到 Anime4K」，且界面不会给出任何提示。
+/// 放宽到 2.0 后，常用倍速（1.5x / 1.75x / 2x）仍可使用 Anime4K。
+///
+/// ⚠️ 高倍速意味着单位时间需处理的帧数成倍增加，叠加超分会显著提高 GPU 负载。
+///    若出现掉帧或发热，调低本值；设为 0 即完全禁用倍速下的神经超分。
+const double kNeuralMaxRate = 2.0;
+
+/// [移植改造] 完全保留画质增强允许的最高播放倍速，超过才开始降级。
+///
+/// 原始值为 `rate >= 1.75`，即 ≥1.75x 直接回落到高质量缩放（对应提示「倍速播放，已降低增强」）。
+/// 放宽到 2.5 后，≤2.5x 都不会因倍速降级。
+///
+/// ⚠️ 超过本值后画面并非立刻回到原画，而是交由 ravu / scaling 承担，
+///    加之 video_enhancement.dart 的 _monitor() 掉帧熔断，形成多级兜底。
+///    设为 double.infinity 可彻底取消倍速限制（不推荐）。
+const double kEnhancedMaxRate = 2.5;
+
 class VideoEnhancementPower {
   const VideoEnhancementPower({
     this.batterySaver = false,
@@ -153,18 +208,9 @@ VideoEnhancementDecision chooseVideoEnhancement({
       !viewport.height.isFinite) {
     return const VideoEnhancementDecision(original, null, '等待播放画面');
   }
-  if (!videoHasSafeEnhancementColor(parameters, opaque8Bit: opaque8Bit)) {
-    return const VideoEnhancementDecision(original, null, '当前色彩或位深保持原画');
-  }
-  if (!gpu) {
-    return const VideoEnhancementDecision(original, null, '当前渲染环境保持原画');
-  }
-  if (costLimit < 1 ||
-      rejected.contains(VideoEnhancementBackend.scaling) ||
-      power.thermalStatus >= 3 ||
-      (power.headroom ?? 0) >= 1) {
-    return const VideoEnhancementDecision(original, null, '为保持流畅，已暂停增强');
-  }
+  // [结构重构·2026-10] 尺寸计算整体上移：高级强制档需要 surfaceOutput，
+  // 且按用户「全部绕过、彻底强制」的决策，必须排在色彩/GPU/温控预检之前。
+  // 本段是纯数学计算、无副作用，上移不改变自动族路径的语义与取值。
   final targetScale = math.min(
     viewport.width / source.width,
     viewport.height / source.height,
@@ -188,33 +234,80 @@ VideoEnhancementDecision chooseVideoEnhancement({
     math.max(2, (source.width * scale).round() ~/ 2 * 2).toDouble(),
     math.max(2, (source.height * scale).round() ~/ 2 * 2).toDouble(),
   );
+  // [移植改造·安卓专用] 安卓端不放大渲染表面（原因详见 video_output_size.dart
+  /// 类注释：放大表面会引发 media_kit 的 VO 重建 + seek 转圈、与 media_kit 自身
+  /// videoParams 监听乒乓、并误触增强自愈把后端拉黑）。因此返回给调用方的
+  /// output 必须是"实际表面尺寸"——安卓上即视频显示尺寸，桌面端仍为放大尺寸。
+  /// video_enhancement.dart 的 _monitor 用 output 与实际表面
+  /// （rect / osd-dimensions）比对来确认增强生效；安卓若返回放大尺寸，
+  /// sizeMatches 永远不成立，连续 5 次即 _failBackend 拉黑后端。
+  final surfaceOutput = android ? source : output;
+  // [结构重构·2026-10] 高级档：用户明确要求"直接开启 Anime4K"，全部绕过
+  // 自动判断——动画标签、温控/headroom、播放倍速、显存预算、targetScale、
+  // rejected 拉黑、色彩/GPU/GLES 预检一概不看。
+  // 保留的底线：上方 source/viewport 就绪检查（没有画面时无从增强）；
+  // 运行时若 shader 编译/渲染失败，由 VideoEnhancementController 的
+  // _onLog/handlePlaybackError -> _failBackend 兜底（4 次后熔断暂停），
+  // 不依赖本函数预判。
+  // 安卓端 scale/maxPixels 上限对渲染无实际影响（表面恒为源尺寸、shader
+  // 内部恒按 2× 源渲染）；桌面端沿用放大的 output，与上游 Kazumi 语义一致。
+  if (preferences.mode == VideoEnhancementMode.advanced) {
+    return VideoEnhancementDecision(
+      VideoEnhancementBackend.anime,
+      surfaceOutput,
+      '高级模式：强制 Anime4K 超分',
+    );
+  }
+  // 以下预检仅对自动族生效（高级档已在上面直接返回，不看这些条件）。
+  if (!videoHasSafeEnhancementColor(parameters, opaque8Bit: opaque8Bit)) {
+    return const VideoEnhancementDecision(original, null, '当前色彩或位深保持原画');
+  }
+  if (!gpu) {
+    return const VideoEnhancementDecision(original, null, '当前渲染环境保持原画');
+  }
+  if (costLimit < 1 ||
+      rejected.contains(VideoEnhancementBackend.scaling) ||
+      power.thermalStatus >= 3 ||
+      (power.headroom ?? 0) >= 1) {
+    return const VideoEnhancementDecision(original, null, '为保持流畅，已暂停增强');
+  }
   final scaling = VideoEnhancementDecision(
     VideoEnhancementBackend.scaling,
-    output,
+    surfaceOutput,
     targetScale <= 1 ? '当前尺寸无需超分，使用高质量缩放' : '',
   );
   final ratio = math.min(
     output.width / source.width,
     output.height / source.height,
   );
-  if (ratio <= 1.2 || preferences.mode == VideoEnhancementMode.economy) {
+  // [移植改造·安卓专用] ratio 是"表面放大倍率"；安卓表面恒为源尺寸时比值恒为 1，
+  /// 是否值得上神经超分改看"显示端需要的放大倍率" targetScale（视口/源）。
+  /// 桌面端语义不变（仍看 ratio）。
+  final upscale = android ? targetScale : ratio;
+  if (upscale <= 1.2 || preferences.mode == VideoEnhancementMode.economy) {
     return scaling;
   }
-  if (android && preferences.mode == VideoEnhancementMode.automatic) {
-    return VideoEnhancementDecision(
-      VideoEnhancementBackend.scaling,
-      output,
-      '手机自动档优先流畅，使用高质量缩放',
-    );
-  }
+  // [结构重构·2026-10] 原「手机自动档优先流畅」分支随 mode.automatic
+  // 一并移除：旧 automatic 已迁移为 economy（省电增强），由上一行
+  // `mode == economy` 分支承接；需要 Anime4K 的用户改用清晰优先或高级档。
+  // [移植改造] 原始实现为：
+  //     power.thermalStatus >= 2
+  //     (power.headroom ?? 0) >= .85
+  // 这两个硬编码阈值在真机（Android 12+、省电模式已关闭）上过于敏感，导致
+  // Anime4K 刚启用就被降级。现改为具名常量 kThermalStatusLimit / kThermalHeadroomLimit，
+  // 详见其定义处的等级说明与回退方式。
+  //
+  // 保留的上游保护：batterySaver（用户手动开了省电就该降级）。
+  // 放宽项：原 `rate >= 1.75` 改为 `rate > kEnhancedMaxRate`（默认 2.5），
+  // 使常用倍速不再被直接降级，详见常量定义处说明。
   if (power.batterySaver ||
-      rate >= 1.75 ||
-      power.thermalStatus >= 2 ||
-      (power.headroom ?? 0) >= .85) {
+      rate > kEnhancedMaxRate ||
+      power.thermalStatus >= kThermalStatusLimit ||
+      (power.headroom ?? 0) >= kThermalHeadroomLimit) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.scaling,
-      output,
-      rate >= 1.75 ? '倍速播放，已降低增强' : '省电或温控限制，已降低增强',
+      surfaceOutput,
+      rate > kEnhancedMaxRate ? '倍速播放，已降低增强' : '省电或温控限制，已降低增强',
     );
   }
   final squarePixels =
@@ -226,17 +319,48 @@ VideoEnhancementDecision chooseVideoEnhancement({
   }
   final pixels = (parameters.w ?? 0) * (parameters.h ?? 0);
   if (pixels <= 0) return scaling;
+  // [移植改造] 原始实现为：
+  //     final limit = math.min(costLimit, television || power.lowMemory || android ? 2 : 4);
+  // gles 之外最隐蔽的一道门槛在这里：VideoEnhancementBackend 的成本分级为
+  //   original(0) / scaling(1) / ravu(2) / fsrcnnx(3) / anime(3) / hardware(4)
+  // 安卓被封顶到 cost <= 2，而 Anime4K（anime）与通用神经超分（fsrcnnx）成本都是 3，
+  // 于是 `allowed(VideoEnhancementBackend.anime)` 在安卓上恒为 false，Anime4K 永远选不中。
+  //
+  // 现在把安卓放宽到 cost <= kAndroidBackendCostLimit(3)，使其能够命中 anime；
+  // 电视端（需走原生硬件直通）与低内存机仍严格保持 2，避免内存与发热失控。
   final limit = math.min(
     costLimit,
-    television || power.lowMemory || android ? 2 : 4,
+    television || power.lowMemory
+        ? 2
+        : android
+        ? kAndroidBackendCostLimit
+        : 4,
   );
   bool allowed(VideoEnhancementBackend backend) =>
       backend.cost <= limit && !rejected.contains(backend);
   final memory = android ? (power.lowMemory ? 64 : 128) : 512;
+  // [移植改造·安卓专用] 显存预算第二项（输出 FBO）按 surfaceOutput 计算：
+  // 安卓端表面恒为源尺寸，而 Anime4K 链内部按 2× 源渲染，成本只与源分辨率
+  // 相关、与视口无关。若沿用视口放大后的 output，全屏时预算会无谓爆掉，
+  // 表现为"半屏能超分、全屏只剩高质量缩放"。桌面端 surfaceOutput == output，
+  // 行为与上游一致。
   final neuralMemory =
-      (pixels * 8 * 18 + output.width * output.height * 8 * 3) / (1024 * 1024);
-  final neuralSize = !android;
-  final neural = neuralSize && neuralMemory <= memory && rate < 1.5;
+      (pixels * 8 * 18 + surfaceOutput.width * surfaceOutput.height * 8 * 3) /
+      (1024 * 1024);
+  // [移植改造] 原始实现为：
+  //     final neuralSize = !android;
+  //     final neural = neuralSize && neuralMemory <= memory && rate < 1.5;
+  // 安卓被硬性排除在"神经超分"之外，导致下一句 `animation && neural && allowed(anime)`
+  // 恒为 false，Anime4K 即使在 resources 与 costLimit 都放行的情况下也永远选不中。
+  //
+  // 放开方式：安卓同样参与神经超分候选，但**不绕过任何资源约束**——
+  // 仍受显存预算 memory（安卓 128MB / 低内存机 64MB，桌面 512MB）与
+  // GLES >= 3.0（`android && power.gles < 0x30000` 分支）的双重限制，
+  // 内存不够或 GLES 版本不足时由这些条件自然回退，而不是在此处一刀切禁用。
+  // [移植改造] 末端的 `rate < 1.5` 改为 `rate <= kNeuralMaxRate`（默认 2.0）：
+  // 该条件直接决定能否进入下方 `animation && neural && allowed(anime)` 分支，
+  // 原值会让 1.5x 及以上的播放**静默失去** Anime4K（界面无任何提示）。
+  final neural = neuralMemory <= memory && rate <= kNeuralMaxRate;
   if (preferences.mode == VideoEnhancementMode.quality &&
       !animation &&
       hardware &&
@@ -244,12 +368,16 @@ VideoEnhancementDecision chooseVideoEnhancement({
       allowed(VideoEnhancementBackend.hardware)) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.hardware,
-      output,
+      surfaceOutput,
       '驱动增强效果以原画对比为准',
     );
   }
   if (animation && neural && allowed(VideoEnhancementBackend.anime)) {
-    return VideoEnhancementDecision(VideoEnhancementBackend.anime, output, '');
+    return VideoEnhancementDecision(
+      VideoEnhancementBackend.anime,
+      surfaceOutput,
+      '',
+    );
   }
   if (preferences.mode == VideoEnhancementMode.quality &&
       !animation &&
@@ -260,16 +388,21 @@ VideoEnhancementDecision chooseVideoEnhancement({
       allowed(VideoEnhancementBackend.fsrcnnx)) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.fsrcnnx,
-      output,
+      surfaceOutput,
       '',
     );
   }
   final ravuMemory =
-      (pixels * 8 * 10 + output.width * output.height * 8 * 3) / (1024 * 1024);
-  if (ratio > 1.42 &&
+      (pixels * 8 * 10 + surfaceOutput.width * surfaceOutput.height * 8 * 3) /
+      (1024 * 1024);
+  if (upscale > 1.42 &&
       ravuMemory <= memory &&
       allowed(VideoEnhancementBackend.ravu)) {
-    return VideoEnhancementDecision(VideoEnhancementBackend.ravu, output, '');
+    return VideoEnhancementDecision(
+      VideoEnhancementBackend.ravu,
+      surfaceOutput,
+      '',
+    );
   }
   return scaling;
 }

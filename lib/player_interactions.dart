@@ -9,7 +9,9 @@ import 'package:media_kit/media_kit.dart';
 import 'app_layout.dart';
 import 'widgets.dart';
 
-enum SwipeAction { none, brightness, episode }
+// [手势分区·2026-10] 左半屏垂直=亮度；右半屏水平=进度调整（新增），
+// 右半屏垂直=刷剧切集（保留，方向区分互不干扰）。
+enum SwipeAction { none, brightness, episode, progress }
 
 class GestureHudState {
   const GestureHudState({
@@ -65,6 +67,8 @@ class PlayerInteractions extends ChangeNotifier {
   bool _keyboardHold = false;
   bool _cancelUntilRelease = false;
   bool _disposed = false;
+  bool _boostRestoring = false;
+  bool _progressPreviewing = false;
   double _unmutedVolume = 100;
   String _feedback = '';
   DateTime _ignoreTapUntil = DateTime(2000);
@@ -74,11 +78,34 @@ class PlayerInteractions extends ChangeNotifier {
   double _initialBrightness = 0.5;
   double _viewWidth = 0.0;
   double _viewHeight = 0.0;
+  int _seekSeconds = 0;
   Timer? _hudTimer;
+
+  /// 右半屏水平拖动 → 进度调整量：拖动满屏宽 ≈ ±90 秒（常见播放器量级）。
+  static const double _kProgressFullWidthSeconds = 90;
+
+  /// 把水平拖动像素换算成秒（正=快进，负=后退）。
+  int _progressSeconds(double dx) =>
+      _viewWidth <= 0 ? 0 : (dx / _viewWidth * _kProgressFullWidthSeconds).round();
+
+  /// 拖动过程中的实时目标位置提示（与 seek() 的提示文案保持一致）。
+  String _seekHint(int seconds) {
+    if (player.state.duration <= Duration.zero) return '';
+    final target = (player.state.position.inMilliseconds + seconds * 1000)
+        .clamp(0, player.state.duration.inMilliseconds);
+    return '${seconds > 0 ? '快进至' : '后退至'} ${formatPosition(target / 1000)}';
+  }
 
   GestureHudState get hudState => _hudState;
   double get brightness => _brightness;
   bool get isBrightnessActive => _hudState.type == SwipeAction.brightness;
+
+  /// 进程态提示（倍速 boost 中/恢复、右半屏进度拖动预览）期间不唤出
+  /// 播放器 chrome（暂停键/进度条）。这些提示走 feedback 通道展示toast，
+  /// 会被 player_controls 的 _interactionChanged 误判为「该显示控件了」，
+  /// 导致长按倍速时屏幕中间弹出暂停按钮、下方弹出进度条（+90 修复）。
+  bool get chromeHintSuppressed =>
+      _boosting || _boostRestoring || _progressPreviewing;
 
   void setBrightnessDirect(double value) {
     if (_disposed) return;
@@ -104,6 +131,10 @@ class PlayerInteractions extends ChangeNotifier {
     }
     if (!persistent && message.isNotEmpty) {
       _hintTimer = Timer(const Duration(milliseconds: 1200), () {
+        // 恢复倍速的提示到期即解除 chrome 抑制；仍在 boost 中的由
+        // _boosting 继续抑制（持久提示不走进这个分支）。
+        _boostRestoring = false;
+        _progressPreviewing = false;
         hint(_boosting ? '3 倍速 · 松开恢复' : '', persistent: true);
       });
     }
@@ -150,6 +181,8 @@ class PlayerInteractions extends ChangeNotifier {
     _boosting = false;
     if (boosted) {
       unawaited(_setRate(baseSpeed()));
+      // 恢复提示同样属进程态，抑制 chrome（+90：长按倍速不应拉出控件）。
+      _boostRestoring = true;
       if (!silent) hint('恢复 ${baseSpeed()} 倍速');
     } else if (tap && wasKeyboard) {
       seek(5);
@@ -165,6 +198,9 @@ class PlayerInteractions extends ChangeNotifier {
     _pointer = null;
     _origin = null;
     _lastPosition = null;
+    _seekSeconds = 0;
+    _boostRestoring = false;
+    _progressPreviewing = false;
     _endHold(silent: true);
     hint('');
   }
@@ -189,12 +225,14 @@ class PlayerInteractions extends ChangeNotifier {
     _viewWidth = width;
     _viewHeight = height;
     _moved = _held = false;
+    _seekSeconds = 0;
     _swipeAction = SwipeAction.none;
 
     if (_swipeEnabled && width > 0) {
       // 判定触摸落点：
       // 左侧 35% 区域 -> 呼出并拉动红果风格亮度条
-      // 其余区域 -> 刷剧切集，绝对不调节音量
+      // 右侧 65% 区域 -> 水平拖动调整进度，垂直滑动刷剧切集，绝对不调节音量
+      // （水平/垂直在 pointerMove 里按主方向 latch，二者互斥）
       if (event.localPosition.dx < width * 0.35) {
         _swipeAction = SwipeAction.brightness;
         AppDevice.getBrightness().then((val) {
@@ -218,7 +256,7 @@ class PlayerInteractions extends ChangeNotifier {
       _moved = true;
       _endHold();
     }
-    if (!_swipeEnabled || !_moved || _viewHeight <= 0) return;
+    if (!_swipeEnabled || !_moved || _viewHeight <= 0 || _viewWidth <= 0) return;
 
     final dy = _origin!.dy - event.localPosition.dy; // 向上滑动为增加，向下滑动为减少
     final deltaRatio = dy / (_viewHeight * 0.6);
@@ -227,6 +265,25 @@ class PlayerInteractions extends ChangeNotifier {
       _brightness = (_initialBrightness + deltaRatio).clamp(0.01, 1.0);
       AppDevice.setBrightness(_brightness);
       _showHud(SwipeAction.brightness, _brightness);
+    } else if (_swipeAction == SwipeAction.episode ||
+        _swipeAction == SwipeAction.progress) {
+      // 右半屏：水平主方向一旦超过阈值即 latch 为进度调整（不可逆），
+      // 垂直主方向维持切集语义，pointerUp 按最终 latch 结果分发。
+      final dx = diff.dx;
+      if (_swipeAction == SwipeAction.episode &&
+          dx.abs() > _swipeThreshold &&
+          dx.abs() > diff.dy.abs()) {
+        _swipeAction = SwipeAction.progress;
+      }
+      if (_swipeAction == SwipeAction.progress) {
+        _seekSeconds = _progressSeconds(dx);
+        final preview = _seekHint(_seekSeconds);
+        if (preview.isNotEmpty) {
+          // 拖动预览属进程态提示，抑制 chrome（+90，同倍速 boost）。
+          _progressPreviewing = true;
+          hint(preview, persistent: true);
+        }
+      }
     }
   }
 
@@ -241,7 +298,13 @@ class PlayerInteractions extends ChangeNotifier {
     final delta = (_lastPosition ?? event.localPosition) - _origin!;
     final isVertical = delta.dy.abs() >= _swipeThreshold && delta.dy.abs() > delta.dx.abs() * 1.5;
 
-    if (_swipeAction == SwipeAction.episode &&
+    if (_swipeAction == SwipeAction.progress && _swipeEnabled && _moved) {
+      // 右半屏水平拖动提交：seek() 自带 available/duration 校验与 clamp，
+      // 并发出与双击快进一致的最终提示（自动清除拖动期的常驻预览）。
+      // 提交即结束进程态，解除 chrome 抑制，最终提示按普通提示处理。
+      _progressPreviewing = false;
+      if (_seekSeconds != 0) seek(_seekSeconds);
+    } else if (_swipeAction == SwipeAction.episode &&
         _swipeEnabled &&
         !_held &&
         _moved &&

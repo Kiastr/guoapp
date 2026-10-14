@@ -14,6 +14,7 @@ import 'hongguo_series.dart';
 import 'lan_sync_models.dart';
 
 part 'local_store_sync.dart';
+part 'local_store_webdav.dart';
 
 class LocalStore extends ChangeNotifier {
   /// [pinHasher] 可注入，便于测试替换掉默认的 isolate 哈希实现。

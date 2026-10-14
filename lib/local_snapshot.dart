@@ -37,6 +37,7 @@ class LocalSnapshot {
     'sourceGateSalt',
     'sourceGateHash',
     'forceLogin',
+    'webdavSettings',
   };
   final SharedPreferences preferences;
   Map<String, Object> _values = {};

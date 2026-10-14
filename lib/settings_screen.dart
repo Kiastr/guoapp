@@ -16,6 +16,7 @@ import 'sources_screen.dart';
 import 'widgets.dart';
 import 'resource_settings_screen.dart';
 import 'lan_screen.dart';
+import 'webdav_screen.dart';
 import 'diary_service.dart';
 
 String storageSize(int bytes) {
@@ -150,6 +151,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: const Text('局域网自动同步追剧与推送播放'),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: () => openLanSync(context),
+              ),
+              ListTile(
+                key: const ValueKey('webdav-settings'),
+                leading: const Icon(Icons.cloud_sync_outlined),
+                title: const Text('WebDAV 同步'),
+                subtitle: const Text('通过 WebDAV 网盘在多设备间同步追剧与观看记录'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => WebDavSyncScreen(store: widget.store),
+                  ),
+                ),
               ),
               if (widget.repository.supportsSourceManagement)
                 ListTile(

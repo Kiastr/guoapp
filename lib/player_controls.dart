@@ -155,7 +155,13 @@ class _PlayerControlsState extends State<PlayerControls> {
   }
 
   void _interactionChanged() {
-    if (mounted && widget.interactions.feedback.isNotEmpty) _show();
+    // [chrome 抑制·2026-10] 倍速 boost 与右半屏进度拖动预览属进程态提示，
+    // 只展示 toast，不唤出暂停键/进度条等 chrome（长按倍速误弹控件修复）。
+    if (mounted &&
+        widget.interactions.feedback.isNotEmpty &&
+        !widget.interactions.chromeHintSuppressed) {
+      _show();
+    }
   }
 
   void _scheduleHide() {
