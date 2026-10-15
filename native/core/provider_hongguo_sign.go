@@ -39,6 +39,23 @@ func newHongguoDeviceID() string {
 // 服务端上线该校验后即被拒。**Gorgon 算法本身没有错**——实测本函数的 Gorgon
 // 与参考实现的 RC4 变体虽算法不同，两者都被服务端接受。
 //
+// 【2026-10-16 07:50 复验快照】同一规则再次逐组实测（各 3 次），结论稳定：
+//
+//	旧四头 gorgon+khronos+ss-stub+ss-req-ticket → 0/3（200 空 body）
+//	补齐 argus+ladon                            → 3/3
+//	**有 argus+ladon 但不带 gorgon**             → 3/3（argus/ladon 才是校验关键，
+//	                                              gorgon 孤立出现反而有害）
+//	仅 gorgon+khronos                           → 0/3
+//	完全不带签名                                 → 3/3
+//
+// 【设备标识维度已排除】hongguo-drama 的 issue #19 提到「平台风控按设备限制取址」，
+// 其 v1.7 用「每次请求更换合成设备标识符」绕过（时间线自 10/13 起，早于 10/15 的
+// 签名校验，属**另一类**故障）。2026-10-16 用 2×2 矩阵实测（固定/轮换 device_id ×
+// 带/不带 iid，各 5 次）**四组全部 5/5 通过** ⇒ 本端点在「匿名 + 完整签名 + 免费集」
+// 下不按设备限流，本项目沿用 state 中持久化的 device_id / iid 即可，无需改为逐请求轮换。
+// （另：hongguo-drama 的 app-source.js 同时带 iid 与 device_id 且逐请求更换；
+// 低星仓库 sgccdev 的 README 称「不要加 iid，会被风控拦」，该说法实测未复现。）
+//
 // X-Argus / X-Ladon 构造极简，就是同一时间戳的 base64 两种字节序：
 //
 //	x-argus = base64(le32(khronos))
