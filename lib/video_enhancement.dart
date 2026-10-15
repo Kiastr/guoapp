@@ -356,9 +356,8 @@ class VideoEnhancementController extends ChangeNotifier {
         VideoEnhancementBackend.fsrcnnx => <String>[
           VideoEnhancementAssets.fsrcnnx,
         ],
-        // [档位·2026-10] 高级档按 tier 选链：质量档=VL 平权（Kazumi
-        // mpvAnime4KShaders），轻量档=M/S 平权（+87 默认，Kazumi
-        // mpvAnime4KShadersLite）。两链 WHEN 均保留，平台筛选由 mpv 完成。
+        // [档位·2026-10] 高级档按 tier 选链：质量档=VL 链，
+        // 轻量档=M/S 链（+87 默认）。两链 WHEN 均保留，平台筛选由 mpv 完成。
         VideoEnhancementBackend.anime => switch (_preferences.tier) {
           VideoEnhancementTier.quality => VideoEnhancementAssets.animeChainQuality,
           VideoEnhancementTier.minimal => VideoEnhancementAssets.animeChainMinimal,

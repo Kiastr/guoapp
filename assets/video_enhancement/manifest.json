@@ -24,63 +24,63 @@
       "bytes": 2795,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Restore/Anime4K_Clamp_Highlights.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_Restore_CNN_M.glsl": {
       "sha256": "67ea3ed26539e8de3b7d307688535d2ff17e8d147e11dda0247da7770dbecf41",
       "bytes": 35916,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Restore/Anime4K_Restore_CNN_M.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_Restore_CNN_S.glsl": {
       "sha256": "97c24dc370ab300c108bfaa09db7f175aeff343674842c299cf3940a3d330427",
       "bytes": 17136,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Restore/Anime4K_Restore_CNN_S.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_Upscale_CNN_x2_M.glsl": {
       "sha256": "716e02098a68f0d648761f2b96b4dd139e1cb09b174bb369fca3aa34328fff7e",
       "bytes": 37685,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_Upscale_CNN_x2_M.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_AutoDownscalePre_x2.glsl": {
       "sha256": "8c58291740146bd766a4d73f132775a797fe80f7d07919b5d767e27a5dc85656",
       "bytes": 1560,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_AutoDownscalePre_x2.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_AutoDownscalePre_x4.glsl": {
       "sha256": "5af62d8cd844916dc1126613e13bad3beab195787f93a71200b47c6ec78f2e41",
       "bytes": 1568,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_AutoDownscalePre_x4.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_Upscale_CNN_x2_S.glsl": {
       "sha256": "4c53ec2e287908f7ee7bcb266b0170421626d663576468b7d7dafc62962649a4",
       "bytes": 18638,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_Upscale_CNN_x2_S.glsl",
       "license": "MIT",
-      "note": "上游原版（+87 引入，Kazumi 轻量档平权链，与 Kazumi bundled 版逐字节一致）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
+      "note": "上游原版（+87 引入的轻量档链）。WHEN 指令全部保留：安卓端表面恒源尺寸（+82 决策），mpv 自动跳过 Upscale/AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效（同分辨率重建/降噪，替代 +85/+86 的 Upscale roundtrip 方案）；桌面端表面仍放大 2×，全链生效。顺序须与 lib/video_enhancement_assets.dart 的 animeChain 一致。"
     },
     "Anime4K_Restore_CNN_VL.glsl": {
       "sha256": "35036722733305cd4d4e57660b883bbe2569ba2914033c254327107d7b77e35e",
       "bytes": 144075,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Restore/Anime4K_Restore_CNN_VL.glsl",
       "license": "MIT",
-      "note": "上游原版（+89 引入，Kazumi 质量档平权链组件，与 Kazumi bundled 版逐字节一致）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
+      "note": "上游原版（+89 引入的质量档链组件）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
     },
     "Anime4K_Upscale_CNN_x2_VL.glsl": {
       "sha256": "5638fe31c37c151a3443fea3451a3ef91af073f4dbb9615f6c0d1e29db11493d",
       "bytes": 146743,
       "source": "https://github.com/bloc97/Anime4K/blob/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_Upscale_CNN_x2_VL.glsl",
       "license": "MIT",
-      "note": "上游原版（+89 引入，Kazumi 质量档平权链组件，与 Kazumi bundled 版逐字节一致）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
+      "note": "上游原版（+89 引入的质量档链组件）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
     }
   }
 }

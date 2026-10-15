@@ -54,14 +54,14 @@ Size? videoDisplaySize(VideoParams parameters) {
 ///
 /// ## 为什么不放大会表面也有超分效果
 ///
-/// Anime4K 链（+87 起为 Kazumi 轻量档平权 7 文件链，见
+/// Anime4K 链（+87 起为轻量档 7 文件链，见
 /// lib/video_enhancement_assets.dart 的 animeChain）按 WHEN 指令分平台生效：
 /// 安卓端表面恒为视频显示尺寸（OUTPUT≡MAIN），mpv 自动跳过全部 Upscale /
 /// AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效——这是
-/// **同分辨率重建/降噪**（去压缩噪点、重建线条），正是 Kazumi 安卓端唯一
+/// **同分辨率重建/降噪**（去压缩噪点、重建线条），也是安卓端唯一
 /// 生效的形态；桌面端表面仍放大 2×（WHEN 为真），Upscale 链全生效，
 /// 内部按 2× 源渲染、Depth-to-Space 输出后由 mpv 缩放到表面。
-/// 两条路径都只 `change-list glsl-shaders set`，不动表面尺寸，与 Kazumi 一致。
+/// 两条路径都只 `change-list glsl-shaders set`，不动表面尺寸。
 ///
 /// 若未来确需表面放大：只能在 `VideoController` 创建时通过
 /// `VideoControllerConfiguration` 一次性指定 width/height，播放中改必踩上述

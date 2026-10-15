@@ -20,8 +20,8 @@ enum VideoEnhancementContent {
 /// 高级模式（advanced）下的 Anime4K 链档位。
 /// [minimal] = 极简档（Clamp + Restore_CNN_S，即轻量档去掉 M 档重建与超分链，
 /// 每帧 7 个 pass、卷积量约为轻量档的 30%，骁龙 865 一类设备也能跑，+95）；
-/// [lite] = Kazumi 轻量档平权（Restore M+S，流畅优先，+87 默认）；
-/// [quality] = Kazumi 质量档平权（Restore VL + Upscale VL，效果优先，
+/// [lite] = 轻量档（Restore M+S，流畅优先，+87 默认）；
+/// [quality] = 质量档（Restore VL + Upscale VL，效果优先，
 /// 负载显著更高，可能触发性能看门狗自动降级）。
 enum VideoEnhancementTier {
   minimal('极简档'),

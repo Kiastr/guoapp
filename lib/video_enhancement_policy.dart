@@ -250,7 +250,7 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // _onLog/handlePlaybackError -> _failBackend 兜底（4 次后熔断暂停），
   // 不依赖本函数预判。
   // 安卓端 scale/maxPixels 上限对渲染无实际影响（表面恒为源尺寸、shader
-  // 内部恒按 2× 源渲染）；桌面端沿用放大的 output，与上游 Kazumi 语义一致。
+  // 内部恒按 2× 源渲染）；桌面端沿用放大的 output，与上游语义一致。
   if (preferences.mode == VideoEnhancementMode.advanced) {
     return VideoEnhancementDecision(
       VideoEnhancementBackend.anime,
