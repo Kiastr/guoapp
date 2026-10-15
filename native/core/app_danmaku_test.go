@@ -85,8 +85,16 @@ func TestHongguoDanmakuCacheAndConcurrentRequests(t *testing.T) {
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 		count := calls.Add(1)
 		if request.URL.Path == "/novel/player/video_detail/v1/" {
-			if request.Header.Get("X-Argus") != "" || request.Header.Get("X-Ladon") != "" || request.Header.Get("Comment-Source") != "" {
+			// 评论链路专属的头不得泄漏进普通播放请求。
+			if request.Header.Get("Comment-Source") != "" || request.Header.Get("Server-Channel") != "" {
 				t.Error("comment signatures leaked into the regular player request")
+			}
+			// 普通播放请求必须带齐最小签名集：缺 X-Argus / X-Ladon 时服务端会返回
+			// 200 空 body（2026-10-15 起上线该校验，详见 provider_hongguo_sign.go 注释）。
+			for _, name := range []string{"X-Gorgon", "X-Khronos", "X-Argus", "X-Ladon"} {
+				if request.Header.Get(name) == "" {
+					t.Errorf("regular request missing signature header: %s", name)
+				}
 			}
 			return rankingHTTPResponse(request, 200, `{"code":0}`), nil
 		}
