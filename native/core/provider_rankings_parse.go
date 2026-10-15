@@ -162,10 +162,17 @@ func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) 
 			seen, previous := map[string]bool{}, 0
 			for _, item := range graph.Items {
 				parsed, err := url.Parse(item.URL)
-				if err != nil || !strings.HasPrefix(parsed.Path, "/detail/") {
+				// 站点曾用 /detail/{id}/ 作为详情路径，现行 JSON-LD 已改为 /video/{id}/，
+				// 两种路径都接受（/detail/ 仍可访问，保留兼容）。
+				var id string
+				switch {
+				case err == nil && strings.HasPrefix(parsed.Path, "/detail/"):
+					id = strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/detail/"), "/")
+				case err == nil && strings.HasPrefix(parsed.Path, "/video/"):
+					id = strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/video/"), "/")
+				default:
 					return rankingPage{}, failure
 				}
-				id := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/detail/"), "/")
 				if !rankingSourceID.MatchString(id) || strings.TrimSpace(item.Name) == "" || item.Position <= previous || seen[id] {
 					return rankingPage{}, failure
 				}

@@ -36,6 +36,11 @@ func (r *rangeProbeReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// zz14Reader 是 TestNativeUpstreamIgnoringRangeStillHonoursOffsets 使用的载荷源，
+// 与 rangeProbeReader 同形态。提交 d14f36f 时只提交了引用未提交定义，导致整个
+// core 包测试无法编译（go test 直接 build failed），此处别名声明确义。
+type zz14Reader = rangeProbeReader
+
 // TestZZ14UpstreamIgnoresRange reproduces the real CDN behaviour observed in the
 // device log: a Range request is answered with 200 and the whole file. The proxy
 // must still honour the requested offset, otherwise a seek hands the player

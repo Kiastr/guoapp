@@ -107,6 +107,27 @@ func TestHuangguoRankingStructuredData(t *testing.T) {
 	}
 }
 
+// TestHuangguoRankingVideoPathStructure：站点 JSON-LD 的条目路径由 /detail/ 改为
+// /video/（2026-10-15 观察到），解析器必须两种都接受，否则榜单报「页面结构变化」。
+func TestHuangguoRankingVideoPathStructure(t *testing.T) {
+	board, _ := findRankingBoard("huangguo-potential")
+	body := `<script type="application/ld+json">{"@graph":[{"@type":"ItemList","@id":"https://huangguoai.com/ranks/potential/#itemlist","itemListElement":[{"position":1,"name":"A & B","url":"https://huangguoai.com/video/12/"},{"position":2,"name":"第二条","url":"https://huangguoai.com/video/34/"}]}]}</script>`
+	result, err := parseHuangguoRanking(body, board)
+	if err != nil || len(result.Items) != 2 || result.Items[0].Rank != 1 || result.Items[0].Drama.ID != "huangguoai:12" || result.Items[1].Drama.ID != "huangguoai:34" {
+		t.Fatalf("could not parse current /video/ rank structure: %+v %v", result, err)
+	}
+	// 镜像域名下发（JSON-LD 的 @id 与条目 URL 均带镜像主机）同样要能解析。
+	mirrored := strings.ReplaceAll(body, "https://huangguoai.com", "https://d37e2.rw41j53w.cc")
+	result, err = parseHuangguoRanking(mirrored, board)
+	if err != nil || len(result.Items) != 2 {
+		t.Fatalf("could not parse mirrored rank structure: %+v %v", result, err)
+	}
+	// 未知路径仍然要拒绝。
+	if _, err := parseHuangguoRanking(strings.ReplaceAll(body, "/video/34/", "/other/34/"), board); err == nil {
+		t.Fatal("accepted an unknown detail path")
+	}
+}
+
 type rankingTransport func(*http.Request) (*http.Response, error)
 
 func (transport rankingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
