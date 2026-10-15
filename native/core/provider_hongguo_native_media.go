@@ -12,6 +12,18 @@ import (
 	"time"
 )
 
+// 【端点选择依据】2026-10-16 用完整签名（gorgon+khronos+argus+ladon）实测三个端点：
+//
+//	/novel/player/video_model/v1/            → 200 code:0（本函数在用；data.video_model）
+//	/novel/player/multi_video_model/v1/      → 200 code:0（批量，按 video_id 索引）
+//	/novel/player/multi_video_model/preload/v1/ → 200 code:0（批量预加载）
+//	/novel/player/video_model/preload/v1/    → 404（**不存在**，勿照搬）
+//
+// 三者当前都可用，故**无需为端点切换做特殊处理**；选单集端点的理由是返回结构最直接
+// （data.video_model 单条），批量端点留作将来批量取流/预加载优化的候选。
+// 背景：hongguoTV issue #17（2026-10-13）曾报「批量接口返回错误码 110001」并建议改用单集
+// 接口或 multi_video_model/preload/v1——那是签名校验（10/15）**之前**的另一类现象，
+// 此刻已不复现；如将来再现 110001（而非 200 空 body），可优先切到上述 preload 端点。
 func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoID string) (providerMedia, error) {
 	if !hongguoNumericID.MatchString(videoID) {
 		return providerMedia{}, errors.New("红果视频 ID 无效")
