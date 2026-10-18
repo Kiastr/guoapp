@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core_bridge.dart';
+import 'libretv.dart';
 import 'local_store.dart';
 import 'models.dart';
 import 'source_status.dart';
@@ -42,6 +43,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
   Timer? _timer;
   bool _polling = false;
   int _ticks = 0;
+  /// 已导入的 LibreTV 站点（来自原生核心 libretv.json，含目录缓存计数）。
+  List<LibreTVSite> _libretvSites = const [];
+  bool _libretvBusy = false;
 
   @override
   void initState() {
@@ -70,6 +74,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     if (_polling) return;
     _polling = true;
     final epoch = widget.store.profileEpoch;
+    await _refreshLibreTV(epoch);
     try {
       await Future.wait([
         for (final source in widget.store.sources)
@@ -97,6 +102,27 @@ class _SourcesScreenState extends State<SourcesScreen> {
       ]);
     } finally {
       _polling = false;
+    }
+  }
+
+  /// 拉取已导入的 LibreTV 站点并同步 SourceSite 运行时注册表。
+  /// 原生核心 libretv.json 是权威来源；本方法同时承担注册表自愈
+  /// （启动同步失败或其他页面导入后，下次轮询即恢复）。
+  Future<void> _refreshLibreTV(int epoch) async {
+    if (!widget.repository.supportsSourceManagement) return;
+    try {
+      final sites = await widget.repository.libretvSites();
+      if (!mounted || epoch != widget.store.profileEpoch) return;
+      SourceSite.setRuntimeSources([for (final site in sites) site.toSourceSite()]);
+      final keys = {for (final site in sites) site.sourceId};
+      final previous = {for (final site in _libretvSites) site.sourceId};
+      final changed = keys.length != previous.length ||
+          keys.any((key) => !previous.contains(key));
+      setState(() => _libretvSites = sites);
+      // 注册表发生变化才广播，避免每 10 秒轮询都惊动首页刷新。
+      if (changed) widget.store.notifySourceRegistryChanged();
+    } catch (_) {
+      // 非原生环境或核心暂不可用时静默跳过，不影响其他站源状态展示。
     }
   }
 
@@ -189,6 +215,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       '各站源可分别更新和检测。更新会查找新剧、继续加载一页历史内容，并分批补齐资料；离开此页后任务继续。',
                     ),
                   ),
+                  _libretvCard(),
                   if (sources.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
@@ -225,6 +252,172 @@ class _SourcesScreenState extends State<SourcesScreen> {
       );
     },
   );
+
+  /// LibreTV 片源导入入口卡片：说明支持的输入形态 + 已导入站点管理。
+  Widget _libretvCard() {
+    final theme = Theme.of(context);
+    final sites = _libretvSites;
+    final supported = widget.repository.supportsSourceManagement;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 16),
+      child: ExpansionTile(
+        key: const PageStorageKey('libretv-import'),
+        leading: const Icon(Icons.playlist_add_outlined),
+        title: const Text('LibreTV 片源'),
+        subtitle: Text(
+          sites.isEmpty ? '导入 LibreTV / MacCMS 片源' : '已导入 ${sites.length} 个站点',
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          Text(
+            '可粘贴三种内容：LibreTV 订阅配置链接（返回 {"sites":[...]} 的 JSON 地址）、'
+            '配置 JSON 原文、或单个 MacCMS provide/vod 采集地址。'
+            '导入后即可像其他站源一样浏览、搜索与播放；type≥3 的 drpy 源暂不支持，会自动跳过。',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Tooltip(
+              message: supported
+                  ? '粘贴 LibreTV 订阅配置链接、配置 JSON 或 MacCMS provide/vod 采集地址'
+                  : '当前环境不支持导入片源',
+              child: FilledButton.icon(
+                onPressed: supported && !_libretvBusy ? _importLibreTV : null,
+                icon: const Icon(Icons.add_link_rounded),
+                label: Text(_libretvBusy ? '导入中…' : '导入片源'),
+              ),
+            ),
+          ),
+          if (sites.isNotEmpty) ...[
+            const Divider(height: 24),
+            for (final site in sites)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.subscriptions_outlined),
+                title: Text(site.name),
+                subtitle: Text('${site.api}\n${site.count} 部'),
+                isThreeLine: true,
+                trailing: IconButton(
+                  tooltip: '删除${site.name}',
+                  onPressed: _libretvBusy ? null : () => _removeLibreTV(site),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importLibreTV() async {
+    final input = await showDialog<String>(
+      context: context,
+      builder: (_) => const _LibreTVImportDialog(),
+    );
+    if (input == null || input.isEmpty) return;
+    setState(() => _libretvBusy = true);
+    try {
+      final result = await widget.repository.libretvImport(input);
+      if (!mounted) return;
+      // 导入已入库：先用导入结果即时刷新（计数待校正），再异步拉完整列表。
+      final merged = <LibreTVSite>[
+        for (final site in _libretvSites)
+          if (!result.added.any((added) => added.key == site.key)) site,
+        ...result.added,
+      ];
+      SourceSite.setRuntimeSources([
+        for (final site in merged) site.toSourceSite(),
+      ]);
+      setState(() {
+        _libretvSites = merged;
+        _libretvBusy = false;
+      });
+      widget.store.notifySourceRegistryChanged();
+      final skipped = result.skipped;
+      final summary = StringBuffer('新增 ${result.added.length} 个片源');
+      summary.write(' · 已验证 ${result.verified} 个');
+      if (skipped.isNotEmpty) {
+        final preview = skipped.take(2).join('、');
+        summary.write(
+          ' · 跳过 ${skipped.length} 个（$preview${skipped.length > 2 ? ' 等' : ''}）',
+        );
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(summary.toString())));
+      try {
+        final sites = await widget.repository.libretvSites();
+        if (!mounted) return;
+        SourceSite.setRuntimeSources([
+          for (final site in sites) site.toSourceSite(),
+        ]);
+        setState(() => _libretvSites = sites);
+      } catch (_) {
+        // 计数校正失败不影响导入结果，下次轮询会补齐。
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导入失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _removeLibreTV(LibreTVSite site) =>
+      _removeLibreTVKey(site.sourceId, site.name);
+
+  /// 删除 LibreTV 片源：连同原生核心的目录缓存一并清除（Go 侧
+  /// removeLibreTVSite 负责），并同步注销运行时注册表。
+  Future<void> _removeLibreTVKey(String sourceId, String name) async {
+    final key = sourceId.startsWith('libretv:')
+        ? sourceId.substring('libretv:'.length)
+        : sourceId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除「$name」？'),
+        content: const Text('将同时清除该片源在本机的目录缓存，删除后需重新导入。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _libretvBusy = true);
+    try {
+      await widget.repository.libretvRemove(key);
+      if (!mounted) return;
+      SourceSite.unregisterRuntime(sourceId);
+      setState(() {
+        _libretvSites = _libretvSites
+            .where((site) => site.sourceId != sourceId)
+            .toList();
+        _libretvBusy = false;
+      });
+      widget.store.notifySourceRegistryChanged();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已删除「$name」')));
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      }
+    }
+  }
 
   Widget _sourceCard(SourceSite source) {
     final status = _statuses[source.id];
@@ -290,7 +483,13 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 PopupMenuButton<String>(
                   tooltip: '${source.name}更多操作',
                   enabled: enabled,
-                  onSelected: (operation) => _run(source, operation),
+                  onSelected: (operation) {
+                    if (operation == 'removeLibreTV') {
+                      _removeLibreTVKey(source.id, source.name);
+                      return;
+                    }
+                    _run(source, operation);
+                  },
                   itemBuilder: (_) => [
                     PopupMenuItem(
                       value: 'more',
@@ -308,6 +507,12 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       value: 'checkCatalog',
                       child: Text('仅检测目录'),
                     ),
+                    if (source.isRuntime)
+                      PopupMenuItem(
+                        value: 'removeLibreTV',
+                        enabled: !_libretvBusy,
+                        child: const Text('删除此片源'),
+                      ),
                   ],
                 ),
               ],
@@ -471,6 +676,56 @@ class _SourcesScreenState extends State<SourcesScreen> {
       ),
     );
   }
+}
+
+/// LibreTV 导入对话框。TextField 的 controller 由对话框自己的 State
+/// 持有并在 dispose 时释放——放在调用方会在对话框退场动画期间提前
+/// dispose，触发「controller used after disposed」断言。
+class _LibreTVImportDialog extends StatefulWidget {
+  const _LibreTVImportDialog();
+
+  @override
+  State<_LibreTVImportDialog> createState() => _LibreTVImportDialogState();
+}
+
+class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('导入 LibreTV 片源'),
+    content: TextField(
+      controller: _controller,
+      maxLines: 6,
+      autofocus: true,
+      decoration: const InputDecoration(
+        labelText: '片源链接 / 配置 JSON / 采集地址',
+        hintText:
+            'https://example.com/libretv/config.json\n'
+            '或 {"sites":[{"key":"a","name":"A","type":1,'
+            '"api":"https://example.com/provide/vod"}]}\n'
+            '或 https://example.com/provide/vod',
+        border: OutlineInputBorder(),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () =>
+            Navigator.pop(context, _controller.text.trim()),
+        child: const Text('导入'),
+      ),
+    ],
+  );
 }
 
 class SourceDiagnosticsButton extends StatelessWidget {

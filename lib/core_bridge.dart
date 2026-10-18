@@ -9,6 +9,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
+import 'libretv.dart';
 import 'danmaku_models.dart';
 import 'background_downloads.dart';
 import 'local_store.dart';
@@ -125,6 +126,13 @@ abstract class AppRepository {
   }) async => throw AppFailure('当前环境不支持站源管理');
   Future<SourceStatus> cancelSourceJob(String source) async =>
       throw AppFailure('当前环境不支持站源管理');
+  /// LibreTV 片源：列出已导入站点（启动时同步到 SourceSite 运行时注册表）。
+  Future<List<LibreTVSite>> libretvSites() async => const [];
+  /// 导入 LibreTV 订阅：输入片源链接、配置 JSON 或裸 provide/vod 地址。
+  Future<LibreTVImportResult> libretvImport(String subscription) async =>
+      throw AppFailure('当前环境不支持导入 LibreTV 片源');
+  /// 删除已导入的 LibreTV 站点（连同其目录缓存）。
+  Future<void> libretvRemove(String key) async {}
   Future<List<String>> suggestions(String query) async => const [];
   Future<Map<String, dynamic>> storage() async => {};
   Future<String> downloadDirectory() async =>
@@ -228,9 +236,9 @@ class NativeRepository extends AppRepository {
   @override
   Future<void> cancelHandoff() => _cancelReads('handoff');
 
-  void _adminPermission() {
+  void _adminPermission([String message = '仅管理员可修改本机资源设置']) {
     if (access != null && (access!.locked || !access!.profile.admin)) {
-      throw AppFailure('仅管理员可修改本机资源设置');
+      throw AppFailure(message);
     }
   }
 
@@ -466,6 +474,29 @@ class NativeRepository extends AppRepository {
       'query': query,
     });
     return (result['items'] as List? ?? []).whereType<String>().toList();
+  }
+
+  @override
+  Future<List<LibreTVSite>> libretvSites() async {
+    final result = await _call({'action': 'libretvSites'});
+    return (result['sites'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => LibreTVSite.fromJson(Map<String, dynamic>.from(row)))
+        .toList();
+  }
+
+  @override
+  Future<LibreTVImportResult> libretvImport(String subscription) async {
+    _adminPermission('仅管理员可导入 LibreTV 片源');
+    return LibreTVImportResult.fromJson(
+      await _call({'action': 'libretvImport', 'subscription': subscription}),
+    );
+  }
+
+  @override
+  Future<void> libretvRemove(String key) async {
+    _adminPermission('仅管理员可删除 LibreTV 片源');
+    await _call({'action': 'libretvRemove', 'libretvKey': key});
   }
 
   @override

@@ -83,6 +83,12 @@ func newNativeCoverCache(directory string, downloader *Downloader) *nativeCoverC
 }
 
 func nativeCoverReferer(downloader *Downloader, source, address string) string {
+	// LibreTV 站点海报用采集接口主机作 Referer。
+	if site, ok := downloader.libretvSite(source); ok {
+		if parsed, err := url.Parse(site.API); err == nil {
+			return parsed.Scheme + "://" + parsed.Host + "/"
+		}
+	}
 	if source == sourceCloudFront {
 		if parsed, err := url.Parse(address); err == nil && (strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".zdmhyg.cn") || strings.EqualFold(parsed.Hostname(), "pic.tuafjz.cn")) {
 			return downloader.providerBaseURL(sourceHuangguoAI) + "/"

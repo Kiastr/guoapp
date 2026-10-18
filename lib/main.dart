@@ -14,6 +14,7 @@ import 'app_orientation.dart';
 import 'app_theme.dart';
 import 'home_screen.dart';
 import 'local_store.dart';
+import 'models.dart';
 import 'profiles_screen.dart';
 import 'media_library.dart';
 import 'package_smoke.dart';
@@ -111,6 +112,18 @@ class _AppBootstrapState extends State<AppBootstrap>
     setState(() => device = detected);
   }
 
+  /// 拉取已导入的 LibreTV 片源并注册为运行时站源。
+  /// 失败（旧版核心不支持等）时静默跳过，不影响内置站源。
+  Future<void> _syncLibreTVSources() async {
+    try {
+      final sites = await repository.libretvSites();
+      SourceSite.setRuntimeSources([
+        for (final site in sites)
+          if (site.key.isNotEmpty) site.toSourceSite(),
+      ]);
+    } catch (_) {}
+  }
+
   Future<void> _initialize() async {
     setState(() {
       error = null;
@@ -119,6 +132,9 @@ class _AppBootstrapState extends State<AppBootstrap>
       final preferences = await SharedPreferences.getInstance();
       await _refreshDevice();
       await repository.initialize();
+      // LibreTV 片源由原生核心持久化（libretv.json），启动时同步到
+      // SourceSite 运行时注册表，之后各页面按普通站源使用。
+      await _syncLibreTVSources();
       if (mounted) {
         setState(() {
           store = LocalStore(preferences);

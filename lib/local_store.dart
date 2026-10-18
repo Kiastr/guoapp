@@ -137,7 +137,11 @@ class LocalStore extends ChangeNotifier {
       !locked &&
       SourceSite.isAvailable(source) &&
       profile.allows(source) &&
-      (_gateOff || _sourcesUnlocked || SourceSite.isPrimary(source));
+      // 用户导入的 LibreTV 片源视同内置主站源：导入即授权，不占用敏感站源解锁。
+      (_gateOff ||
+          _sourcesUnlocked ||
+          SourceSite.isPrimary(source) ||
+          source.startsWith('libretv:'));
   List<SourceSite> get sources => SourceSite.visibleValues(
     unlocked: _gateOff || _sourcesUnlocked,
   ).where((site) => allowsSource(site.id)).toList();
@@ -207,6 +211,10 @@ class LocalStore extends ChangeNotifier {
     _sourcesUnlocked = false;
     _notify();
   }
+
+  /// 运行时站源注册表（LibreTV 导入/删除）变化后广播一次，
+  /// 让监听 [sources] 的界面（首页、站源管理等）立即刷新。
+  void notifySourceRegistryChanged() => _notify();
 
   /// 设置或更换密码锁，并立即解锁。
   Future<void> enableSourceGate(String pin) => _queue(() async {

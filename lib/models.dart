@@ -14,13 +14,21 @@ class SourceSite {
       id == 'dsd' ||
       id == 'sorani' ||
       id == 'guipian' ||
-      id == 'hanxiaoquan';
+      id == 'hanxiaoquan' ||
+      isRuntime;
   bool get searchSuggestions => id == 'hongguo';
+
+  /// 运行时导入的 LibreTV 片源（`libretv:<key>`，由订阅导入注册）。
+  bool get isRuntime => id.startsWith('libretv:');
   String get groupId => switch (id) {
     'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
-    _ => id,
+    _ => isRuntime ? 'libretv' : id,
   };
-  String get groupName => groupId == 'huangguo' ? '黄果' : name;
+  String get groupName => switch (groupId) {
+    'huangguo' => '黄果',
+    'libretv' => 'LibreTV 片源',
+    _ => name,
+  };
   String get entryName => switch (id) {
     'huangguo-video' => '视频',
     'huangguoai' => 'AI',
@@ -53,21 +61,55 @@ class SourceSite {
   ];
   static const knownValues = [...primaryValues, ...restrictedValues];
   static const allValues = [...primaryValues, ...restrictedValues];
-  static const values = allSourcesEnabled ? knownValues : [hongguo];
+
+  /// 运行时注册的 LibreTV 站源（用户导入；进程内有效，重启后由原生核心
+  /// libretv.json 重新拉取注册）。键为完整源 ID「libretv:」+ 站点 key。
+  static final _runtimeSources = <String, SourceSite>{};
+
+  /// 用一份站点列表整体替换运行时注册表（应用启动时同步原生核心、
+  /// 导入 / 删除后刷新界面用）。
+  static void setRuntimeSources(Iterable<SourceSite> sites) {
+    _runtimeSources.clear();
+    for (final site in sites) {
+      if (site.isRuntime) _runtimeSources[site.id] = site;
+    }
+  }
+
+  /// 注销一个运行时站源（删除 LibreTV 片源用）。
+  static void unregisterRuntime(String id) {
+    _runtimeSources.remove(id.trim());
+  }
+
+  /// 当前已注册的运行时站源列表（按 ID 排序，输出稳定）。
+  static List<SourceSite> get runtimeValues {
+    final keys = _runtimeSources.keys.toList()..sort();
+    return [for (final key in keys) _runtimeSources[key]!];
+  }
+
+  /// 运行时 + 内置的全部可见站源。
+  static List<SourceSite> get values => [
+    ...(allSourcesEnabled ? knownValues : [hongguo]),
+    ...runtimeValues,
+  ];
   static bool isAvailable(String id) => values.any((site) => site.id == id);
-  static bool isKnown(String id) => allValues.any((site) => site.id == id);
+  static bool isKnown(String id) =>
+      allValues.any((site) => site.id == id) || _runtimeSources.containsKey(id);
   static bool isPrimary(String id) =>
       primaryValues.any((site) => site.id == id);
   static bool isRestricted(String id) =>
       restrictedValues.any((site) => site.id == id);
 
-  /// 运行时可见站源：未解锁时只保留 [primaryValues]。
+  /// 运行时可见站源：未解锁时保留 [primaryValues] 与用户导入的 LibreTV 片源
+  /// （导入行为即用户授权，不占用敏感站源解锁状态）。
   static List<SourceSite> visibleValues({required bool unlocked}) => [
     for (final site in values)
-      if (unlocked || isPrimary(site.id)) site,
+      if (unlocked || isPrimary(site.id) || site.isRuntime) site,
   ];
-  static SourceSite byId(String id) =>
-      allValues.firstWhere((site) => site.id == id, orElse: () => hongguo);
+  static SourceSite byId(String id) {
+    final runtime = _runtimeSources[id];
+    if (runtime != null) return runtime;
+    return allValues.firstWhere((site) => site.id == id, orElse: () => hongguo);
+  }
 }
 
 class SourceGroup {

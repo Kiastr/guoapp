@@ -86,11 +86,29 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 	if !ok || strings.TrimSpace(sourceID) == "" || !isHuangguoProviderSource(source) {
 		return "", "", false
 	}
+	// LibreTV 站源的剧集 ID 形如 libretv:<key>:<vodId>：第一刀只切出家族名
+	// "libretv"，需要再切一刀才是完整站源 key 与片源 ID。分集 ID 同理
+	// （libretv:<key>:<vodId>:<集键>），sourceID 末尾多带的集键不影响
+	// 调用方只比较 source 的用法。
+	if source == sourceLibreTV {
+		siteKey, vodID, found := strings.Cut(sourceID, ":")
+		siteKey, vodID = strings.TrimSpace(siteKey), strings.TrimSpace(vodID)
+		if !found || siteKey == "" || vodID == "" {
+			return "", "", false
+		}
+		return libretvSourceID(siteKey), vodID, true
+	}
 	return source, strings.TrimSpace(sourceID), true
 }
 
 func isHuangguoProviderSource(source string) bool {
-	switch canonicalProviderSource(source) {
+	source = canonicalProviderSource(source)
+	// 运行时导入的 LibreTV（MacCMS provide/vod）站源：家族名 "libretv"
+	// 与完整源 "libretv:<key>" 都要认（ID 切分第一刀只会切出家族名）。
+	if source == sourceLibreTV || strings.HasPrefix(source, sourceLibreTVPrefix) {
+		return true
+	}
+	switch source {
 	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD, sourceCloudFront, sourceSorani, sourceGuipian, sourceHanxiaoquan:
 		return true
 	default:
@@ -243,6 +261,14 @@ func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID s
 	case sourceCloudFront:
 		return d.fetchLegacyChapters(ctx, sourceID)
 	default:
+		if siteKey := libretvKeyFromSource(source); siteKey != "" {
+			site, ok := d.libretvSite(source)
+			if !ok {
+				return "", nil, errors.New("LibreTV 片源未导入或已删除，请在站源管理重新导入")
+			}
+			drama, chapters, err := d.fetchLibreTVDetail(ctx, site, sourceID)
+			return drama.DisplayTitle(), chapters, err
+		}
 		return "", nil, fmt.Errorf("unsupported provider source: %s", source)
 	}
 }

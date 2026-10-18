@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:duanju_app/core_bridge.dart';
+import 'package:duanju_app/libretv.dart';
 import 'package:duanju_app/local_profiles.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/source_status.dart';
@@ -16,6 +18,12 @@ class SourceFixtureRepository extends FixtureRepository {
   final operations = <String>[];
   final statusRequests = <String>[];
   Completer<SourceStatus>? pending;
+
+  /// LibreTV 导入桩：libretvSites 返回的列表即原生核心 libretv.json 内容。
+  List<LibreTVSite> libretvSitesResult = const [];
+  final libretvImports = <String>[];
+  final libretvRemovals = <String>[];
+  bool libretvFail = false;
 
   @override
   bool get supportsSourceManagement => true;
@@ -58,6 +66,30 @@ class SourceFixtureRepository extends FixtureRepository {
       'running': false,
       'stage': '已停止',
     });
+  }
+
+  @override
+  Future<List<LibreTVSite>> libretvSites() async => libretvSitesResult;
+
+  @override
+  Future<LibreTVImportResult> libretvImport(String subscription) async {
+    if (libretvFail) throw AppFailure('配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON');
+    libretvImports.add(subscription);
+    final site = LibreTVSite(
+      key: 'new456',
+      name: '新采集站',
+      api: subscription,
+    );
+    libretvSitesResult = [...libretvSitesResult, site];
+    return LibreTVImportResult(added: [site], skipped: const [], verified: 1);
+  }
+
+  @override
+  Future<void> libretvRemove(String key) async {
+    libretvRemovals.add(key);
+    libretvSitesResult = libretvSitesResult
+        .where((site) => site.key != key)
+        .toList();
   }
 }
 
@@ -312,6 +344,9 @@ void main() {
       expect(find.textContaining('HTTP 403'), findsNothing);
       final toggle = find.byKey(const ValueKey('health-toggle-hongguo'));
       await tester.ensureVisible(toggle);
+      // LibreTV 导入卡片使页面内容高于窄屏视口，ensureVisible 的滚动
+      // 动画需要一次 settle 后再 tap，否则落点还在滚动前的位置。
+      await tester.pumpAndSettle();
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(find.textContaining('HTTP 403'), findsOneWidget);
@@ -325,4 +360,117 @@ void main() {
       store.dispose();
     },
   );
+
+  testWidgets('libretv import adds runtime source and removal clears it', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => SourceSite.setRuntimeSources(const []));
+    SharedPreferences.setMockInitialValues({});
+    final store = testStore(await SharedPreferences.getInstance());
+    final repository = SourceFixtureRepository()
+      ..libretvSitesResult = [
+        const LibreTVSite(
+          key: 'abc123',
+          name: '测试采集站',
+          api: 'https://demo.test/provide/vod',
+          count: 12,
+        ),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourcesScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 导入卡片头部来自原生核心的权威列表；已导入站点同时以运行时源
+    // 身份出现在下方源卡片（导入即授权，默认可见）。
+    expect(find.text('LibreTV 片源'), findsOneWidget);
+    expect(find.text('已导入 1 个站点'), findsOneWidget);
+    expect(find.text('测试采集站'), findsOneWidget);
+    expect(SourceSite.isKnown('libretv:abc123'), isTrue);
+    expect(SourceSite.byId('libretv:abc123').isRuntime, isTrue);
+
+    // 展开卡片：显示采集地址、缓存剧集数与导入入口。
+    await tester.tap(find.text('LibreTV 片源'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('https://demo.test/provide/vod'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('12 部'), findsOneWidget);
+
+    // 导入：粘贴裸 provide/vod 地址 → 对话框 → 导入。
+    final importButton = find.text('导入片源');
+    await tester.ensureVisible(importButton);
+    await tester.tap(importButton);
+    await tester.pumpAndSettle();
+    expect(find.text('导入 LibreTV 片源'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField),
+      'https://new.test/provide/vod',
+    );
+    await tester.tap(find.text('导入'));
+    await tester.pumpAndSettle();
+    expect(repository.libretvImports, ['https://new.test/provide/vod']);
+    expect(find.textContaining('新增 1 个片源 · 已验证 1 个'), findsOneWidget);
+    // 卡片列表与源卡片各出现一次名称。
+    expect(find.text('新采集站'), findsNWidgets(2));
+    expect(find.text('已导入 2 个站点'), findsOneWidget);
+    expect(SourceSite.isKnown('libretv:new456'), isTrue);
+
+    // 删除新导入的站点（确认对话框 → 删除）；卡片保持展开。
+    final deleteNew = find.byTooltip('删除新采集站');
+    await tester.ensureVisible(deleteNew);
+    await tester.tap(deleteNew);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('删除「新采集站」'), findsOneWidget);
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+    expect(repository.libretvRemovals, ['new456']);
+    expect(find.text('新采集站'), findsNothing);
+    expect(SourceSite.isKnown('libretv:new456'), isFalse);
+    // 原有站点不受影响（卡片列表 + 源卡片）。
+    expect(find.text('测试采集站'), findsNWidgets(2));
+    expect(SourceSite.isKnown('libretv:abc123'), isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
+
+  testWidgets('libretv import failure surfaces the server message', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => SourceSite.setRuntimeSources(const []));
+    SharedPreferences.setMockInitialValues({});
+    final store = testStore(await SharedPreferences.getInstance());
+    final repository = SourceFixtureRepository()..libretvFail = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourcesScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LibreTV 片源'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('导入片源'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '坏输入');
+    await tester.tap(find.text('导入'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('导入失败：配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON'),
+      findsOneWidget,
+    );
+    // 失败不注册任何运行时源。
+    expect(SourceSite.runtimeValues, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
 }
