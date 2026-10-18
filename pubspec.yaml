@@ -25,6 +25,7 @@ dependencies:
   crypto: ^3.0.7
   window_manager: ^0.5.1
   nsd: 5.0.1
+  battery_plus: ^7.1.2
 
 dev_dependencies:
   flutter_test:
