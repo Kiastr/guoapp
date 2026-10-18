@@ -329,6 +329,18 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                   padding: EdgeInsets.only(top: 12),
                   child: LinearProgressIndicator(),
                 ),
+                // 追剧页右上角的同步按钮已改为直达本页，这里补一个反向入口，
+                // 免得局域网同步只能从「设置」里绕进去。
+                Card(
+                  key: const ValueKey('webdav-open-lan'),
+                  child: ListTile(
+                    leading: const Icon(Icons.devices_rounded),
+                    title: const Text('设备互联'),
+                    subtitle: const Text('局域网自动同步追剧与推送播放'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => openLanSync(context),
+                  ),
+                ),
                 if (conflicts > 0)
                   Card(
                     key: const ValueKey('webdav-conflicts'),
