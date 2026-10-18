@@ -248,6 +248,33 @@ class LocalStore extends ChangeNotifier {
     _notify();
   });
 
+  /// 无密码切换敏感站源可见性。
+  ///
+  /// [hide] 为 true 时隐藏（默认态，只有主站源可见），false 时显示全部。
+  /// 不要求设置密码：密码锁只是可选加强项，未启用时用 sourceGateOff=false
+  /// 表达"隐藏"、sourceGateOff=true 表达"显示全部"（沿用既有持久化字段，
+  /// 因此重启后状态不变）。
+  Future<void> setPasswordlessSourceHidden(bool hide) => _queue(() async {
+    _requireAdmin();
+    if (_gateEnabled) {
+      throw StateError('已启用密码锁，请先关闭密码功能');
+    }
+    final nextOff = !hide;
+    if (_gateOff == nextOff) return;
+    await _commit({
+      'sourceGateEnabled': false,
+      'sourceGateOff': nextOff,
+      'sourceGateSalt': '',
+      'sourceGateHash': '',
+    });
+    _gateEnabled = false;
+    _gateOff = nextOff;
+    _gateSalt = '';
+    _gateHash = '';
+    _sourcesUnlocked = false;
+    _notify();
+  });
+
   void _loadLibrary() {
     _lanDocumentCache = null;
     _history.clear();
