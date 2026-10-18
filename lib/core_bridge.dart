@@ -88,6 +88,7 @@ abstract class AppRepository {
     Episode episode, {
     int quality = 0,
     bool online = false,
+    int route = 0,
   }) async => null;
   Future<void> cancelDanmaku() async {}
   Future<DanmakuPage> danmaku(
@@ -180,7 +181,12 @@ abstract class AppRepository {
   Future<CatalogPage> cached(String source, {String category = ''});
   Future<String> cover(Drama drama, {bool force = false});
   Future<DramaDetail> detail(Drama drama);
-  Future<PlaybackPlan> resolve(Drama drama, Episode episode, {int quality = 0});
+  Future<PlaybackPlan> resolve(
+    Drama drama,
+    Episode episode, {
+    int quality = 0,
+    int route = 0,
+  });
   Future<PlaybackPlan> fallback(PlaybackPlan current);
   Future<void> cancelPlayback();
   Future<void> release(String session);
@@ -295,6 +301,7 @@ class NativeRepository extends AppRepository {
     Episode episode, {
     int quality = 0,
     bool online = false,
+    int route = 0,
   }) async => PlaybackPlan.fromJson(
     await _read('preload', {
       'action': 'preload',
@@ -302,6 +309,7 @@ class NativeRepository extends AppRepository {
       'chapter': episode.raw,
       'index': episode.number,
       'quality': quality,
+      'route': route,
       'force': online || access?.canDownload == false,
     }),
   );
@@ -719,6 +727,7 @@ class NativeRepository extends AppRepository {
     Drama drama,
     Episode episode, {
     int quality = 0,
+    int route = 0,
   }) async => PlaybackPlan.fromJson(
     await _call({
       'action': 'resolve',
@@ -726,6 +735,7 @@ class NativeRepository extends AppRepository {
       'chapter': episode.raw,
       'index': episode.number,
       'quality': quality,
+      'route': route,
       'sequence': ++_playbackSequence,
     }),
   );

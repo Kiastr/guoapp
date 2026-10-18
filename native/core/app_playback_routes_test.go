@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHongguoBackupAddressesAndCodecAlternatives(t *testing.T) {
@@ -160,4 +162,85 @@ func TestNativePlaybackCancellationAndCacheBound(t *testing.T) {
 	for token := range engine.playbacks {
 		engine.nativeReleasePlayback(token)
 	}
+}
+
+// TestNativePreloadWarmSkipsUnreachableRoute 预加载阶段就把"取不到数据"的线路
+// 换掉：切线路是本地操作（不重新解析），所以试错不该占用播放窗口。
+func TestNativePreloadWarmSkipsUnreachableRoute(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "video/mp4")
+		_, _ = writer.Write(make([]byte, 4096))
+	}))
+	defer good.Close()
+	broken := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer broken.Close()
+
+	engine, err := newNativeEngine(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := providerMedia{URL: broken.URL + "/video.mp4", Referer: broken.URL + "/", Quality: 1080}
+	second := providerMedia{URL: good.URL + "/video.mp4", Referer: good.URL + "/", Quality: 1080}
+	first.Variants = []providerMedia{first, second}
+	plan, err := engine.nativeOpenPlayback(context.Background(), nativePlaybackChoices(first, 0))
+	if err != nil || plan.RouteCount != 2 {
+		t.Fatalf("initial playback: %+v, %v", plan, err)
+	}
+	defer engine.stream.server.Close()
+	engine.mu.Lock()
+	choice := engine.playbacks[plan.Session]
+	engine.mu.Unlock()
+
+	warmed, warmedChoice := engine.nativePreloadWarm(
+		context.Background(), engine.stream, plan, choice, 0,
+		time.Now().Add(nativePreloadBudget),
+	)
+	if warmed.RouteIndex != 1 {
+		t.Fatalf("preload should move to the reachable route: %+v", warmed)
+	}
+	if !warmed.Verified || warmed.PrefetchedBytes <= 0 {
+		t.Fatalf("preload should verify and prefetch the reachable route: %+v", warmed)
+	}
+	if warmedChoice.index != 1 {
+		t.Fatalf("choice index out of sync: %+v", warmedChoice)
+	}
+	engine.nativeReleasePlayback(warmed.Session)
+}
+
+// TestNativePreloadWarmKeepsResponsiveRoute 首选线路本来就通时不切换、不多发请求。
+func TestNativePreloadWarmKeepsResponsiveRoute(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "video/mp4")
+		_, _ = writer.Write(make([]byte, 4096))
+	}))
+	defer good.Close()
+
+	engine, err := newNativeEngine(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := providerMedia{URL: good.URL + "/video.mp4", Referer: good.URL + "/", Quality: 1080}
+	first.Variants = []providerMedia{first, {URL: good.URL + "/backup.mp4", Referer: good.URL + "/", Quality: 720}}
+	plan, err := engine.nativeOpenPlayback(context.Background(), nativePlaybackChoices(first, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.stream.server.Close()
+	engine.mu.Lock()
+	choice := engine.playbacks[plan.Session]
+	engine.mu.Unlock()
+
+	warmed, _ := engine.nativePreloadWarm(
+		context.Background(), engine.stream, plan, choice, 0,
+		time.Now().Add(nativePreloadBudget),
+	)
+	if warmed.RouteIndex != 0 || !warmed.Verified {
+		t.Fatalf("a responsive first route must stay: %+v", warmed)
+	}
+	if len(engine.playbacks) != 1 {
+		t.Fatalf("switching routes leaked sessions: %d", len(engine.playbacks))
+	}
+	engine.nativeReleasePlayback(warmed.Session)
 }

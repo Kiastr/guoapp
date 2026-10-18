@@ -294,6 +294,7 @@ class PlaybackPlan {
     this.expiresAt = 0,
     this.routeIndex = 0,
     this.routeCount = 1,
+    this.verified = false,
     this.local = false,
   });
   final String url;
@@ -307,6 +308,9 @@ class PlaybackPlan {
   final int expiresAt;
   final int routeIndex;
   final int routeCount;
+  /// 预加载已确认这条线路能取到数据（首字节在预算内）。
+  /// 为真时播放器把首帧等待放宽，减少对"慢但可用"线路的误杀。
+  final bool verified;
   final bool local;
   bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;
   factory PlaybackPlan.fromJson(Map<String, dynamic> json) => PlaybackPlan(
@@ -327,6 +331,7 @@ class PlaybackPlan {
     routeCount: intValue(json['routeCount']) > 0
         ? intValue(json['routeCount'])
         : 1,
+    verified: json['verified'] == true,
   );
 }
 

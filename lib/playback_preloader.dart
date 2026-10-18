@@ -27,7 +27,9 @@ class PlaybackPreloader extends ChangeNotifier {
       return _ready!.local
           ? '下一集已下载'
           : bytes > 0
-          ? '下一集已准备 · 预取 ${(bytes / 1024).ceil()} KB'
+          ? (_ready!.verified
+                ? '下一集已准备 · 线路已验证 · 预取 ${(bytes / 1024).ceil()} KB'
+                : '下一集已准备 · 预取 ${(bytes / 1024).ceil()} KB')
           : '下一集播放地址已准备';
     }
     if (loading || _delay != null) return '正在准备下一集';
@@ -42,6 +44,7 @@ class PlaybackPreloader extends ChangeNotifier {
     Episode episode, {
     int quality = 0,
     bool online = false,
+    int route = 0,
   }) {
     if (_closed) return;
     final identity = _key(drama, episode, quality, online);
@@ -71,6 +74,7 @@ class PlaybackPreloader extends ChangeNotifier {
           episode,
           quality: quality,
           online: online,
+          route: route,
         );
         if (_closed || ticket != _generation) {
           if (plan != null) await repository.release(plan.session);

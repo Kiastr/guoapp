@@ -116,6 +116,8 @@ type nativeInput struct {
 	Chapter          Chapter                 `json:"chapter"`
 	Index            int                     `json:"index"`
 	Quality          int                     `json:"quality"`
+	// Route 期望的起始线路（线路记忆用；越界或不存在时回落到 0）。
+	Route    int    `json:"route"`
 	Session          string                  `json:"session"`
 	Sequence         int64                   `json:"sequence"`
 	Force            bool                    `json:"force"`
@@ -145,6 +147,9 @@ type nativePlan struct {
 	Session         string            `json:"session,omitempty"`
 	RouteIndex      int               `json:"routeIndex"`
 	RouteCount      int               `json:"routeCount"`
+	// Verified 预加载已确认该线路可取到数据（首字节在预算内）。未验证时
+	// 播放器会把首帧等待阈值收紧，尽快切到下一条线路。
+	Verified bool `json:"verified,omitempty"`
 }
 
 type nativeEngine struct {
@@ -790,6 +795,11 @@ func (engine *nativeEngine) nativeResolve(ctx context.Context, input nativeInput
 		return nativePlan{}, err
 	}
 	choice := nativePlaybackChoices(media, input.Quality)
+	// 线路记忆：上次这台设备上该剧成功播放的线路优先，减少"先试一条慢线"的
+	// 等待。越界说明线路数变了（源站改版），安全回落到首选线路。
+	if input.Route > 0 && input.Route < len(choice.media) {
+		choice.index = input.Route
+	}
 	if series, video, valid := hongguoPlaybackIDs(task); valid {
 		choice.danmakuSeries, choice.danmakuVideo = series, video
 	}

@@ -25,6 +25,7 @@ import 'models.dart';
 import 'playback_loader.dart';
 import 'playback_preloader.dart';
 import 'playback_recovery.dart';
+import 'playback_route_memory.dart';
 import 'playback_preferences.dart';
 import 'player_controls.dart';
 import 'player_interactions.dart';
@@ -93,6 +94,12 @@ class _PlayerScreenState extends State<PlayerScreen>
   final _health = PlaybackHealth();
   Timer? _saveTimer;
   Timer? _healthTimer;
+
+  /// 首帧看门狗：起播后迟迟没有画面就切线路（本地操作，零解析请求）。
+  Timer? _firstFrameTimer;
+
+  /// 本集是否已经用过一次快速切换，避免连续误杀。
+  bool _fastSwitched = false;
   Timer? _errorTimer;
   Timer? _pictureInPictureExitTimer;
   Future<void> _operations = Future<void>.value();
@@ -271,6 +278,14 @@ class _PlayerScreenState extends State<PlayerScreen>
       _player.stream.position.listen((position) {
         if (!_closed && _openedIndex == _index && position > Duration.zero) {
           _resumePosition = position.inMilliseconds / 1000;
+        }
+        if (!_closed && position > const Duration(seconds: 2)) {
+          // 画面已经在走：撤销快速切换的看门狗，并记住这条线路（零请求）。
+          _cancelFirstFrameWatchdog();
+          final plan = _plan;
+          if (plan != null && !plan.local) {
+            playbackRouteMemory.remember(widget.detail.drama, plan.routeIndex);
+          }
         }
         _syncDanmaku();
         _syncPreload();
@@ -692,6 +707,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       widget.detail.drama,
       widget.detail.episodes[_index + 1],
       quality: _requestedQuality,
+      route: playbackRouteMemory.routeOf(widget.detail.drama),
     );
   }
 
@@ -782,6 +798,31 @@ class _PlayerScreenState extends State<PlayerScreen>
     });
   }
 
+  /// 起播后若在阈值内拿不到首帧，直接切下一条线路。
+  ///
+  /// 切线路走 fallback = 本地 index++，不重新解析、不新增请求，所以早切的
+  /// 代价远小于"用户盯着转圈十几秒"。已验证线路放宽到 6 秒，避免误杀慢线。
+  void _armFirstFrameWatchdog(PlaybackPlan plan, int ticket) {
+    _cancelFirstFrameWatchdog();
+    if (plan.local || !plan.hasAlternative || _fastSwitched) return;
+    final delay = plan.verified
+        ? const Duration(seconds: 6)
+        : const Duration(seconds: 3);
+    _firstFrameTimer = Timer(delay, () {
+      if (_closed || ticket != _generation || _error != null) return;
+      final state = _player.state;
+      if (state.position > Duration.zero || (state.width ?? 0) > 0) return;
+      _fastSwitched = true;
+      DiaryService.add('[Play] 首帧 ${delay.inSeconds}s 未到，切换备用线路');
+      unawaited(_recover());
+    });
+  }
+
+  void _cancelFirstFrameWatchdog() {
+    _firstFrameTimer?.cancel();
+    _firstFrameTimer = null;
+  }
+
   Future<void> _recover() async {
     final current = _plan;
     if (_closed ||
@@ -794,6 +835,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _acceptErrors = false;
     _danmaku.setPlan(null);
     _errorTimer?.cancel();
+    _firstFrameTimer?.cancel();
     _pendingError = false;
     final position = _currentPosition;
     final action = current.local
@@ -801,6 +843,8 @@ class _PlayerScreenState extends State<PlayerScreen>
         : _recovery.next(current);
     if (action == PlaybackRecoveryAction.stop) {
       _resumePosition = position;
+      // 连续失败：清掉该剧的线路记忆，下次回到默认线路重新试。
+      playbackRouteMemory.forget(widget.detail.drama);
       final ticket = _generation;
       try {
         await _serialize(() async {
@@ -938,9 +982,11 @@ class _PlayerScreenState extends State<PlayerScreen>
     _acceptErrors = false;
     _pendingError = false;
     _errorTimer?.cancel();
+    _firstFrameTimer?.cancel();
     _health.reset();
     if (recoveryAction == null) {
       _recovery.reset();
+      _fastSwitched = false;
       _playIntent = playWhenReady;
     }
     _resumePosition = position;
@@ -993,6 +1039,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               quality: _requestedQuality,
               localOnly: widget.localOnly,
               online: _forceOnline,
+              route: playbackRouteMemory.routeOf(widget.detail.drama),
             );
       if (prepared == null) {
         return;
@@ -1071,6 +1118,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           return;
         }
         _openedIndex = index;
+        _armFirstFrameWatchdog(plan, ticket);
         _enhancement.mediaReady();
         _attachLanPlayback();
         _health.reset();
@@ -1473,6 +1521,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _saveTimer?.cancel();
     _healthTimer?.cancel();
     _errorTimer?.cancel();
+    _firstFrameTimer?.cancel();
     _pictureInPictureExitTimer?.cancel();
     if (_pictureInPictureHandlerInstalled) {
       AppDevice.channel.setMethodCallHandler(null);
