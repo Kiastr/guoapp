@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'lan_screen.dart';
@@ -5,8 +7,17 @@ import 'local_store.dart';
 import 'webdav_sync.dart';
 
 class WebDavSyncScreen extends StatefulWidget {
-  const WebDavSyncScreen({super.key, required this.store});
+  const WebDavSyncScreen({
+    super.key,
+    required this.store,
+    this.syncOnOpen = false,
+  });
   final LocalStore store;
+
+  /// 进入页面后立即同步一次。追剧页右上角入口用它，省掉"跳转后再点一次"。
+  /// 注意与 WebDavSettings.autoSync（后台自动同步开关）区分：这里只是一次性
+  /// 触发，不改变任何设置。
+  final bool syncOnOpen;
 
   @override
   State<WebDavSyncScreen> createState() => _WebDavSyncScreenState();
@@ -31,6 +42,18 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
   bool _busy = false;
   String _message = '';
   WebDavSyncOutcome? _outcome;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!widget.syncOnOpen) return;
+    if (widget.store.webDavSettings.configured) {
+      unawaited(_sync());
+    } else {
+      // 没配置就不发无意义的请求，直接提示填配置。
+      _message = '尚未配置 WebDAV，填写并保存后即可同步';
+    }
+  }
 
   bool get _dirty =>
       _form.enabled != _saved.enabled ||

@@ -17,7 +17,7 @@ import 'detail_screen.dart';
 import 'playback_launch_screen.dart';
 import 'downloads_screen.dart';
 import 'local_store.dart';
-import 'lan_screen.dart';
+import 'webdav_screen.dart';
 import 'models.dart';
 import 'remote_widgets.dart';
 import 'widgets.dart';
@@ -884,10 +884,18 @@ class _HomeScreenState extends State<HomeScreen> {
               ] else ...[
                 if (_tab == 1)
                   IconButton(
-                    key: const ValueKey('follow-lan-sync'),
-                    tooltip: '追剧同步',
-                    onPressed: () => openLanSync(context),
-                    icon: const Icon(Icons.sync_rounded),
+                    key: const ValueKey('follow-webdav-sync'),
+                    tooltip: 'WebDAV 同步',
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => WebDavSyncScreen(
+                          store: widget.store,
+                          syncOnOpen: true,
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.cloud_sync_outlined),
                   ),
                 if (_tab == 0) ...[
                   if (!_showRecommendations)
