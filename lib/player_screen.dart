@@ -143,6 +143,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   double _speed = 1;
   double _holdSpeed = defaultHoldSpeed;
   double _aspectRatio = 9 / 16;
+
+  /// 自动检测到的片源像素尺寸（0 表示尚未检测到）。
+  /// 来源：播放器解码后的 videoParams（mpv w/h），换集/换线路时重置。
+  int _videoWidth = 0;
+  int _videoHeight = 0;
   double _resumePosition = 0;
   bool _rotating = false;
   bool _television = false;
@@ -336,6 +341,10 @@ class _PlayerScreenState extends State<PlayerScreen>
         if (size != null && mounted && !_closed) {
           setState(() {
             _aspectRatio = size.width / size.height;
+            // 自动检测片源尺寸：优先用显示尺寸（含旋转修正），
+            // 组件按高度折算 480P/1080P/2K/4K 档位。
+            _videoWidth = size.width.round();
+            _videoHeight = size.height.round();
           });
           _scheduleSystemUi();
         }
@@ -1089,6 +1098,10 @@ class _PlayerScreenState extends State<PlayerScreen>
       _loading = true;
       _error = null;
       _localFailure = false;
+      // 换集/换线路后片源尺寸可能完全不同，先清掉上一条的检测结果，
+      // 等新片源起播后由 videoParams 重新填入，避免显示上一集的档位。
+      _videoWidth = 0;
+      _videoHeight = 0;
       _loadingMessage = switch (recoveryAction) {
         PlaybackRecoveryAction.alternative => '正在切换备用线路',
         PlaybackRecoveryAction.refresh => '正在重新获取播放地址',
@@ -1490,6 +1503,8 @@ class _PlayerScreenState extends State<PlayerScreen>
               preferences: _preferences,
               qualities: _plan?.qualities ?? [],
               actualQuality: _plan?.quality ?? 0,
+              videoWidth: _videoWidth,
+              videoHeight: _videoHeight,
               lines: _lineOptions,
               local: _plan?.local == true,
               favorite: widget.store.isFavorite(widget.detail.drama.id),
@@ -1877,6 +1892,8 @@ class _PlayerScreenState extends State<PlayerScreen>
             onSeek: _seekTo,
             speed: _speed,
             qualityLabel: _qualityLabel,
+            videoWidth: _videoWidth,
+            videoHeight: _videoHeight,
             showDanmaku: widget.detail.drama.source == 'hongguo',
             danmakuEnabled: _danmakuEnabled,
             danmakuStatus: _danmaku.status,

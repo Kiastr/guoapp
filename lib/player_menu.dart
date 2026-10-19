@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'models.dart';
 import 'episode_browser.dart';
 import 'playback_preferences.dart';
+import 'resolution_meter.dart';
 import 'video_enhancement.dart';
 import 'video_enhancement_settings.dart';
 import 'diary_service.dart';
@@ -36,6 +37,8 @@ class PlayerMenu extends StatefulWidget {
     required this.onEpisode,
     required this.onPreferences,
     required this.onFavorite,
+    this.videoWidth = 0,
+    this.videoHeight = 0,
     this.lines = const [],
     this.showDanmaku = false,
     this.danmakuStatus = '',
@@ -51,6 +54,10 @@ class PlayerMenu extends StatefulWidget {
   final PlaybackPreferences preferences;
   final List<int> qualities;
   final int actualQuality;
+
+  /// 自动检测到的片源像素宽/高（0 = 尚未检测到）。
+  final int videoWidth;
+  final int videoHeight;
   final bool local;
   final bool favorite;
   final bool mobile;
@@ -233,6 +240,16 @@ class _PlayerMenuState extends State<PlayerMenu> {
           const SizedBox(height: 20),
         ],
         if (all || widget.section == PlayerMenuSection.quality) ...[
+          // 片源清晰度自动检测：进度条 + 节点（480P/1080P/2K/4K），
+          // 按播放器上报的真实像素尺寸填充进度，本地/在线片源一视同仁。
+          const Text('片源清晰度（自动检测）'),
+          const SizedBox(height: 8),
+          ResolutionMeter(
+            width: widget.videoWidth,
+            height: widget.videoHeight,
+            compact: true,
+          ),
+          const SizedBox(height: 20),
           // 线路：同一集来自多个播放源时可手动切换，避免只能靠自动回退。
           if (widget.lines.length > 1) ...[
             const Text('线路'),

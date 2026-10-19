@@ -282,7 +282,21 @@ void main() {
     );
     await settleOperations(tester);
 
-    expect(find.text('1080P'), findsNothing, reason: '不应把全局偏好泄漏到无画质源');
+    // +117 起控制条有清晰度检测节点标签（1080P/2K/4K 常驻渲染），
+    // 「泄漏全局偏好」的信号是清晰度按钮/菜单 chip 显示 1080P，不是节点文案。
+    expect(
+      find.byKey(const ValueKey('player-quality')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-quality')),
+        matching: find.text('1080P'),
+      ),
+      findsNothing,
+      reason: '不应把全局偏好泄漏到无画质源',
+    );
+    expect(find.byKey(const ValueKey('menu-quality-1080')), findsNothing);
     expect(find.text('自动'), findsWidgets);
     await unmount(tester, player);
   });

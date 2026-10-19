@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'app_layout.dart';
 import 'lan_controller.dart';
 import 'player_interactions.dart';
+import 'resolution_meter.dart';
 import 'widgets.dart';
 import 'video_enhancement.dart';
 
@@ -31,6 +32,8 @@ class PlayerControls extends StatefulWidget {
     required this.speed,
     required this.qualityLabel,
     required this.onFocusSurface,
+    this.videoWidth = 0,
+    this.videoHeight = 0,
     this.showDanmaku = false,
     this.danmakuEnabled = false,
     this.danmakuStatus = '',
@@ -61,6 +64,10 @@ class PlayerControls extends StatefulWidget {
   final double speed;
   final String qualityLabel;
   final VoidCallback onFocusSurface;
+
+  /// 自动检测到的片源像素宽/高（0 = 尚未检测到），驱动清晰度进度条。
+  final int videoWidth;
+  final int videoHeight;
   final bool showDanmaku;
   final bool danmakuEnabled;
   final String danmakuStatus;
@@ -572,6 +579,7 @@ class _PlayerControlsState extends State<PlayerControls> {
               showVolume: showVolume,
               volume: volume,
             ),
+          _resolutionStrip(width: width),
           _progressRow(
             duration: duration,
             position: position,
@@ -599,6 +607,22 @@ class _PlayerControlsState extends State<PlayerControls> {
       return (MediaQuery.viewPaddingOf(context).bottom + 24).clamp(64.0, 104.0);
     }
     return 0;
+  }
+
+  /// 片源清晰度检测条：常驻显示在播放进度条上方，按检测到的分辨率
+  /// 填充到对应节点（480P/1080P/2K/4K）。窄屏（<420）省略说明行避免挤压。
+  Widget _resolutionStrip({required double width}) {
+    final showCaption = width >= 420;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
+      child: ResolutionMeter(
+        width: widget.videoWidth,
+        height: widget.videoHeight,
+        compact: true,
+        label: showCaption ? '清晰度' : null,
+        showCaption: showCaption,
+      ),
+    );
   }
 
   Widget _progressRow({
