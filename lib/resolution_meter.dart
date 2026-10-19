@@ -124,7 +124,9 @@ class ResolutionMeter extends StatelessWidget {
     final activeColor = theme.colorScheme.primary;
     const trackHeight = 6.0;
     final barHeight = compact ? 18.0 : 22.0;
-    final labelWidth = compact ? 30.0 : 38.0;
+    // 「1080P」在 11px labelSmall 下约 35px，再留大字号缩放余量；
+    // 相邻节点间距（2K↔4K 最小约 68px@312 宽）足够放下 48px 标签。
+    final labelWidth = compact ? 40.0 : 48.0;
 
     return Semantics(
       label: resolutionCaption(width, height),
@@ -222,9 +224,14 @@ class ResolutionMeter extends StatelessWidget {
                         ),
                         child: SizedBox(
                           width: labelWidth,
+                          // 标签绝不换行：「480P」「1080P」必须单行渲染，
+                          // 否则小屏 / 大字号下会被挤成两行（P 掉到下一行）。
                           child: Text(
                             node.label,
                             textAlign: TextAlign.center,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.visible,
                             style: textStyle?.copyWith(
                               fontWeight:
                                   detected && height >= node.minHeight
