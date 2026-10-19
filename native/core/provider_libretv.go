@@ -482,6 +482,44 @@ func libretvConfigScriptCandidate(entry libretvConfigSite) string {
 	return api
 }
 
+// libretvConfigVodAPI 判断 type≥3 条目是否可以直接当成 MacCMS 采集接口
+// 导入（JSON 采集，必要时按响应回退 XML）。
+//
+// 生态里两类常见情况：
+//   - type=4：T4 / CatVod / drpy-node 服务器，api 本身就是一个 vod 接口地址，
+//     响应结构与 MacCMS provide/vod 同构（code/msg/page/list + vod_* 字段）；
+//   - type=3 且 api=csp_AppYsV2：苹果CMS 二开的 /v1.vod 接口，接口地址在
+//     ext 里，同样是 MacCMS 结构。
+//
+// 其余 csp_* 的 ext 多为站点首页（不是接口）或专属 Java 爬虫的参数，
+// 一律返回空，避免把首页当接口导入后永远取不到数据。
+func libretvConfigVodAPI(entry libretvConfigSite) string {
+	if strings.TrimSpace(entry.Jar) != "" {
+		return ""
+	}
+	address := ""
+	switch {
+	case entry.Type == 4:
+		address = strings.TrimSpace(entry.API)
+	case entry.Type == 3 && strings.TrimSpace(entry.API) == "csp_AppYsV2":
+		address = libretvConfigExtText(entry.Ext)
+	default:
+		return ""
+	}
+	if !isProviderHTTPMediaURL(address) {
+		return ""
+	}
+	// 站点首页（https://www.xxx.com/）不算采集接口：需要带 vod / api 之类
+	// 的采集路径，否则导入后永远取不到数据。
+	lowered := strings.ToLower(address)
+	if !strings.Contains(lowered, "vod") &&
+		!strings.Contains(lowered, "/api") &&
+		!strings.Contains(lowered, "api.php") {
+		return ""
+	}
+	return address
+}
+
 // libretvUnsupportedReason type≥3 条目不可用时的原因。
 // TVBox 的 type=3 里混着多种形态（drpy 脚本、csp_ 规则、jar 包、py 源），
 // 统一报「类型不支持」没法判断是哪一种，这里按条目内容给出具体说明。
@@ -492,7 +530,8 @@ func libretvUnsupportedReason(entry libretvConfigSite) string {
 	case strings.TrimSpace(entry.Jar) != "":
 		return "jar / spider 包源暂不支持（仅支持 drpy JS 脚本）"
 	case strings.HasPrefix(api, "csp_"):
-		return "csp_ 规则源需要 TVBox 内置 Spider，暂不支持"
+		// 点名具体的 Java Spider，方便判断要不要等支持。
+		return fmt.Sprintf("%s 是 TVBox 内置 Java Spider，暂不支持（需要 jar / Java 运行环境）", api)
 	case looksLikeDrpyRuntimeLibrary(api):
 		return "只有 drpy 运行时库（api），缺少站点脚本（ext）"
 	case ext != "" && !looksLikeDrpyScriptURL(ext):
@@ -614,12 +653,31 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates 
 				seenAPI[candidate] = true
 				continue
 			}
-			if !looksLikeDrpyScriptURL(candidate) {
-				skipped = append(
-					skipped,
-					fmt.Sprintf("%s：%s", libretvDisplayName(entry), libretvUnsupportedReason(entry)),
-				)
+			// 同一脚本地址重复出现：静默去重，不刷跳过原因。
+			if looksLikeDrpyScriptURL(candidate) {
+				continue
 			}
+			// type=4 服务器 / csp_AppYsV2：接口地址可直接按 MacCMS 采集站导入。
+			if api := libretvConfigVodAPI(entry); api != "" {
+				key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api, 1)
+				if ok && !seenAPI[normalized] {
+					for usedKey[key] { // key 冲突时退化为地址派生 key
+						key = libretvKeyFromAPI(normalized + "/" + strconv.Itoa(len(usedKey)))
+					}
+					seenAPI[normalized] = true
+					usedKey[key] = true
+					sites = append(sites, libretvSite{Key: key, Name: name, API: normalized, Type: 1})
+					if len(sites) >= libretvImportMaxSites {
+						skipped = append(skipped, fmt.Sprintf("站点数量超过 %d 个，仅导入前 %d 个", libretvImportMaxSites, libretvImportMaxSites))
+						break
+					}
+					continue
+				}
+			}
+			skipped = append(
+				skipped,
+				fmt.Sprintf("%s：%s", libretvDisplayName(entry), libretvUnsupportedReason(entry)),
+			)
 			continue
 		}
 		key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api, entry.Type)

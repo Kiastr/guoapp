@@ -290,6 +290,44 @@ func TestLibreTVResolveDefaultSniff(t *testing.T) {
 	}
 }
 
+// TestLibreTVParseType4AndAppYsV2 type=4（T4/CatVod/drpy-node 服务器）与
+// csp_AppYsV2（苹果CMS 二开 /v1.vod）响应结构都与 MacCMS 同构，可直接
+// 按 JSON 采集站导入；只有首页地址的 csp_ 条目不能当接口。
+func TestLibreTVParseType4AndAppYsV2(t *testing.T) {
+	body := `{"sites":[
+	 {"key":"t4","name":"T4 服务器","type":4,"api":"https://t4.example.com/vod"},
+	 {"key":"appys","name":"苹果二开","type":3,"api":"csp_AppYsV2",
+	  "ext":"http://www.fuju2024.cc:8013/ruifenglb_api.php/v1.vod"},
+	 {"key":"vod1","name":"vod 路径","type":3,"api":"csp_AppYsV2","ext":"https://vod.example.com/api"},
+	 {"key":"home","name":"只有首页","type":3,"api":"csp_Jpys","ext":"https://www.czzyvideo.com/"}
+	]}`
+	sites, candidates, _, skipped, err := parseLibreTVSubscription(body)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(sites) != 3 {
+		t.Fatalf("应导入 3 个采集站点，实际 %d：%+v", len(sites), sites)
+	}
+	for _, site := range sites {
+		if site.Type != 1 {
+			t.Fatalf("T4 / AppYsV2 应按 JSON 采集站导入: %+v", site)
+		}
+	}
+	if sites[0].API != "https://t4.example.com/vod" {
+		t.Fatalf("type=4 应直接用 api: %+v", sites[0])
+	}
+	if sites[1].API != "http://www.fuju2024.cc:8013/ruifenglb_api.php/v1.vod" {
+		t.Fatalf("csp_AppYsV2 应取 ext 的接口地址: %+v", sites[1])
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("这些条目不应产生 drpy 候选: %+v", candidates)
+	}
+	// 只有首页地址的 csp_ 条目跳过，并点名是哪个 Java Spider。
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "csp_Jpys") {
+		t.Fatalf("首页条目应跳过并点名 Spider: %+v", skipped)
+	}
+}
+
 func TestLibreTVParseDrpyCandidatesPreferExt(t *testing.T) {
 	// TVBox 的 drpy 站点：api 是运行时库（ESM，无法编译），ext 才是站点脚本。
 	body := `{"sites":[
