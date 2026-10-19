@@ -247,7 +247,6 @@ class _PlayerMenuState extends State<PlayerMenu> {
           ResolutionMeter(
             width: widget.videoWidth,
             height: widget.videoHeight,
-            compact: true,
           ),
           const SizedBox(height: 20),
           // 线路：同一集来自多个播放源时可手动切换，避免只能靠自动回退。
