@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'core_bridge.dart';
 import 'lan_screen.dart';
 import 'local_store.dart';
 import 'webdav_sync.dart';
@@ -10,9 +11,13 @@ class WebDavSyncScreen extends StatefulWidget {
   const WebDavSyncScreen({
     super.key,
     required this.store,
+    required this.repository,
     this.syncOnOpen = false,
   });
   final LocalStore store;
+
+  /// 片源仓库：同步片源订阅（对端导入的 LibreTV / drpy 源）与自动导入用。
+  final AppRepository repository;
 
   /// 进入页面后立即同步一次。追剧页右上角入口用它，省掉"跳转后再点一次"。
   /// 注意与 WebDavSettings.autoSync（后台自动同步开关）区分：这里只是一次性
@@ -42,6 +47,9 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
   bool _busy = false;
   String _message = '';
   WebDavSyncOutcome? _outcome;
+
+  /// 上次同步的非致命警告（个别片源导入失败等），逐条展示。
+  List<String> _warnings = const [];
 
   @override
   void initState() {
@@ -148,6 +156,7 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
       _busy = true;
       _message = '';
       _outcome = null;
+      _warnings = const [];
     });
     final settings = widget.store.webDavSettings;
     final transport = HttpWebDavTransport(
@@ -158,13 +167,22 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
       final outcome = await WebDavSynchronizer(
         store: widget.store,
         transport: transport,
+        repository: widget.repository,
       ).synchronize();
       if (!mounted) return;
       setState(() {
         _outcome = outcome;
         _saved = widget.store.webDavSettings;
         _form = _saved;
-        _message = outcome.hasChanges ? '同步完成' : '已是最新，没有变化';
+        final summary = outcome.hasChanges ? '同步完成' : '已是最新，没有变化';
+        final extra = <String>[
+          if (outcome.sourcePrefs > 0) '片源偏好 ${outcome.sourcePrefs} 项',
+          if (outcome.sourceImports > 0) '导入片源 ${outcome.sourceImports} 个',
+        ];
+        _message = extra.isEmpty
+            ? summary
+            : '$summary（${extra.join('，')}）';
+        _warnings = outcome.warnings;
       });
     } catch (failure) {
       if (mounted) setState(() => _message = failure.toString());
@@ -211,6 +229,14 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                             '每台设备上传自己的记录文件，同步时下载其他设备的记录并按版本合并，'
                             '同一处修改不一致时保留双方版本，可在「设备互联」页逐项选择。'
                             '账号密码只保存在本机，不明文显示，不进入导出备份。',
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 8),
+                          child: Text(
+                            '同步范围还包括片源：已导入的 LibreTV / drpy 片源会出现在其他设备上'
+                            '（自动导入），收藏 / 隐藏状态按最新操作时间合并。'
+                            '注意：粘贴导入的 drpy 脚本源没有可同步的地址，不会跨设备传输。',
                           ),
                         ),
                       ],
@@ -331,6 +357,16 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                   Padding(
                     padding: const EdgeInsets.only(top: 12),
                     child: SelectableText(_message),
+                  ),
+                for (final warning in _warnings)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: SelectableText(
+                      warning,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
                   ),
                 if (_busy) const Padding(
                   padding: EdgeInsets.only(top: 12),

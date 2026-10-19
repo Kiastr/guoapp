@@ -172,6 +172,7 @@ class _AppBootstrapState extends State<AppBootstrap>
                   await WebDavSynchronizer(
                     store: store!,
                     transport: transport,
+                    repository: repository,
                   ).synchronize();
                 } finally {
                   transport.close();

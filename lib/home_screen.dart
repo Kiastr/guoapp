@@ -925,6 +925,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       MaterialPageRoute<void>(
                         builder: (_) => WebDavSyncScreen(
                           store: widget.store,
+                          repository: widget.repository,
                           syncOnOpen: true,
                         ),
                       ),
