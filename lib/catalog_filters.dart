@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'app_layout.dart';
 import 'models.dart';
+import 'pinyin_sort.dart';
 import 'remote_widgets.dart';
 
 /// 分类标签栏的下拉手势判定结果。
@@ -36,10 +37,10 @@ enum CatalogCategorySort {
   /// 站源返回的原始顺序。
   original,
 
-  /// 按名称排序（英文/数字按字母，中文按 Unicode 码位）。
+  /// 按名称排序：中文按拼音首字母，英文 / 数字按字母（A-Z）。
   alphabetical,
 
-  /// 按名称倒序。
+  /// 按名称倒序（Unicode 码位）。
   reverse,
 }
 
@@ -59,8 +60,16 @@ List<CatalogCategory> sortCategories(
     case CatalogCategorySort.original:
       return list;
     case CatalogCategorySort.alphabetical:
-      list.sort((a, b) => a.name.compareTo(b.name));
-      return list;
+      // 中文按拼音首字母、英文按字母：预计算排序键，键相同再按原名，
+      // 保证结果稳定。
+      final keyed = [
+        for (final entry in list) (entry, PinyinSort.sortKey(entry.name)),
+      ];
+      keyed.sort((a, b) {
+        final byKey = a.$2.compareTo(b.$2);
+        return byKey != 0 ? byKey : a.$1.name.compareTo(b.$1.name);
+      });
+      return [for (final (entry, _) in keyed) entry];
     case CatalogCategorySort.reverse:
       list.sort((a, b) => b.name.compareTo(a.name));
       return list;

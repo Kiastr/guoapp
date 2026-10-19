@@ -51,15 +51,44 @@ void main() {
       '漫剧',
       '综合',
     ]);
-    // 英文按字母在前，中文按 Unicode 码位（不等于拼音，码位分组即可预期）。
+    // 英文按字母在前，中文按拼音首字母：
+    // AI(A) < 漫剧(MJ) < 全部(QB) < 综合(ZH)。
     final alpha = sortCategories(categories, CatalogCategorySort.alphabetical)
         .map((c) => c.name)
         .toList();
-    expect(alpha.first, 'AI 剧');
+    expect(alpha, ['AI 剧', '漫剧', '全部', '综合']);
     final reverse = sortCategories(categories, CatalogCategorySort.reverse)
         .map((c) => c.name)
         .toList();
     expect(reverse.first, alpha.last);
+  });
+
+  test('字母排序：中文按拼音首字母而非 Unicode 码位', () {
+    const mixed = [
+      CatalogCategory('1', '短剧'),
+      CatalogCategory('2', '爱情'),
+      CatalogCategory('3', '动作'),
+      CatalogCategory('4', '科幻'),
+      CatalogCategory('5', '综艺'),
+    ];
+    // 码位序会得到 短剧/动作/科幻/爱情/综艺；拼音序应为
+    // 爱情(AI) 短剧(DJ) 动作(DZ) 科幻(KH) 综艺(ZY)。
+    expect(sortCategories(mixed, CatalogCategorySort.alphabetical).map((c) => c.name), [
+      '爱情',
+      '短剧',
+      '动作',
+      '科幻',
+      '综艺',
+    ]);
+    // 键相同的按原名稳定排序；空名称不炸。
+    expect(
+      sortCategories(const [
+        CatalogCategory('a', '电影'),
+        CatalogCategory('b', '电视'),
+      ], CatalogCategorySort.alphabetical).map((c) => c.name),
+      ['电视', '电影'],
+    );
+    expect(sortCategories(const [], CatalogCategorySort.alphabetical), isEmpty);
   });
 
   testWidgets('展开按钮打开分类面板，可排序并选择分类', (tester) async {
