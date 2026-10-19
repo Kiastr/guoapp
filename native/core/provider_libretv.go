@@ -437,14 +437,15 @@ type libretvConfigSite struct {
 	API  string `json:"api"`
 	Type int    `json:"type"`
 	// Ext TVBox type≥3 的扩展字段：drpy 站点里 api 是运行时库
-	// （drpy2.min.js），ext 才是真正的站点脚本地址。也可能是对象
-	// （csp_ 规则），此时不参与脚本候选。
+	// （drpy2.min.js），ext 才是真正的站点脚本地址。也可能是对象或
+	// JSON 规则文件（csp_ 规则），此时不参与脚本候选。
 	Ext json.RawMessage `json:"ext"`
+	// Jar Java 版 spider 包地址（TVBox 老格式），本实现不支持。
+	Jar string `json:"jar"`
 }
 
-// libretvConfigExtScriptURL 从 ext 里取出脚本地址：只有「字符串且是
-// http(s) 的 .js」才算脚本；对象/数组/JSON 文件一律返回空。
-func libretvConfigExtScriptURL(raw json.RawMessage) string {
+// libretvConfigExtText 取出 ext 里的字符串；ext 是对象/数组时返回空。
+func libretvConfigExtText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -452,7 +453,13 @@ func libretvConfigExtScriptURL(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &text) != nil {
 		return ""
 	}
-	text = strings.TrimSpace(text)
+	return strings.TrimSpace(text)
+}
+
+// libretvConfigExtScriptURL ext 里的脚本地址：只有「字符串且是 http(s)
+// 的 .js」才算脚本。
+func libretvConfigExtScriptURL(raw json.RawMessage) string {
+	text := libretvConfigExtText(raw)
 	if !looksLikeDrpyScriptURL(text) {
 		return ""
 	}
@@ -475,7 +482,26 @@ func libretvConfigScriptCandidate(entry libretvConfigSite) string {
 	return api
 }
 
-// looksLikeDrpyRuntimeLibrary 判断地址是否像 drpy 运行时库
+// libretvUnsupportedReason type≥3 条目不可用时的原因。
+// TVBox 的 type=3 里混着多种形态（drpy 脚本、csp_ 规则、jar 包、py 源），
+// 统一报「类型不支持」没法判断是哪一种，这里按条目内容给出具体说明。
+func libretvUnsupportedReason(entry libretvConfigSite) string {
+	api := strings.TrimSpace(entry.API)
+	ext := libretvConfigExtText(entry.Ext)
+	switch {
+	case strings.TrimSpace(entry.Jar) != "":
+		return "jar / spider 包源暂不支持（仅支持 drpy JS 脚本）"
+	case strings.HasPrefix(api, "csp_"):
+		return "csp_ 规则源需要 TVBox 内置 Spider，暂不支持"
+	case looksLikeDrpyRuntimeLibrary(api):
+		return "只有 drpy 运行时库（api），缺少站点脚本（ext）"
+	case ext != "" && !looksLikeDrpyScriptURL(ext):
+		return "扩展配置 ext 不是 drpy 脚本（.js），暂不支持"
+	default:
+		return fmt.Sprintf("type=%d 类型暂不支持（仅支持 provide/vod 采集接口与 drpy 脚本）", entry.Type)
+	}
+}
+
 // （drpy.min.js / drpy2.min.js / drpy2.js）。这类文件是 ES Module 打包产物，
 // 不是站点脚本；只有在 ext 没有给出脚本时才用这个判定兜底。
 func looksLikeDrpyRuntimeLibrary(raw string) bool {
@@ -589,7 +615,10 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates 
 				continue
 			}
 			if !looksLikeDrpyScriptURL(candidate) {
-				skipped = append(skipped, fmt.Sprintf("%s：type=%d 类型暂不支持（仅支持 provide/vod 采集接口与 drpy 脚本）", libretvDisplayName(entry), entry.Type))
+				skipped = append(
+					skipped,
+					fmt.Sprintf("%s：%s", libretvDisplayName(entry), libretvUnsupportedReason(entry)),
+				)
 			}
 			continue
 		}

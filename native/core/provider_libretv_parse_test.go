@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -316,9 +317,35 @@ func TestLibreTVParseDrpyCandidatesPreferExt(t *testing.T) {
 	if candidates[1].API != "https://cdn.example.com/site-script.js" {
 		t.Fatalf("无 ext 时应回退 api: %+v", candidates[1])
 	}
-	// 非脚本 ext 的条目回退到 api；api 也不是 .js 时带原因跳过。
+	// 非脚本 ext 的条目回退到 api；api 也不是 .js（或只是运行时库）时带原因跳过。
 	if len(skipped) != 2 {
 		t.Fatalf("应跳过 2 个不支持条目: %+v", skipped)
+	}
+	if !strings.Contains(skipped[0], "csp_") {
+		t.Fatalf("csp_ 条目原因不明: %s", skipped[0])
+	}
+	if !strings.Contains(skipped[1], "运行时库") {
+		t.Fatalf("仅提供运行时库的条目原因不明: %s", skipped[1])
+	}
+}
+
+// TestLibreTVUnsupportedReasonByShape type=3 里混着多种形态，跳过原因要
+// 能区分 csp_ 规则、jar 包、只有运行时库等具体情况。
+func TestLibreTVUnsupportedReasonByShape(t *testing.T) {
+	cases := []struct {
+		entry  libretvConfigSite
+		expect string
+	}{
+		{libretvConfigSite{API: "csp_XBPQ"}, "csp_"},
+		{libretvConfigSite{API: "csp_XYQ", Jar: "https://a.com/spider.jar"}, "jar"},
+		{libretvConfigSite{API: "https://a.com/drpy.min.js"}, "运行时库"},
+		{libretvConfigSite{API: "https://a.com/site.js", Ext: json.RawMessage(`"https://a.com/rule.json"`)}, "ext 不是 drpy 脚本"},
+		{libretvConfigSite{API: "https://a.com/vod"}, "type="},
+	}
+	for _, item := range cases {
+		if reason := libretvUnsupportedReason(item.entry); !strings.Contains(reason, item.expect) {
+			t.Fatalf("原因说明不符 %q（%s）", item.expect, reason)
+		}
 	}
 }
 
