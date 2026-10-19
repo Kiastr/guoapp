@@ -89,6 +89,12 @@ func nativeCoverReferer(downloader *Downloader, source, address string) string {
 			return parsed.Scheme + "://" + parsed.Host + "/"
 		}
 	}
+	// drpy 脚本源海报用脚本 host 作 Referer。
+	if site, ok := downloader.drpySite(source); ok {
+		if referer := drpySiteReferer(site); referer != "" {
+			return referer
+		}
+	}
 	if source == sourceCloudFront {
 		if parsed, err := url.Parse(address); err == nil && (strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".zdmhyg.cn") || strings.EqualFold(parsed.Hostname(), "pic.tuafjz.cn")) {
 			return downloader.providerBaseURL(sourceHuangguoAI) + "/"

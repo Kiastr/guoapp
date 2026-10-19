@@ -356,7 +356,8 @@ func drpyString(source map[string]any, key string) string {
 	return ""
 }
 
-// drpyInt 安全取 map 里的整数字段（兼容字符串/float64）。
+// drpyInt 安全取 map 里的整数字段。goja 的 Export() 对 JS 整数返回
+// int64（非 float64），字符串数字（部分脚本）也要认。
 func drpyInt(source map[string]any, key string) int {
 	value, ok := source[key]
 	if !ok || value == nil {
@@ -364,6 +365,12 @@ func drpyInt(source map[string]any, key string) int {
 	}
 	switch typed := value.(type) {
 	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case int32:
 		return int(typed)
 	case int:
 		return typed

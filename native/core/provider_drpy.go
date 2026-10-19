@@ -690,8 +690,9 @@ func drpyDramaFromRow(source string, row macCMSListRow, content string) Drama {
 
 // drpyChaptersFromGroups 把「播放源分组」解析成分集列表（复用 MacCMS 的
 // $$$/#/$ 分隔约定）。与 libretv 版的区别：分集 ID 编码 flag+episodeKey 的
-// blob（播放时反解喂给 play()），VideoURL 仅在地址本身就是直链时保留
-// （play() 失败时的兜底），否则留空。
+// blob（episodeKey 取 $ 后的地址/ID 段，播放时反解喂给 play），VideoURL
+// 仅在地址本身就是媒体直链（.m3u8/.mp4）时保留（play() 失败时的兜底），
+// 否则留空。
 func drpyChaptersFromGroups(source, vodID, referer string, playFrom, playGroups []string) []Chapter {
 	var chapters []Chapter
 	seenEpisode := map[int]string{}
@@ -714,20 +715,28 @@ func drpyChaptersFromGroups(source, vodID, referer string, playFrom, playGroups 
 			if !found {
 				continue
 			}
-			episodeKey := strings.TrimSpace(name)
+			// drpy2 约定：play(flag, id, flags) 的 id 是 vod_play_url 里
+			// 「$ 后面的值」（播放地址或 ID，drpy-node AGENTS.md 与 drpy2
+			// 核心函数文档一致），名称仅作展示标题。名称缺失时退化为地址。
+			episodeKey := strings.TrimSpace(address)
 			if episodeKey == "" {
 				continue
 			}
+			title := strings.TrimSpace(name)
+			if title == "" {
+				title = episodeKey
+			}
 			episodeIndexInGroup++
-			title := episodeKey
 			number := episodeIndex(title, episodeIndexInGroup)
 			if previous, duplicated := seenEpisode[number]; duplicated && playName != "" && previous != playName {
 				title = fmt.Sprintf("%s·%s", title, playName)
 			}
 			seenEpisode[number] = playName
+			// 仅当地址本身就是媒体直链（.m3u8/.mp4）时保留为 VideoURL，
+			// 作为 play() 失败时的兜底；页面地址/ID 不保留（避免被当成直链播放）。
 			videoURL := ""
-			if isProviderHTTPMediaURL(strings.TrimSpace(address)) {
-				videoURL = strings.TrimSpace(address)
+			if drpyIsDirectMediaURL(episodeKey) {
+				videoURL = episodeKey
 			}
 			chapters = append(chapters, Chapter{
 				ID:             providerChapterID(source, drpyEncodeSegment(vodID), drpyBlobFromParts(playName, episodeKey)),

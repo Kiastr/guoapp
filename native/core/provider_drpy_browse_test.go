@@ -246,7 +246,9 @@ func TestDrpyFetchDetailChapters(t *testing.T) {
 			t.Fatalf("分集 ID 缺 blob 段: %q", chapter.ID)
 		}
 		flag, episodeKey, ok := drpyPartsFromBlob(episode)
-		if !ok || episodeKey != expectedTitles[index] && !strings.HasPrefix(expectedTitles[index], episodeKey) {
+		// drpy2 约定：episodeKey 是 $ 后的地址/ID 段（喂给 play），
+		// 不是集名；集名只在 Chapter.Title。
+		if !ok || !strings.HasPrefix(episodeKey, "https://cdn.test/") {
 			t.Fatalf("分集 blob 反解异常: %q -> flag=%q key=%q", chapter.ID, flag, episodeKey)
 		}
 		if vodPart != drpyEncodeSegment("101") {
