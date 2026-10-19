@@ -33,8 +33,8 @@ const libretvXMLListBody = `<?xml version="1.0" encoding="utf-8"?><rss version="
 </list><class><ty id="13">国产剧</ty><ty id="6">动作片</ty></class></rss>`
 
 const libretvXMLDetailBody = `<?xml version="1.0" encoding="utf-8"?><rss version="5.1"><list page="1" pagecount="1" pagesize="20" recordcount="1">
-<video><id>201</id><tid>13</tid><name><![CDATA[XML测试剧]]></name><type>国产剧</type><pic>https://img.example.com/x.jpg</pic><lang>国语</lang><area>内地</area><year>2025</year><note><![CDATA[更新至第2集]]></note>
-<actor><![CDATA[张三,李四]]></actor><director><![CDATA[王五]]></director><score>9.1</score>
+<video><last>2026-10-19 09:30:00</last><id>201</id><tid>13</tid><name><![CDATA[XML测试剧]]></name><type>国产剧</type><pic>https://img.example.com/x.jpg</pic><lang>国语</lang><area>内地</area><year>2025</year><note><![CDATA[更新至第2集]]></note>
+<actor><![CDATA[张三,李四]]></actor><director><![CDATA[王五]]></director><score>9.1</score><tag><![CDATA[悬疑,犯罪]]></tag>
 <des><![CDATA[<p>XML 简介&amp;说明</p>]]></des>
 <dl><dd flag="ffm3u8"><![CDATA[第01集$https://cdn.example.com/x1.m3u8#第02集$https://cdn.example.com/x2.m3u8]]></dd>
 <dd flag="mihua"><![CDATA[第01集$https://cdn.example.com/y1.m3u8#第02集$https://cdn.example.com/y2.m3u8]]></dd></dl>
@@ -158,6 +158,13 @@ func TestLibreTVFetchXMLDetailMultiPlaySources(t *testing.T) {
 	}
 	if drama.Score != "9.1" || drama.Actor != "张三,李四" || drama.Director != "王五" {
 		t.Fatalf("详情元数据错误: %+v", drama)
+	}
+	// XML 的 <last> 映射更新时间为展示格式，<tag> 并入标签。
+	if drama.UpdateTime != "2026-10-19 09:30" {
+		t.Fatalf("XML 更新时间映射错误: %q", drama.UpdateTime)
+	}
+	if strings.Join(drama.Tags, "|") != "悬疑|犯罪|内地|国语|2025" {
+		t.Fatalf("XML 标签合并错误: %v", drama.Tags)
 	}
 	if len(chapters) != 4 {
 		t.Fatalf("两个播放源各 2 集，应有 4 集，实际 %d", len(chapters))

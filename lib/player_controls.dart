@@ -338,24 +338,35 @@ class _PlayerControlsState extends State<PlayerControls> {
                           8,
                           _bottomChromeInset(),
                         ),
-                        child: Stack(
-                          children: [
-                            if (widget.fullscreen || widget.swipeEnabled)
-                              _topBar(),
-                            if (!state.buffering &&
-                                widget.enabled &&
-                                constraints.maxHeight >=
-                                    (widget.swipeEnabled ? 168 : 220))
-                              _centerPlayback(state.playing, showSkip: true),
-                            _sideDanmakuControl(),
-                            _bottomControls(
-                              constraints: constraints,
-                              volume: state.volume,
-                              duration: duration,
-                              position: position,
-                              buffered: buffered,
+                        // 控件层永远叠在深色渐变上：统一白色前景，避免浅色主题下
+                        // 继承黑色文字/图标而看不清（顶部栏时钟电量、提示文字等）。
+                        child: DefaultTextStyle.merge(
+                          style: const TextStyle(color: Colors.white),
+                          child: IconTheme.merge(
+                            data: const IconThemeData(color: Colors.white),
+                            child: Stack(
+                              children: [
+                                if (widget.fullscreen || widget.swipeEnabled)
+                                  _topBar(),
+                                if (!state.buffering &&
+                                    widget.enabled &&
+                                    constraints.maxHeight >=
+                                        (widget.swipeEnabled ? 168 : 220))
+                                  _centerPlayback(
+                                    state.playing,
+                                    showSkip: true,
+                                  ),
+                                _sideDanmakuControl(),
+                                _bottomControls(
+                                  constraints: constraints,
+                                  volume: state.volume,
+                                  duration: duration,
+                                  position: position,
+                                  buffered: buffered,
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ],
@@ -429,7 +440,11 @@ class _PlayerControlsState extends State<PlayerControls> {
             children: [
               Text(
                 '$hour:$minute',
-                style: const TextStyle(fontSize: 13, height: 1),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  height: 1,
+                ),
               ),
               if (level != null) ...[
                 const SizedBox(width: 6),
@@ -437,7 +452,11 @@ class _PlayerControlsState extends State<PlayerControls> {
                 const SizedBox(width: 2),
                 Text(
                   '$level%',
-                  style: const TextStyle(fontSize: 12, height: 1),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    height: 1,
+                  ),
                 ),
               ],
             ],
@@ -1093,8 +1112,8 @@ class _PlayerControlsState extends State<PlayerControls> {
         final icon = value < 0.33
             ? Icons.brightness_low_rounded
             : value < 0.66
-                ? Icons.brightness_medium_rounded
-                : Icons.brightness_high_rounded;
+            ? Icons.brightness_medium_rounded
+            : Icons.brightness_high_rounded;
         return IgnorePointer(
           child: Center(
             child: Container(
@@ -1103,7 +1122,10 @@ class _PlayerControlsState extends State<PlayerControls> {
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: .75),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withValues(alpha: .15), width: 1),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: .15),
+                  width: 1,
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: .4),
@@ -1125,7 +1147,9 @@ class _PlayerControlsState extends State<PlayerControls> {
                       child: LinearProgressIndicator(
                         value: value,
                         backgroundColor: Colors.white24,
-                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white,
+                        ),
                       ),
                     ),
                   ),
@@ -1167,6 +1191,8 @@ class _PlayerControlsState extends State<PlayerControls> {
               feedback,
               textAlign: TextAlign.center,
               style: TextStyle(
+                // 提示层叠在深色半透明底上，显式白字避免浅色主题下变灰看不清。
+                color: Colors.white,
                 fontSize: compact ? 12.5 : 14,
                 fontWeight: compact ? FontWeight.w600 : FontWeight.w500,
               ),

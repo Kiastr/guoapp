@@ -2,12 +2,8 @@ import 'package:duanju_app/models.dart';
 import 'package:duanju_app/playback_route_memory.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Drama drama(String source, String id) => Drama(
-  id: id,
-  source: source,
-  title: '测试剧 $id',
-  episodes: 12,
-);
+Drama drama(String source, String id) =>
+    Drama(id: id, source: source, title: '测试剧 $id', episodes: 12);
 
 void main() {
   test('remembers the route that played and falls back to zero', () {
@@ -59,6 +55,23 @@ void main() {
     expect(memory.routeOf(third), 1);
   });
 
+  test('a remembered route expires after the ttl', () {
+    var now = DateTime(2026, 10, 19, 20);
+    final memory = PlaybackRouteMemory(now: () => now);
+    final show = drama('huangdou', 'huangdou:100');
+    memory.remember(show, 2);
+    expect(memory.routeOf(show), 2);
+
+    // 14 分钟内仍然有效。
+    now = now.add(const Duration(minutes: 14));
+    expect(memory.routeOf(show), 2);
+
+    // 超过 15 分钟：回到默认线路重新试，并清掉记录。
+    now = now.add(const Duration(minutes: 2));
+    expect(memory.routeOf(show), 0, reason: '过期后应回到默认线路');
+    expect(memory.length, 0);
+  });
+
   test('a plan carries the preload verification flag', () {
     final plan = PlaybackPlan.fromJson(<String, dynamic>{
       'url': 'https://play.test/a.m3u8',
@@ -77,5 +90,15 @@ void main() {
     });
     expect(plain.verified, isFalse);
     expect(plain.hasAlternative, isFalse);
+  });
+
+  test('the last route still has an alternative (wraps to the first)', () {
+    final plan = PlaybackPlan.fromJson(<String, dynamic>{
+      'url': 'https://play.test/a.m3u8',
+      'session': 's',
+      'routeIndex': 2,
+      'routeCount': 3,
+    });
+    expect(plan.hasAlternative, isTrue, reason: '环形回退：最后一条线路也能切回首选线路');
   });
 }

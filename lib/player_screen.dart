@@ -161,11 +161,22 @@ class _PlayerScreenState extends State<PlayerScreen>
     preload: _preloadEnabled,
     enhancement: _enhancement.preferences,
   );
-  String get _qualityLabel => _plan?.local == true
-      ? '本地原画'
-      : _requestedQuality == 0
-      ? '自动'
-      : '${_requestedQuality}P';
+  String get _qualityLabel {
+    if (_plan?.local == true) return '本地原画';
+    // 没有真实画质档位但有多条线路时（LibreTV 多播放源），按钮直接显示
+    // 当前线路名，避免一直显示「自动」让人以为清晰度选择失效。
+    final hasQualities = (_plan?.qualities ?? const []).any((q) => q > 0);
+    if (!hasQualities) {
+      final lines = _lineOptions;
+      if (lines.length > 1) {
+        for (final line in lines) {
+          if (line.index == _index) return line.label;
+        }
+      }
+    }
+    return _requestedQuality == 0 ? '自动' : '${_requestedQuality}P';
+  }
+
   String get _session => _plan?.session ?? '';
   double get _currentPosition =>
       _openedIndex == _index && _player.state.position.inMilliseconds > 0
@@ -873,6 +884,11 @@ class _PlayerScreenState extends State<PlayerScreen>
       }
       return;
     }
+    if (action == PlaybackRecoveryAction.refresh) {
+      // 重新解析时回到默认线路：线路记忆是「当时可用」，默认线可能已经恢复。
+      // 每次恢复只多一次解析请求（原本就要重新解析），不会额外增加风控压力。
+      playbackRouteMemory.forget(widget.detail.drama);
+    }
     await _play(_index, position: position, recoveryAction: action);
   }
 
@@ -972,6 +988,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                 widget.detail.episodes[index],
                 quality: _requestedQuality,
                 online: _forceOnline,
+                route: playbackRouteMemory.routeOf(widget.detail.drama),
               )
             : null);
     _preloader.clear();
@@ -1068,8 +1085,14 @@ class _PlayerScreenState extends State<PlayerScreen>
               await platform.setProperty('vd-lavc-skiploopfilter', 'all');
               await platform.setProperty('vd-lavc-skipidct', 'all');
               await platform.setProperty('vd-lavc-threads', '2');
-              await platform.setProperty('demuxer-max-bytes', '${4 * 1024 * 1024}');
-              await platform.setProperty('demuxer-max-back-bytes', '${1 * 1024 * 1024}');
+              await platform.setProperty(
+                'demuxer-max-bytes',
+                '${4 * 1024 * 1024}',
+              );
+              await platform.setProperty(
+                'demuxer-max-back-bytes',
+                '${1 * 1024 * 1024}',
+              );
               await platform.setProperty('demuxer-readahead-secs', '5');
             } else {
               await platform.setProperty('hwdec', 'auto-safe');
@@ -1336,6 +1359,30 @@ class _PlayerScreenState extends State<PlayerScreen>
     );
   }
 
+  /// 当前集的同线路章节（LibreTV 多播放源在详情里是「第N集·源名」的并列项）。
+  /// 只有一集时返回空列表，播放器菜单据此隐藏「线路」区块。
+  List<PlayerLine> get _lineOptions {
+    final episodes = widget.detail.episodes;
+    if (_index < 0 || _index >= episodes.length) return const [];
+    final number = episodes[_index].number;
+    final options = <PlayerLine>[];
+    for (var i = 0; i < episodes.length; i++) {
+      if (episodes[i].number != number) continue;
+      options.add(
+        PlayerLine(index: i, label: _lineLabel(episodes[i], options.length)),
+      );
+    }
+    return options;
+  }
+
+  /// 线路名取标题里「·」后的播放源名（Go 侧在集号重复时追记），
+  /// 默认线路没有后缀，用「线路 N」兜底。
+  String _lineLabel(Episode episode, int ordinal) {
+    final parts = episode.title.split('·');
+    final name = parts.length > 1 ? parts.last.trim() : '';
+    return name.isEmpty ? '线路 ${ordinal + 1}' : name;
+  }
+
   Future<void> _openPanel(PlayerMenuSection section) async {
     if (_panelOpen || _closed) return;
     _interactions.cancel();
@@ -1360,6 +1407,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               preferences: _preferences,
               qualities: _plan?.qualities ?? [],
               actualQuality: _plan?.quality ?? 0,
+              lines: _lineOptions,
               local: _plan?.local == true,
               favorite: widget.store.isFavorite(widget.detail.drama.id),
               mobile: _mobile,
@@ -1381,7 +1429,14 @@ class _PlayerScreenState extends State<PlayerScreen>
         ),
       );
       if (mounted && !_closed && index != null && index != _index) {
-        await _play(index);
+        // 同一集换线路（LibreTV 多播放源）：保留当前播放进度；
+        // 换集则按原有逻辑从头开始。
+        final episodes = widget.detail.episodes;
+        final sameEpisode =
+            index < episodes.length &&
+            _index < episodes.length &&
+            episodes[index].number == episodes[_index].number;
+        await _play(index, position: sameEpisode ? _currentPosition : 0);
       }
     } finally {
       if (mounted && !_closed) {
@@ -1829,7 +1884,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         FilledButton.tonalIcon(
-                          onPressed: () => DiaryService.showDiaryDialog(context),
+                          onPressed: () =>
+                              DiaryService.showDiaryDialog(context),
                           icon: const Icon(Icons.receipt_long_rounded),
                           label: const Text('查看播放日记'),
                         ),
@@ -1840,8 +1896,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                             label: const Text('改为在线播放'),
                           )
                         else if (!_localFailure &&
-                              !widget.localOnly &&
-                              widget.repository.supportsSourceManagement)
+                            !widget.localOnly &&
+                            widget.repository.supportsSourceManagement)
                           SourceDiagnosticsButton(
                             repository: widget.repository,
                             store: widget.store,

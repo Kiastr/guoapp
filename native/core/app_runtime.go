@@ -97,6 +97,7 @@ type nativeDrama struct {
 	OnlineDate     string   `json:"onlineDate,omitempty"`
 	Tags           []string `json:"tags,omitempty"`
 	ReleaseStatus  string   `json:"releaseStatus,omitempty"`
+	UpdateTime     string   `json:"updateTime,omitempty"`
 }
 
 type nativeInput struct {
@@ -248,7 +249,8 @@ func nativeNormalize(drama Drama) nativeDrama {
 		Description: firstNonEmpty(drama.Desc, drama.Intro), Cover: cover, Episodes: episodes,
 		Category: nativeDramaCategory(drama), VIP: drama.VIP,
 		Heat: drama.Heat, Views: drama.Views, OnlineDate: providerReleaseDate(drama.OnlineDate),
-		Tags: append([]string(nil), drama.Tags...), ReleaseStatus: drama.ReleaseStatus}
+		Tags: append([]string(nil), drama.Tags...), ReleaseStatus: drama.ReleaseStatus,
+		UpdateTime: drama.UpdateTime}
 }
 
 func nativeDramaCategory(drama Drama) string {

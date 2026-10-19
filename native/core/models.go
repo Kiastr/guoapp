@@ -53,6 +53,7 @@ type Drama struct {
 	OnlineDate        string             `json:"onlineDate,omitempty"`
 	Tags              []string           `json:"tags,omitempty"`
 	ReleaseStatus     string             `json:"releaseStatus,omitempty"`
+	UpdateTime        string             `json:"updateTime,omitempty"`
 	SortMetadata      *sortMetadataState `json:"sortMetadata,omitempty"`
 }
 

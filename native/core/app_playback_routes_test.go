@@ -94,9 +94,16 @@ func TestNativePlaybackFallbackPreservesKeysAndReleasesOnlyOldSession(t *testing
 	if _, ok := engine.playbacks[next.Session]; !ok {
 		t.Fatal("releasing the old plan removed the new playback")
 	}
-	if _, err := engine.nativeNextPlayback(context.Background(), next.Session); err == nil {
-		t.Fatal("exhausted routes restarted at the beginning")
+	// 环形回退：最后一条线路再切会回到首选线路，而不是报错。
+	// 这样记忆停在备用线时，播放器仍有办法重新试默认线。
+	wrapped, err := engine.nativeNextPlayback(context.Background(), next.Session)
+	if err != nil {
+		t.Fatalf("last route should wrap back to the first: %v", err)
 	}
+	if wrapped.RouteIndex != 0 || wrapped.Session == next.Session {
+		t.Fatalf("wrap did not return to the first route: %+v", wrapped)
+	}
+	engine.nativeReleasePlayback(wrapped.Session)
 	engine.nativeReleasePlayback(next.Session)
 	if len(engine.playbacks) != 0 {
 		t.Fatal("playback choices leaked")

@@ -74,6 +74,7 @@ type macCMSXMLVideo struct {
 	Actor    string `xml:"actor"`
 	Director string `xml:"director"`
 	Score    string `xml:"score"`
+	Tag      string `xml:"tag"`
 	Content  string `xml:"content"`
 	Des      string `xml:"des"`
 	PlayList []struct {
@@ -85,18 +86,20 @@ type macCMSXMLVideo struct {
 // row 归一化成与 JSON 接口共用的列表行。
 func (video macCMSXMLVideo) row() macCMSListRow {
 	return macCMSListRow{
-		ID:       strings.TrimSpace(video.ID),
-		Name:     strings.TrimSpace(video.Name),
-		Pic:      strings.TrimSpace(video.Pic),
-		TypeName: strings.TrimSpace(video.Type),
-		Remarks:  strings.TrimSpace(video.Note),
-		Year:     strings.TrimSpace(video.Year),
-		Area:     strings.TrimSpace(video.Area),
-		Lang:     strings.TrimSpace(video.Lang),
-		Hits:     "", // XML 接口不提供播放量
-		Score:    libretvScoreText(strings.TrimSpace(video.Score)),
-		Actor:    strings.TrimSpace(video.Actor),
-		Director: strings.TrimSpace(video.Director),
+		ID:        strings.TrimSpace(video.ID),
+		Name:      strings.TrimSpace(video.Name),
+		Pic:       strings.TrimSpace(video.Pic),
+		TypeName:  strings.TrimSpace(video.Type),
+		Remarks:   strings.TrimSpace(video.Note),
+		Year:      strings.TrimSpace(video.Year),
+		Area:      strings.TrimSpace(video.Area),
+		Lang:      strings.TrimSpace(video.Lang),
+		Hits:      "", // XML 接口不提供播放量
+		Score:     libretvScoreText(strings.TrimSpace(video.Score)),
+		Actor:     strings.TrimSpace(video.Actor),
+		Director:  strings.TrimSpace(video.Director),
+		UpdatedAt: strings.TrimSpace(video.Last),
+		Tag:       strings.TrimSpace(video.Tag),
 	}
 }
 

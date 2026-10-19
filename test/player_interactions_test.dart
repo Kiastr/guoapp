@@ -30,10 +30,10 @@ void main() {
       );
 
   PointerUpEvent up(double x, double y, {int pointer = 1}) => PointerUpEvent(
-        pointer: pointer,
-        kind: PointerDeviceKind.touch,
-        position: Offset(x, y),
-      );
+    pointer: pointer,
+    kind: PointerDeviceKind.touch,
+    position: Offset(x, y),
+  );
 
   Future<PlayerInteractions> makeInteractions(WidgetTester tester) async {
     final platform = ScriptedPlayer();
@@ -60,13 +60,20 @@ void main() {
 
   testWidgets('长按（左半屏静止）进入倍速且不弹亮度 HUD', (tester) async {
     final interactions = await makeInteractions(tester);
-    interactions.pointerDown(down(60, 300),
-        swipeEnabled: true, width: viewWidth, height: viewHeight);
+    interactions.pointerDown(
+      down(60, 300),
+      swipeEnabled: true,
+      width: viewWidth,
+      height: viewHeight,
+    );
     await tester.pump(const Duration(milliseconds: 400)); // 越过 350ms hold
 
     expect(interactions.boosting, isTrue, reason: '长按应进入倍速');
-    expect(interactions.hudState.type, SwipeAction.none,
-        reason: '静止长按不应显示亮度 HUD');
+    expect(
+      interactions.hudState.type,
+      SwipeAction.none,
+      reason: '静止长按不应显示亮度 HUD',
+    );
 
     interactions.pointerUp(up(60, 300));
     await tester.pump(const Duration(seconds: 2)); // 冲掉恢复提示的 1200ms timer
@@ -76,25 +83,35 @@ void main() {
   testWidgets('双击（左半屏两次点按）不弹亮度 HUD', (tester) async {
     final interactions = await makeInteractions(tester);
     for (var i = 0; i < 2; i++) {
-      interactions.pointerDown(down(60, 300, pointer: i + 1),
-          swipeEnabled: true, width: viewWidth, height: viewHeight);
+      interactions.pointerDown(
+        down(60, 300, pointer: i + 1),
+        swipeEnabled: true,
+        width: viewWidth,
+        height: viewHeight,
+      );
       interactions.pointerUp(up(60, 300, pointer: i + 1));
     }
     await tester.pump();
 
-    expect(interactions.hudState.type, SwipeAction.none,
-        reason: '双击暂停不应显示亮度 HUD');
+    expect(
+      interactions.hudState.type,
+      SwipeAction.none,
+      reason: '双击暂停不应显示亮度 HUD',
+    );
   });
 
   testWidgets('左半屏垂直拖动超过阈值才显示 HUD 并调节亮度', (tester) async {
     final interactions = await makeInteractions(tester);
-    interactions.pointerDown(down(60, 400),
-        swipeEnabled: true, width: viewWidth, height: viewHeight);
+    interactions.pointerDown(
+      down(60, 400),
+      swipeEnabled: true,
+      width: viewWidth,
+      height: viewHeight,
+    );
 
     // 轻微移动（12~48px 之间）：不 latch、不改亮度
     interactions.pointerMove(move(62, 370)); // dy=30 < 48
-    expect(interactions.hudState.type, SwipeAction.none,
-        reason: '未超过阈值不应显示亮度');
+    expect(interactions.hudState.type, SwipeAction.none, reason: '未超过阈值不应显示亮度');
     expect(interactions.brightness, 0.5, reason: '未确认前不应改变亮度');
 
     // 垂直上滑 100px：latch 并显示（latch 当帧只定基准，亮度不变）
@@ -109,16 +126,30 @@ void main() {
     await tester.pump(const Duration(seconds: 2)); // 冲掉 HUD 收起的 1000ms timer
   });
 
-  testWidgets('左半屏水平方向移动不触发亮度（非垂直主方向）', (tester) async {
+  testWidgets('左半屏水平拖动改为进度调节，不触发亮度', (tester) async {
     final interactions = await makeInteractions(tester);
-    interactions.pointerDown(down(60, 300),
-        swipeEnabled: true, width: viewWidth, height: viewHeight);
+    interactions.pointerDown(
+      down(60, 300),
+      swipeEnabled: true,
+      width: viewWidth,
+      height: viewHeight,
+    );
     interactions.pointerMove(move(180, 302)); // dx=120，dy=2
 
-    expect(interactions.hudState.type, SwipeAction.none,
-        reason: '水平主方向不应进入亮度调节');
+    expect(
+      interactions.hudState.type,
+      SwipeAction.none,
+      reason: '水平主方向不应进入亮度调节',
+    );
+    expect(interactions.feedback, contains('快进至'), reason: '左半屏横向拖动应给出进度预览');
+    expect(
+      interactions.chromeHintSuppressed,
+      isTrue,
+      reason: '拖动预览属进程态提示，不应唤出播放控件',
+    );
 
     interactions.pointerUp(up(180, 302));
-    await tester.pump();
+    expect(interactions.feedback, contains('快进至'), reason: '松手提交进度并给出最终提示');
+    await tester.pump(const Duration(seconds: 2));
   });
 }

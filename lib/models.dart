@@ -167,6 +167,7 @@ class Drama {
     this.onlineDate = '',
     this.tags = const [],
     this.releaseStatus = '',
+    this.updateTime = '',
   }) : vipStatus = vip;
   final String id;
   final String source;
@@ -186,6 +187,10 @@ class Drama {
   final String onlineDate;
   final List<String> tags;
   final String releaseStatus;
+
+  /// 源站更新时间（MacCMS 的 vod_time / XML 的 last），原始字符串，
+  /// 形如「2026-10-19 20:15」。仅展示用，不参与排序计算。
+  final String updateTime;
   String get releaseLabel => switch (releaseStatus) {
     'finished' || 'completed' => '已完结',
     'ongoing' => '连载中',
@@ -217,6 +222,7 @@ class Drama {
     onlineDate: json['onlineDate'] as String? ?? '',
     tags: (json['tags'] as List? ?? const []).whereType<String>().toList(),
     releaseStatus: json['releaseStatus'] as String? ?? '',
+    updateTime: json['updateTime'] as String? ?? '',
   );
   Map<String, dynamic> toJson() => {
     'metadataSchema': 1,
@@ -237,6 +243,7 @@ class Drama {
     'onlineDate': onlineDate,
     'tags': tags,
     'releaseStatus': releaseStatus,
+    'updateTime': updateTime,
   };
 
   Drama merge(Drama fresh) {
@@ -279,6 +286,7 @@ class Drama {
           fresh.releaseStatus.isEmpty || fresh.releaseStatus == 'unknown'
           ? releaseStatus
           : fresh.releaseStatus,
+      updateTime: fresh.updateTime.isEmpty ? updateTime : fresh.updateTime,
     );
   }
 }
@@ -368,11 +376,15 @@ class PlaybackPlan {
   final int expiresAt;
   final int routeIndex;
   final int routeCount;
+
   /// 预加载已确认这条线路能取到数据（首字节在预算内）。
   /// 为真时播放器把首帧等待放宽，减少对"慢但可用"线路的误杀。
   final bool verified;
   final bool local;
-  bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;
+
+  /// 还能不能切到别的线路。线路表按环形处理：最后一条也能回到首选线路，
+  /// 否则记忆停在备用线时失败只能反复重解析同一条线。
+  bool get hasAlternative => session.isNotEmpty && routeCount > 1;
   factory PlaybackPlan.fromJson(Map<String, dynamic> json) => PlaybackPlan(
     url: json['url'] as String? ?? '',
     local: json['local'] == true,

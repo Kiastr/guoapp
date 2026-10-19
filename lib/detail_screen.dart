@@ -720,7 +720,8 @@ class _DetailScreenState extends State<DetailScreen> {
         _followingControls(drama),
         if (drama.onlineDate.isNotEmpty ||
             drama.heat.isNotEmpty ||
-            drama.views.isNotEmpty)
+            drama.views.isNotEmpty ||
+            drama.updateTime.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: Text(
@@ -728,6 +729,8 @@ class _DetailScreenState extends State<DetailScreen> {
                 if (drama.onlineDate.isNotEmpty) '${drama.onlineDate} 上线',
                 if (drama.heat.isNotEmpty) '热度 ${drama.heat}',
                 if (drama.views.isNotEmpty) '播放 ${drama.views}',
+                // vod_time / XML last：源站最后更新时间，只展示不参与排序。
+                if (drama.updateTime.isNotEmpty) '更新于 ${drama.updateTime}',
               ].join(' · '),
               style: TextStyle(color: colors.onSurfaceVariant, fontSize: 12),
             ),

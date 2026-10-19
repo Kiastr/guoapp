@@ -66,6 +66,7 @@ const libretvListBody = `{"code":1,"msg":"数据列表","page":1,"pagecount":3,"
 const libretvDetailBody = `{"code":1,"msg":"数据列表","page":1,"pagecount":1,"limit":"20","total":1,"list":[
  {"vod_id":101,"vod_name":"测试剧甲","vod_pic":"https://img.example.com/a.jpg","type_name":"国产剧","vod_remarks":"更新至10集","vod_year":"2024","vod_area":"内地",
   "vod_score":8.6,"vod_actor":"张三,李四","vod_director":"王五",
+  "vod_time":"2026-10-19 20:15:00","vod_tag":"剧情,爱情/悬疑",
   "vod_content":"<p>剧情简介&amp;彩蛋</p>","vod_play_from":"ffm3u8$$$mihua",
   "vod_play_url":"第01集$https://cdn.example.com/a1.m3u8#第02集$https://cdn.example.com/a2.m3u8$$$第01集$https://cdn.example.com/b1.m3u8#第02集$https://cdn.example.com/b2.m3u8"}
 ]}`
@@ -317,6 +318,14 @@ func TestLibreTVFetchDetailMultiPlaySources(t *testing.T) {
 	if drama.Score != "8.6" || drama.Actor != "张三,李四" || drama.Director != "王五" {
 		t.Fatalf("详情评分/主演/导演错误: %+v", drama)
 	}
+	// vod_time 归一化为「YYYY-MM-DD HH:mm」；vod_tag 与地区/语言/年份合并去重。
+	if drama.UpdateTime != "2026-10-19 20:15" {
+		t.Fatalf("vod_time 归一化错误: %q", drama.UpdateTime)
+	}
+	wantTags := []string{"剧情", "爱情", "悬疑", "内地", "2024"}
+	if strings.Join(drama.Tags, "|") != strings.Join(wantTags, "|") {
+		t.Fatalf("vod_tag 合并错误: %v（期望 %v）", drama.Tags, wantTags)
+	}
 	if len(chapters) != 4 {
 		t.Fatalf("两个播放源各 2 集，应有 4 集，实际 %d", len(chapters))
 	}
@@ -395,6 +404,23 @@ func TestLibreTVStorePersistence(t *testing.T) {
 	}
 	if _, ok := loadLibreTVStore(directory).get("libretv:dsd"); ok {
 		t.Fatal("删除后不应仍然存在")
+	}
+}
+
+func TestLibreTVUpdateTimeNormalization(t *testing.T) {
+	cases := map[string]string{
+		"":                          "",
+		"2026-10-19 20:15:00":       "2026-10-19 20:15",
+		"2026-10-19 20:15":          "2026-10-19 20:15",
+		"2026-10-19":                "2026-10-19 00:00",
+		"1760866500":                time.Unix(1760866500, 0).Format("2006-01-02 15:04"),
+		"1760866500000":             time.Unix(1760866500, 0).Format("2006-01-02 15:04"),
+		"2026/10/19 20:15:30 extra": "2026/10/19 20:15:30",
+	}
+	for raw, want := range cases {
+		if got := libretvUpdateTime(raw); got != want {
+			t.Fatalf("libretvUpdateTime(%q) = %q，期望 %q", raw, got, want)
+		}
 	}
 }
 

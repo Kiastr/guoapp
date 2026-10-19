@@ -570,6 +570,8 @@ type macCMSResponse struct {
 		VodContent  string `json:"vod_content"`
 		VodPlayFrom string `json:"vod_play_from"`
 		VodPlayURL  string `json:"vod_play_url"`
+		VodTime     string `json:"vod_time"`
+		VodTag      string `json:"vod_tag"`
 	} `json:"list"`
 	// Class ac=list 的分类列表（type_id/type_name）。
 	Class []struct {
@@ -580,18 +582,20 @@ type macCMSResponse struct {
 
 // macCMSListRow 归一化后的列表行（detail/list 两处复用）。
 type macCMSListRow struct {
-	ID       string
-	Name     string
-	Pic      string
-	TypeName string
-	Remarks  string
-	Year     string
-	Area     string
-	Lang     string
-	Hits     string
-	Score    string
-	Actor    string
-	Director string
+	ID        string
+	Name      string
+	Pic       string
+	TypeName  string
+	Remarks   string
+	Year      string
+	Area      string
+	Lang      string
+	Hits      string
+	Score     string
+	Actor     string
+	Director  string
+	UpdatedAt string
+	Tag       string
 }
 
 // libretvScoreText 评分归一化：MacCMS 的 vod_score 有的站返回数字、有的返回字符串。
@@ -631,18 +635,20 @@ func (response *macCMSResponse) rows() []macCMSListRow {
 			continue
 		}
 		out = append(out, macCMSListRow{
-			ID:       id,
-			Name:     strings.TrimSpace(row.VodName),
-			Pic:      strings.TrimSpace(row.VodPic),
-			TypeName: strings.TrimSpace(row.TypeName),
-			Remarks:  strings.TrimSpace(row.VodRemarks),
-			Year:     strings.TrimSpace(row.VodYear),
-			Area:     strings.TrimSpace(row.VodArea),
-			Lang:     strings.TrimSpace(row.VodLang),
-			Hits:     strings.TrimSpace(nativeText(row.VodHits)),
-			Score:    libretvScoreText(row.VodScore),
-			Actor:    strings.TrimSpace(row.VodActor),
-			Director: strings.TrimSpace(row.VodDirector),
+			ID:        id,
+			Name:      strings.TrimSpace(row.VodName),
+			Pic:       strings.TrimSpace(row.VodPic),
+			TypeName:  strings.TrimSpace(row.TypeName),
+			Remarks:   strings.TrimSpace(row.VodRemarks),
+			Year:      strings.TrimSpace(row.VodYear),
+			Area:      strings.TrimSpace(row.VodArea),
+			Lang:      strings.TrimSpace(row.VodLang),
+			Hits:      strings.TrimSpace(nativeText(row.VodHits)),
+			Score:     libretvScoreText(row.VodScore),
+			Actor:     strings.TrimSpace(row.VodActor),
+			Director:  strings.TrimSpace(row.VodDirector),
+			UpdatedAt: strings.TrimSpace(row.VodTime),
+			Tag:       strings.TrimSpace(row.VodTag),
 		})
 	}
 	return out
@@ -727,17 +733,84 @@ func libretvDramaFromRow(source string, row macCMSListRow, content string) Drama
 		Desc:          strings.TrimSpace(content),
 		Tags:          libretvTags(row),
 		ReleaseStatus: libretvRemarksStatus(row.Remarks),
+		UpdateTime:    libretvUpdateTime(row.UpdatedAt),
 	}
 }
 
+// libretvTags 详情页标签：vod_tag 是站点自带的分类标签（逗号分隔），
+// 优先保留；再补地区 / 语言 / 年份这些通用维度。去重后最多 12 个。
 func libretvTags(row macCMSListRow) []string {
 	var tags []string
-	for _, value := range []string{row.Area, row.Lang, row.Year} {
-		if value != "" && !strings.Contains(value, " ") {
-			tags = append(tags, value)
+	seen := map[string]bool{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.Contains(value, " ") || seen[value] {
+			return
 		}
+		seen[value] = true
+		tags = append(tags, value)
+	}
+	for _, tag := range strings.FieldsFunc(row.Tag, func(r rune) bool {
+		return r == ',' || r == '，' || r == '、' || r == '/' || r == '|'
+	}) {
+		add(tag)
+	}
+	for _, value := range []string{row.Area, row.Lang, row.Year} {
+		add(value)
+	}
+	if len(tags) > 12 {
+		tags = tags[:12]
 	}
 	return tags
+}
+
+// libretvUpdateTime vod_time 归一化：站点常见 "2026-10-19 20:00:00"、
+// "2026-10-19 20:00"、时间戳与空串。只保留展示需要的部分，
+// 解析失败时原样返回（截断到 19 字符），供详情页直接展示。
+func libretvUpdateTime(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	// 纯数字时间戳（秒或毫秒）。
+	if digits := text; len(digits) >= 10 && len(digits) <= 13 {
+		allDigits := true
+		for _, r := range digits {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			var sec int64
+			if len(digits) > 10 {
+				sec = mustParseInt64(digits) / 1000
+			} else {
+				sec = mustParseInt64(digits)
+			}
+			if sec > 0 {
+				return time.Unix(sec, 0).Format("2006-01-02 15:04")
+			}
+		}
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+		if parsed, err := time.ParseInLocation(layout, text, time.Local); err == nil {
+			return parsed.Format("2006-01-02 15:04")
+		}
+	}
+	if len(text) > 19 {
+		return text[:19]
+	}
+	return text
+}
+
+// mustParseInt64 只用于已确认全为数字的串。
+func mustParseInt64(text string) int64 {
+	var value int64
+	for _, r := range text {
+		value = value*10 + int64(r-'0')
+	}
+	return value
 }
 
 // libretvHTMLText 去掉 vod_content 里的 HTML 标签与实体，压缩空白。

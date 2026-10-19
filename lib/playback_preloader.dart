@@ -36,8 +36,14 @@ class PlaybackPreloader extends ChangeNotifier {
     return error.isNotEmpty ? '下一集预加载暂不可用，切集时会重新获取' : '播放后段提前准备下一集';
   }
 
-  String _key(Drama drama, Episode episode, int quality, bool online) =>
-      '${drama.id}\u0000${episode.number}\u0000$quality\u0000$online';
+  String _key(
+    Drama drama,
+    Episode episode,
+    int quality,
+    bool online, [
+    int route = 0,
+  ]) =>
+      '${drama.id}\u0000${episode.number}\u0000$quality\u0000$online\u0000$route';
 
   void prepare(
     Drama drama,
@@ -47,7 +53,7 @@ class PlaybackPreloader extends ChangeNotifier {
     int route = 0,
   }) {
     if (_closed) return;
-    final identity = _key(drama, episode, quality, online);
+    final identity = _key(drama, episode, quality, online, route);
     if (_identity != identity) {
       clear();
       _identity = identity;
@@ -116,9 +122,10 @@ class PlaybackPreloader extends ChangeNotifier {
     Episode episode, {
     int quality = 0,
     bool online = false,
+    int route = 0,
   }) {
     final result =
-        _identity == _key(drama, episode, quality, online) &&
+        _identity == _key(drama, episode, quality, online, route) &&
             _now().isBefore(_expires)
         ? _ready
         : null;
