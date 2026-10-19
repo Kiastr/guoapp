@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -435,6 +436,60 @@ type libretvConfigSite struct {
 	Name string `json:"name"`
 	API  string `json:"api"`
 	Type int    `json:"type"`
+	// Ext TVBox type≥3 的扩展字段：drpy 站点里 api 是运行时库
+	// （drpy2.min.js），ext 才是真正的站点脚本地址。也可能是对象
+	// （csp_ 规则），此时不参与脚本候选。
+	Ext json.RawMessage `json:"ext"`
+}
+
+// libretvConfigExtScriptURL 从 ext 里取出脚本地址：只有「字符串且是
+// http(s) 的 .js」才算脚本；对象/数组/JSON 文件一律返回空。
+func libretvConfigExtScriptURL(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) != nil {
+		return ""
+	}
+	text = strings.TrimSpace(text)
+	if !looksLikeDrpyScriptURL(text) {
+		return ""
+	}
+	return text
+}
+
+// libretvConfigScriptCandidate 决定 type≥3 条目的脚本候选地址。
+// TVBox 的 drpy 站点约定：api 是运行时（drpy2.min.js，ES Module，
+// goja 无法编译），ext 才是站点脚本（var rule + 解析函数）。
+// 因此优先取 ext，缺失时退回 api（drpy-node 等直接以脚本为 api 的变体）；
+// 但 api 明显是 drpy 运行时库时直接放弃，避免把库当脚本导入。
+func libretvConfigScriptCandidate(entry libretvConfigSite) string {
+	if script := libretvConfigExtScriptURL(entry.Ext); script != "" {
+		return script
+	}
+	api := strings.TrimSpace(entry.API)
+	if looksLikeDrpyRuntimeLibrary(api) {
+		return ""
+	}
+	return api
+}
+
+// looksLikeDrpyRuntimeLibrary 判断地址是否像 drpy 运行时库
+// （drpy.min.js / drpy2.min.js / drpy2.js）。这类文件是 ES Module 打包产物，
+// 不是站点脚本；只有在 ext 没有给出脚本时才用这个判定兜底。
+func looksLikeDrpyRuntimeLibrary(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	name := strings.ToLower(path.Base(parsed.Path))
+	if !strings.HasPrefix(name, "drpy") {
+		return false
+	}
+	// 只认打包产物：drpy.min.js / drpy2.min.js / drpy2.js。
+	// 裸 drpy.js 可能是站点脚本（生态里确有同名脚本），不做拦截。
+	return strings.Contains(name, ".min.") || name == "drpy2.js"
 }
 
 // libretvDisplayName 配置条目的展示名（报错用）。
@@ -525,13 +580,15 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates 
 			continue
 		}
 		if entry.Type >= 3 {
-			// drpy/spider 脚本：.js 地址收成候选，其余（csp_ 规则等）不支持。
-			if looksLikeDrpyScriptURL(api) && !seenAPI[api] {
-				drpyCandidates = append(drpyCandidates, drpyCandidate{Name: libretvDisplayName(entry), API: api})
-				seenAPI[api] = true
+			// drpy/spider 脚本：优先取 ext（TVBox 约定 ext 是站点脚本，
+			// api 是 drpy 运行时库）；其余（csp_ 规则等）不支持。
+			candidate := libretvConfigScriptCandidate(entry)
+			if looksLikeDrpyScriptURL(candidate) && !seenAPI[candidate] {
+				drpyCandidates = append(drpyCandidates, drpyCandidate{Name: libretvDisplayName(entry), API: candidate})
+				seenAPI[candidate] = true
 				continue
 			}
-			if !looksLikeDrpyScriptURL(api) {
+			if !looksLikeDrpyScriptURL(candidate) {
 				skipped = append(skipped, fmt.Sprintf("%s：type=%d 类型暂不支持（仅支持 provide/vod 采集接口与 drpy 脚本）", libretvDisplayName(entry), entry.Type))
 			}
 			continue

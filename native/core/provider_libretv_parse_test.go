@@ -289,6 +289,59 @@ func TestLibreTVResolveDefaultSniff(t *testing.T) {
 	}
 }
 
+func TestLibreTVParseDrpyCandidatesPreferExt(t *testing.T) {
+	// TVBox 的 drpy 站点：api 是运行时库（ESM，无法编译），ext 才是站点脚本。
+	body := `{"sites":[
+	 {"key":"jp","name":"荐片P2P1","type":3,
+	  "api":"https://cdn.example.com/drpy2.min.js",
+	  "ext":"https://cdn.example.com/jianpian.js"},
+	 {"key":"node","name":"drpy-node 站点","type":3,
+	  "api":"https://cdn.example.com/site-script.js"},
+	 {"key":"csp","name":"csp 规则","type":3,
+	  "api":"csp_XYQ","ext":{"url":"https://cdn.example.com/rule.json"}},
+	 {"key":"json","name":"JSON 扩展","type":3,
+	  "api":"https://cdn.example.com/drpy.min.js",
+	  "ext":"https://cdn.example.com/ext.json"}
+	]}`
+	_, candidates, _, skipped, err := parseLibreTVSubscription(body)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("应提取 2 个 drpy 候选，实际 %d：%+v", len(candidates), candidates)
+	}
+	if candidates[0].Name != "荐片P2P1" || candidates[0].API != "https://cdn.example.com/jianpian.js" {
+		t.Fatalf("应优先使用 ext 里的站点脚本: %+v", candidates[0])
+	}
+	if candidates[1].API != "https://cdn.example.com/site-script.js" {
+		t.Fatalf("无 ext 时应回退 api: %+v", candidates[1])
+	}
+	// 非脚本 ext 的条目回退到 api；api 也不是 .js 时带原因跳过。
+	if len(skipped) != 2 {
+		t.Fatalf("应跳过 2 个不支持条目: %+v", skipped)
+	}
+}
+
+func TestDrpyRejectsESModuleScript(t *testing.T) {
+	script := `import cheerio from "./cheerio.min.js";
+var rule = {title: '荐片', host: 'http://api.example.com'};
+`
+	err := validateDrpyScript(script)
+	if err == nil || !strings.Contains(err.Error(), "ES Module") {
+		t.Fatalf("ES Module 应给出明确提示: %v", err)
+	}
+	// 普通 drpy 脚本不受影响。
+	ok := `var rule = {title: '普通', host: 'http://api.example.com'};`
+	if err := validateDrpyScript(ok); err != nil {
+		t.Fatalf("普通脚本不应被拒绝: %v", err)
+	}
+	// 字符串里出现 import 关键字（非行首）不算 ESM。
+	inline := `var rule = {title: '内联', host: 'http://api.example.com', note: 'use import carefully'};`
+	if err := validateDrpyScript(inline); err != nil {
+		t.Fatalf("行内 import 字面量不应误判: %v", err)
+	}
+}
+
 func TestLibreTVResolveWebViewParseNeedsDart(t *testing.T) {
 	fixture := newLibreTVFixture(t, func(path string, query map[string]string) (int, string) {
 		return 404, ""

@@ -128,7 +128,7 @@ func TestLibreTVParseSubscriptionMixedDrpyCandidates(t *testing.T) {
 	body := `var config = {"spider":"https://example.com/spider.jar","sites":[
  {"key":"a","name":"站点A","type":1,"api":"https://api.a.com/provide/vod"},
  {"key":"dr1","name":"脚本一","type":3,"api":"https://example.com/drpy.js"},
- {"key":"dr2","name":"脚本二","type":4,"api":"https://example.com/drpy2.js"},
+ {"key":"dr2","name":"脚本二","type":4,"api":"https://example.com/script2.js"},
  {"key":"dup","name":"重复脚本","type":3,"api":"https://example.com/drpy.js"},
  {"key":"bad","name":"非脚本","type":3,"api":"https://api.b.com/provide/vod"}
  ]}`
@@ -146,7 +146,7 @@ func TestLibreTVParseSubscriptionMixedDrpyCandidates(t *testing.T) {
 	if drpyCandidates[0].Name != "脚本一" || drpyCandidates[0].API != "https://example.com/drpy.js" {
 		t.Fatalf("候选 0 错误: %+v", drpyCandidates[0])
 	}
-	if drpyCandidates[1].Name != "脚本二" || drpyCandidates[1].API != "https://example.com/drpy2.js" {
+	if drpyCandidates[1].Name != "脚本二" || drpyCandidates[1].API != "https://example.com/script2.js" {
 		t.Fatalf("候选 1 错误: %+v", drpyCandidates[1])
 	}
 	// type≥3 但 api 不是 .js 的带原因跳过。

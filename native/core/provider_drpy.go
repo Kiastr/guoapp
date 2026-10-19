@@ -299,6 +299,10 @@ var (
 	drpyTitlePattern = regexp.MustCompile(`(?is)\btitle\s*:\s*['"]([^'"]{1,80})['"]`)
 	drpyHostPattern  = regexp.MustCompile(`(?is)\bhost\s*:\s*['"]([^'"]{1,120})['"]`)
 	drpyKeyPattern   = regexp.MustCompile(`(?is)\bkey\s*:\s*['"]([^'"]{1,32})['"]`)
+	// drpyESMPattern 行首的 import/export：goja 只支持普通脚本，ES Module
+	// 会报 "Unexpected reserved word"。TVBox 的 drpy 运行时库（drpy2.min.js）
+	// 就是 ESM，误把它当站点脚本导入时会命中这里。
+	drpyESMPattern = regexp.MustCompile(`(?m)^\s*(?:import|export)\s`)
 )
 
 // drpySlug 从展示名派生 URL 安全片段。
@@ -361,6 +365,11 @@ func validateDrpyScript(script string) error {
 	}
 	if !drpyRulePattern.MatchString(script) {
 		return errors.New("未找到 drpy 脚本（需要包含 var rule 定义的 JS）")
+	}
+	// ES Module 明确给出可操作的提示：多数情况是把 TVBox 的 drpy 运行时库
+	// （api 字段）当成了站点脚本，真正的脚本在 ext 字段。
+	if drpyESMPattern.MatchString(script) {
+		return errors.New("这是 ES Module 脚本（含 import/export），drpy 运行时不支持；TVBox 的 drpy 站点请导入 ext 里的站点脚本，而不是 api 指向的运行时库")
 	}
 	if _, err := goja.Compile("drpy.js", script, false); err != nil {
 		return fmt.Errorf("脚本语法错误：%s", drpyCompileError(err))
