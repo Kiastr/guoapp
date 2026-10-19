@@ -283,6 +283,16 @@ func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID s
 			drama, chapters, err := d.fetchLibreTVDetail(ctx, site, sourceID)
 			return drama.DisplayTitle(), chapters, err
 		}
+		// drpy / CatVod 脚本源：检测（app_source_health.go）与盒子端都用
+		// 这个入口取分集，缺这一支会报 unsupported provider source。
+		if drpyKeyFromSource(source) != "" {
+			site, ok := d.drpySite(source)
+			if !ok {
+				return "", nil, errors.New("脚本源未导入或已删除，请在站源管理重新导入")
+			}
+			drama, chapters, err := d.fetchDrpyDetail(ctx, site, sourceID)
+			return drama.DisplayTitle(), chapters, err
+		}
 		return "", nil, fmt.Errorf("unsupported provider source: %s", source)
 	}
 }

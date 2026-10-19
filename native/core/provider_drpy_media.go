@@ -53,8 +53,23 @@ func drpyIsDirectMediaURL(raw string) bool {
 	if err != nil {
 		return false
 	}
-	path := strings.ToLower(parsed.Path)
-	return strings.HasSuffix(path, ".m3u8") || strings.HasSuffix(path, ".mp4")
+	return drpyMediaPathSupported(strings.ToLower(parsed.Path))
+}
+
+// drpyMediaExtensions 可直接播放的媒体后缀。除视频外也认音频——Bookan
+// 这类有声书源的播放地址是 .m4a / .mp3。
+var drpyMediaExtensions = []string{
+	".m3u8", ".mp4", ".m4a", ".mp3", ".aac", ".flac", ".wav",
+	".mkv", ".flv", ".mov", ".webm", ".m4v",
+}
+
+func drpyMediaPathSupported(path string) bool {
+	for _, extension := range drpyMediaExtensions {
+		if strings.HasSuffix(path, extension) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveDrpyMedia drpy 脚本源播放解析。失败时按「章节自带直链 → 报错」
@@ -170,7 +185,16 @@ func drpyCallPlay(vm *goja.Runtime, flag, episodeKey string) (drpyPlayResult, er
 func drpyPlayResultFrom(raw any) drpyPlayResult {
 	switch value := raw.(type) {
 	case string:
-		return drpyPlayResult{url: strings.TrimSpace(value)}
+		text := strings.TrimSpace(value)
+		// CatVod 的 play 返回 **JSON 字符串**（drpy2 直接返回对象），
+		// 先解一层；否则整段 JSON 会被当成播放地址。
+		if strings.HasPrefix(text, "{") {
+			var decoded map[string]any
+			if json.Unmarshal([]byte(text), &decoded) == nil {
+				return drpyPlayResultFrom(decoded)
+			}
+		}
+		return drpyPlayResult{url: text}
 	case map[string]any:
 		return drpyPlayResult{
 			url:    drpyString(value, "url"),

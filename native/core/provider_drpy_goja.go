@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -186,7 +187,7 @@ func (host *drpyHost) fetch(target string, options map[string]any) (drpyResponse
 			}
 		}
 	}
-	body := drpyOptionString(options, "body")
+	body, contentType := drpyRequestBody(options)
 	var bodyReader io.Reader
 	if body != "" {
 		bodyReader = strings.NewReader(body)
@@ -196,6 +197,9 @@ func (host *drpyHost) fetch(target string, options map[string]any) (drpyResponse
 		return drpyResponse{}, err
 	}
 	request.Header.Set("User-Agent", drpyMobileUA)
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
 	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	for key, value := range headers {
 		request.Header.Set(key, value)
@@ -395,4 +399,58 @@ func drpyInt(source map[string]any, key string) int {
 		return parsed
 	}
 	return 0
+}
+
+// drpyRequestBody 组装请求体。
+//
+// drpy2 用 body（字符串），CatVod 蜘蛛普遍用 data + postType：
+//
+//	req(url, {method: 'post', data: {a: 1}, postType: 'json'})
+//
+// 以前只认 body，POST 实际发的是空体，服务端返回错误 JSON，脚本里
+// 读 result/items 就报 "Cannot read property 'items' of undefined"。
+func drpyRequestBody(options map[string]any) (body, contentType string) {
+	postType := strings.ToLower(strings.TrimSpace(drpyOptionString(options, "postType")))
+	if raw := drpyOptionString(options, "body"); raw != "" {
+		switch postType {
+		case "json":
+			return raw, "application/json"
+		case "form":
+			return raw, "application/x-www-form-urlencoded"
+		}
+		return raw, ""
+	}
+	data, ok := options["data"]
+	if !ok || data == nil {
+		return "", ""
+	}
+	if text, isText := data.(string); isText {
+		switch postType {
+		case "form":
+			return text, "application/x-www-form-urlencoded"
+		case "json", "":
+			return text, "application/json"
+		}
+		return text, ""
+	}
+	if postType == "form" {
+		form := url.Values{}
+		for key, value := range drpyAnyMap(data) {
+			form.Set(key, fmt.Sprint(value))
+		}
+		return form.Encode(), "application/x-www-form-urlencoded"
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return "", ""
+	}
+	return string(encoded), "application/json"
+}
+
+// drpyAnyMap 把 Export 出来的对象统一成 map[string]any（数组等返回空）。
+func drpyAnyMap(value any) map[string]any {
+	if data, ok := value.(map[string]any); ok {
+		return data
+	}
+	return map[string]any{}
 }
