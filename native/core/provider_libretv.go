@@ -49,11 +49,32 @@ const (
 	libretvSubscriptionMaxBytes = 512 << 10
 )
 
-// libretvSite 一个已导入的 LibreTV（MacCMS）采集站点。
+// libretvSite 一个已导入的 LibreTV 采集站点。
 type libretvSite struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
 	API  string `json:"api"`
+	// Type TVBox 站点类型：0/1/缺省 = MacCMS provide/vod JSON 采集接口，
+	// 2 = MacCMS XML 采集接口（at/xml）。旧版 libretv.json 没有该字段，
+	// 反序列化为 0，按 JSON 处理，向后兼容。
+	Type int `json:"type,omitempty"`
+}
+
+// libretvNormalizeSiteType 归一化站点类型：只区分「XML(2)」与「JSON(其余)」。
+func libretvNormalizeSiteType(siteType int) int {
+	if siteType == 2 {
+		return 2
+	}
+	return 1
+}
+
+// looksLikeLibreTVXMLAPI 由接口地址判断是否更像 XML 采集接口。
+// 苹果CMS 的 XML 版本通常写成 /at/xml/ 路径或带 at=xml / ac=xml 参数。
+func looksLikeLibreTVXMLAPI(raw string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(raw))
+	return strings.Contains(lowered, "/at/xml") ||
+		strings.Contains(lowered, "at=xml") ||
+		strings.Contains(lowered, "ac=xml")
 }
 
 // libretvStore 站源订阅表（进程内 + libretv.json 落盘）。
@@ -81,8 +102,8 @@ func loadLibreTVStore(directory string) *libretvStore {
 		return store
 	}
 	for _, site := range payload.Sites {
-		if key, name, api, ok := normalizeLibreTVSite(site.Key, site.Name, site.API); ok {
-			store.sites[key] = libretvSite{Key: key, Name: name, API: api}
+		if key, name, api, ok := normalizeLibreTVSite(site.Key, site.Name, site.API, site.Type); ok {
+			store.sites[key] = libretvSite{Key: key, Name: name, API: api, Type: libretvNormalizeSiteType(site.Type)}
 		}
 	}
 	return store
@@ -184,8 +205,8 @@ func libretvSourceID(key string) string {
 var libretvKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
 // normalizeLibreTVSite 校验并归一化站点字段：key 缺省时由接口地址派生，
-// name 缺省时回落为接口主机名，api 统一去掉末尾斜杠。
-func normalizeLibreTVSite(rawKey, rawName, rawAPI string) (key, name, api string, ok bool) {
+// name 缺省时回落为接口主机名，api 统一去掉末尾斜杠，type 归一为 JSON/XML 两档。
+func normalizeLibreTVSite(rawKey, rawName, rawAPI string, siteType int) (key, name, api string, ok bool) {
 	api = strings.TrimSpace(rawAPI)
 	parsed, err := url.Parse(api)
 	if err != nil || !isProviderHTTPMediaURL(api) || parsed.Path == "" {
@@ -262,7 +283,8 @@ func libretvExtractJSONObject(body string) string {
 }
 
 // parseLibreTVSubscription 解析 LibreTV 订阅配置，返回可导入站点与被跳过原因。
-// type=3/4（drpy spider 等）不支持，会带原因跳过；type=0/1/缺省按采集接口导入。
+// type=3/4（drpy spider 等）不支持，会带原因跳过；type=0/1/缺省按 JSON 采集接口导入，
+// type=2 按 XML 采集接口导入（TVBox 的苹果CMS XML 版本）。
 func parseLibreTVSubscription(body string) (sites []libretvSite, skipped []string, err error) {
 	document := libretvExtractJSONObject(body)
 	if document == "" {
@@ -289,7 +311,7 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, skipped []strin
 			skipped = append(skipped, fmt.Sprintf("%s：type=%d 类型暂不支持（仅支持 provide/vod 采集接口）", libretvDisplayName(entry), entry.Type))
 			continue
 		}
-		key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api)
+		key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api, entry.Type)
 		if !ok {
 			skipped = append(skipped, fmt.Sprintf("%s：接口地址无效", libretvDisplayName(entry)))
 			continue
@@ -302,7 +324,7 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, skipped []strin
 		}
 		seenAPI[normalized] = true
 		usedKey[key] = true
-		sites = append(sites, libretvSite{Key: key, Name: name, API: normalized})
+		sites = append(sites, libretvSite{Key: key, Name: name, API: normalized, Type: libretvNormalizeSiteType(entry.Type)})
 		if len(sites) >= libretvImportMaxSites {
 			skipped = append(skipped, fmt.Sprintf("站点数量超过 %d 个，仅导入前 %d 个", libretvImportMaxSites, libretvImportMaxSites))
 			break
@@ -345,11 +367,28 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 		body = text
 	}
 	sites, skipped, err := parseLibreTVSubscription(body)
+	if err != nil && looksLikeLibreTVBase58(body) {
+		// 社区配置工具（LunaTV-config 等）的 Base58 订阅：format=2 是原始 JSON、
+		// format=3 是带代理前缀的 JSON，解码后复用同一套解析，客户端不需要
+		// 实时解析 type≥3 脚本，也不需要自建后端。
+		if decoded, decodeErr := libretvBase58Decode(body); decodeErr == nil {
+			decodedSites, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded))
+			// 部分站点不可用时也保留跳过原因（例如配置里混了 drpy 源）。
+			if decodedErr == nil || len(decodedSkipped) > 0 {
+				sites, skipped, err = decodedSites, decodedSkipped, decodedErr
+			}
+		}
+	}
 	if err != nil {
 		// 兜底：输入本身就是裸采集接口地址时，按单站点导入。
+		// 地址形如 /at/xml 的按 XML 采集站处理，其余按 JSON 采集站处理。
 		if isProviderHTTPMediaURL(text) && looksLikeMacCMSAPI(text) {
-			if key, name, api, ok := normalizeLibreTVSite("", "", text); ok {
-				sites, skipped, err = []libretvSite{{Key: key, Name: name, API: api}}, nil, nil
+			siteType := 1
+			if looksLikeLibreTVXMLAPI(text) {
+				siteType = 2
+			}
+			if key, name, api, ok := normalizeLibreTVSite("", "", text, siteType); ok {
+				sites, skipped, err = []libretvSite{{Key: key, Name: name, API: api, Type: siteType}}, nil, nil
 			}
 		}
 		if err != nil {
@@ -383,7 +422,7 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 				verified++
 			}
 		}
-		added = append(added, map[string]any{"key": site.Key, "name": site.Name, "api": site.API, "verified": ok})
+		added = append(added, map[string]any{"key": site.Key, "name": site.Name, "api": site.API, "type": site.Type, "verified": ok})
 	}
 	// 订阅变更后 Dart 侧会重新拉取列表，无需额外广播。
 	return map[string]any{
@@ -465,6 +504,7 @@ func (engine *nativeEngine) libretvSiteList() []map[string]any {
 			"key":   site.Key,
 			"name":  site.Name,
 			"api":   site.API,
+			"type":  site.Type,
 			"count": counts[site.Key],
 		})
 	}
@@ -584,6 +624,9 @@ func (response *macCMSResponse) macCMSSuccess() bool {
 	return false
 }
 
+// errLibreTVNotJSON 接口返回的不是 JSON —— 用于触发 XML 格式回退。
+var errLibreTVNotJSON = errors.New("片源接口返回的不是有效 JSON，可能不是 provide/vod 采集接口")
+
 // libretvAPI 请求一次 provide/vod 接口并解码信封。
 func (d *Downloader) libretvAPI(ctx context.Context, site libretvSite, params map[string]string) (*macCMSResponse, error) {
 	address, err := url.Parse(site.API)
@@ -602,7 +645,7 @@ func (d *Downloader) libretvAPI(ctx context.Context, site libretvSite, params ma
 	}
 	var response macCMSResponse
 	if json.Unmarshal([]byte(body), &response) != nil {
-		return nil, errors.New("片源接口返回的不是有效 JSON，可能不是 provide/vod 采集接口")
+		return nil, errLibreTVNotJSON
 	}
 	if !response.macCMSSuccess() && len(response.List) == 0 {
 		msg := strings.TrimSpace(response.Msg)
@@ -678,6 +721,9 @@ func libretvHTMLText(raw string) string {
 // fetchLibreTVCatalogPage 拉取一页列表/搜索结果。
 // category 为 MacCMS type_id（数字），query 非空时走 wd 搜索。
 func (d *Downloader) fetchLibreTVCatalogPage(ctx context.Context, site libretvSite, page int, category, query string) ([]Drama, bool, error) {
+	if site.Type == 2 {
+		return d.fetchLibreTVCatalogPageXML(ctx, site, page, category, query)
+	}
 	params := map[string]string{"ac": "detail"}
 	requestedPage := page
 	if page > 1 {
@@ -694,6 +740,10 @@ func (d *Downloader) fetchLibreTVCatalogPage(ctx context.Context, site libretvSi
 	}
 	response, err := d.libretvAPI(ctx, site, params)
 	if err != nil {
+		// 站点类型未标注（例如裸地址导入的 XML 接口）时，按响应格式回退。
+		if errors.Is(err, errLibreTVNotJSON) {
+			return d.fetchLibreTVCatalogPageXML(ctx, site, page, category, query)
+		}
 		return nil, false, err
 	}
 	source := libretvSourceID(site.Key)
@@ -719,8 +769,14 @@ func (d *Downloader) fetchLibreTVCatalogPage(ctx context.Context, site libretvSi
 
 // fetchLibreTVCategories 拉取分类（ac=list → class 列表）；站点不支持时只有「全部」。
 func (d *Downloader) fetchLibreTVCategories(ctx context.Context, site libretvSite) ([]nativeCategory, error) {
+	if site.Type == 2 {
+		return d.fetchLibreTVCategoriesXML(ctx, site)
+	}
 	response, err := d.libretvAPI(ctx, site, map[string]string{"ac": "list"})
 	if err != nil {
+		if errors.Is(err, errLibreTVNotJSON) {
+			return d.fetchLibreTVCategoriesXML(ctx, site)
+		}
 		return nil, err
 	}
 	var categories []nativeCategory
@@ -744,8 +800,14 @@ func (d *Downloader) fetchLibreTVDetail(ctx context.Context, site libretvSite, v
 	if vodID == "" {
 		return Drama{}, nil, errors.New("片源 ID 无效")
 	}
+	if site.Type == 2 {
+		return d.fetchLibreTVDetailXML(ctx, site, vodID)
+	}
 	response, err := d.libretvAPI(ctx, site, map[string]string{"ac": "detail", "ids": vodID})
 	if err != nil {
+		if errors.Is(err, errLibreTVNotJSON) {
+			return d.fetchLibreTVDetailXML(ctx, site, vodID)
+		}
 		return Drama{}, nil, err
 	}
 	rows := response.rows()
@@ -762,6 +824,14 @@ func (d *Downloader) fetchLibreTVDetail(ctx context.Context, site libretvSite, v
 	}
 	playFrom := strings.Split(first.VodPlayFrom, "$$$")
 	playGroups := strings.Split(first.VodPlayURL, "$$$")
+	return drama, libretvChaptersFromGroups(source, vodID, referer, playFrom, playGroups), nil
+}
+
+// libretvChaptersFromGroups 把「播放源分组」解析成分集列表，JSON 与 XML 接口共用。
+// JSON 接口用 $$$ 分隔多个播放源、# 分隔分集、$ 分隔集名与播放地址；
+// XML 接口的每个 <dd flag="源名"> 对应一个播放源，内部同样是 # 与 $ 分隔。
+// 多个播放源都保留（首选源失效时可换备用源），集号重复时在标题后追记播放源名。
+func libretvChaptersFromGroups(source, vodID, referer string, playFrom, playGroups []string) []Chapter {
 	var chapters []Chapter
 	seenURL := map[string]bool{}
 	seenEpisode := map[int]string{}
@@ -811,8 +881,8 @@ func (d *Downloader) fetchLibreTVDetail(ctx context.Context, site libretvSite, v
 		}
 	}
 	if len(chapters) == 0 {
-		return drama, nil, nil
+		return nil
 	}
 	sortProviderChapters(chapters)
-	return drama, uniqueChapters(chapters), nil
+	return uniqueChapters(chapters)
 }

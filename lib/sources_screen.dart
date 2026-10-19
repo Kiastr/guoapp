@@ -271,9 +271,11 @@ class _SourcesScreenState extends State<SourcesScreen> {
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           Text(
-            '可粘贴三种内容：LibreTV 订阅配置链接（返回 {"sites":[...]} 的 JSON 地址）、'
-            '配置 JSON 原文、或单个 MacCMS provide/vod 采集地址。'
-            '导入后即可像其他站源一样浏览、搜索与播放；type≥3 的 drpy 源暂不支持，会自动跳过。',
+            '可粘贴四种内容：LibreTV 订阅配置链接（返回 {"sites":[...]} 的 JSON 地址）、'
+            '配置 JSON 原文、社区工具导出的 Base58 订阅文本（LunaTV-config 的 format=2 / format=3），'
+            '或单个 MacCMS provide/vod 采集地址。'
+            '支持 type 0/1（JSON 采集）与 type 2（XML 采集）；'
+            'type≥3 的 drpy 源暂不支持，会自动跳过。',
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -281,7 +283,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
             alignment: Alignment.centerLeft,
             child: Tooltip(
               message: supported
-                  ? '粘贴 LibreTV 订阅配置链接、配置 JSON 或 MacCMS provide/vod 采集地址'
+                  ? '粘贴订阅链接、配置 JSON、Base58 订阅文本或 MacCMS 采集地址'
                   : '当前环境不支持导入片源',
               child: FilledButton.icon(
                 onPressed: supported && !_libretvBusy ? _importLibreTV : null,
@@ -297,7 +299,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.subscriptions_outlined),
                 title: Text(site.name),
-                subtitle: Text('${site.api}\n${site.count} 部'),
+                subtitle: Text('${site.api}\n${site.typeLabel} · ${site.count} 部'),
                 isThreeLine: true,
                 trailing: IconButton(
                   tooltip: '删除${site.name}',
@@ -705,12 +707,13 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
       maxLines: 6,
       autofocus: true,
       decoration: const InputDecoration(
-        labelText: '片源链接 / 配置 JSON / 采集地址',
+        labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址',
         hintText:
             'https://example.com/libretv/config.json\n'
             '或 {"sites":[{"key":"a","name":"A","type":1,'
             '"api":"https://example.com/provide/vod"}]}\n'
-            '或 https://example.com/provide/vod',
+            '或 LunaTV-config 导出的 Base58 订阅（format=2 / format=3）\n'
+            '或 https://example.com/api.php/provide/vod/at/xml/',
         border: OutlineInputBorder(),
       ),
     ),

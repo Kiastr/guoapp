@@ -119,11 +119,11 @@ func TestLibreTVNormalizeSiteKeyFromAPI(t *testing.T) {
 	if libretvKeyFromAPI("https://a.com/x") == libretvKeyFromAPI("https://b.com/x") {
 		t.Fatal("不同接口地址的 key 不应当相同")
 	}
-	if _, _, _, ok := normalizeLibreTVSite("", "", "/relative/path"); ok {
+	if _, _, _, ok := normalizeLibreTVSite("", "", "/relative/path", 0); ok {
 		t.Fatal("相对地址应当拒绝")
 	}
 	// key 非法时退化为派生 key。
-	key, name, api, ok := normalizeLibreTVSite("bad key!", "", "https://a.com/provide/vod")
+	key, name, api, ok := normalizeLibreTVSite("bad key!", "", "https://a.com/provide/vod", 0)
 	if !ok || key == "bad key!" || name != "a.com" || api != "https://a.com/provide/vod" {
 		t.Fatalf("非法 key 未按预期退化: %q %q %q %v", key, name, api, ok)
 	}

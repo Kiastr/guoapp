@@ -2,13 +2,15 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+102**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+103**。
 
 早期版本在 0.2.50 基线上新增两个原生站源：**韩小圈**（`hanxiaoquan`，韩剧 / 韩国电影 / 韩国综艺 / 韩国动漫）与**鬼片网**（`guipian`，鬼片 / 电视剧 / 动漫）。默认可见站源顺序为：**红果 → 韩小圈 → 鬼片 → 青空**。
 
-## 最近更新（0.2.73+102）
+## 最近更新（0.2.73+103）
 
 | 版本 | 变更 |
+| --- | --- |
+| +103 | LibreTV 片源扩展：支持 **type=2 的苹果 CMS XML 采集接口**（`/at/xml/`），并可直接读取 **LunaTV-config 等社区工具导出的 Base58 订阅**（`format=2` / `format=3`），预先筛好的源无需自建后端即可导入 |
 | --- | --- |
 | +102 | LibreTV 片源详情页补全**评分 / 主演 / 导演**：解析 `vod_score`、`vod_actor`、`vod_director` 并透传到详情页，评分兼容数字与字符串、`0` 视为未评分，字段缺失不占位 |
 | +101 | 新增 **LibreTV 片源导入**：站源管理可粘贴订阅配置链接、配置 JSON 或裸 MacCMS provide/vod 采集地址，导入后即可浏览、搜索与播放；type≥3 的 drpy 源自动跳过；已导入站点可随时删除（连同目录缓存） |
@@ -71,19 +73,25 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 
 站源可用性、清晰度和区域限制取决于源站及网络；应用不解除源站 VIP 或其他授权限制。
 
-### LibreTV 片源：导入订阅配置，兼容 MacCMS 采集站
+### LibreTV 片源：导入订阅配置，兼容 MacCMS 采集站与社区订阅
 
-站源管理顶部提供「LibreTV 片源」卡片，可把 LibreTV 订阅配置或单个 MacCMS（苹果 CMS）采集地址导入为本机片源，导入后即可像内置站源一样浏览、搜索与播放，不需要自建服务。
+站源管理顶部提供「LibreTV 片源」卡片，可把 LibreTV 订阅配置、社区工具导出的 Base58 订阅，或单个 MacCMS（苹果 CMS）采集地址导入为本机片源，导入后即可像内置站源一样浏览、搜索与播放，不需要自建服务。
 
 - **入口**：「站源管理 → LibreTV 片源 → 导入片源」。导入 / 删除仅管理员可操作；LibreTV 片源不占用敏感站源密码锁——导入即授权，不受隐藏源密码门控（多用户配置里的用户级站源权限仍然生效）。
-- **三种输入形态**：
+- **四种输入形态**：
   - 订阅配置链接：返回 `{"sites":[{"key","name","type","api"}]}` 的 JSON 地址（兼容 `var config = {...};` 的 JS 包裹）；
   - 配置 JSON 原文：直接粘贴上述结构；
-  - 裸采集地址：形如 `https://.../provide/vod` 的 MacCMS provide/vod 接口，按单站点导入。
-- **兼容范围**：type 为 0 / 1 / 2 与缺省的 MacCMS 采集源，覆盖 `?ac=detail` 列表与分页、`?ac=list` 分类、`wd=` 在线搜索、`$$$` 多播放源与 `#` 分集；**type ≥ 3 的 drpy / spider 类型暂不支持**，导入时自动跳过并在结果里说明原因。
+  - **Base58 订阅文本**：LunaTV-config 等社区工具导出的编码串（含换行也可），解码后即为上述 JSON；
+  - 裸采集地址：形如 `https://.../provide/vod` 的 JSON 接口，或 `https://.../at/xml/` 的 XML 接口，按单站点导入。
+- **兼容范围**：
+  - `type` 为 0 / 1 或缺省：MacCMS provide/vod **JSON** 采集源，覆盖 `?ac=detail` 列表与分页、`?ac=list` 分类、`wd=` 在线搜索、`$$$` 多播放源与 `#` 分集；
+  - `type` 为 2：MacCMS **XML** 采集源（`/at/xml/`），响应为 `<rss><list><video>` 结构，分类取同响应的 `<class><ty>`，分集取多个 `<dd flag="源名">`，字段与 JSON 版一致（含评分 / 主演 / 导演 / 简介）；
+  - `type ≥ 3` 的 drpy / spider 类型暂不支持，导入时自动跳过并在结果里说明原因。
+  - 站点类型未标注（例如裸地址）时按响应内容自动回退：JSON 解析失败会再按 XML 解析，反之亦然，避免因类型标错整站不可用。
+- **社区配置工具（LunaTV-config 等）**：这类工具会预先筛掉失效源、可选地给 `api` 加代理前缀，并输出多种订阅格式——`format=0` 原始 JSON、`format=1` 代理前缀 JSON、`format=2` 原始 JSON 的 Base58、`format=3` 代理前缀 JSON 的 Base58。把 `format=2 / format=3` 的链接或文件内容直接粘进来即可：客户端只做 Base58 解码 + JSON 解析，**不需要实时解析 type≥3 脚本，也不需要自建后端**。编码沿用 bs58 / Bitcoin 字母表，无校验和。
 - **导入探测**：导入即逐站探测（总预算 15 秒、单站 5 秒），探测成功的站点在卡片上直接显示缓存剧集数；探测失败或超出预算的站点同样保留，之后在片源卡片上「更新 / 检测连接与播放」即可重试，不会一次网络抖动整批丢弃。
 - **去重与上限**：同一采集接口在配置里重复出现会静默去重；单次最多导入 50 个站点，key 冲突时自动改为按地址派生。站点记录只保存在本机。
-- **管理**：导入卡片列出全部已导入站点（名称、采集地址、缓存剧集数）并可单个删除；片源卡片「更多」菜单也有「删除此片源」。删除会同时清除该片源的本机目录缓存，之后需重新导入。
+- **管理**：导入卡片列出全部已导入站点（名称、采集地址、**采集类型（JSON / XML）**、缓存剧集数）并可单个删除；片源卡片「更多」菜单也有「删除此片源」。删除会同时清除该片源的本机目录缓存，之后需重新导入。
 - **详情信息**：详情页展示采集接口返回的**评分**（`vod_score`）、**主演**（`vod_actor`）与**导演**（`vod_director`）。评分并入标题下的信息行（如 `★ 8.6 · 帝屎迪 · 共 10 集 · 连载中`），`vod_score` 为数字或字符串都能识别，`0` 视为未评分；主演按中英文逗号切分后以顿号连接，过长自动省略。任一字段缺失时对应位置不渲染，不留「主演：」之类的空壳。
 - **播放**：分集播放地址为 m3u8 时自动拉取播放列表（Referer 取采集站主机）；其他地址按源站返回的直链播放，不需要二级解析。
 
@@ -266,4 +274,11 @@ python3 scripts/sync_source.py --check
 
 注意：Go RE2 正则**不支持 lookahead**。解析多线路播放列表时不能用 `(?=...)` 做分段，否则非捕获组会消耗下一段开头；应改用显式字符串截断（从容器标记之后查找下一段标记）。
 
-例外：**LibreTV 片源**（`native/core/provider_libretv.go`）不走上述编译期内置流程，而是用户在站源管理粘贴订阅配置 / 采集地址后**运行期导入**的动态源：源 ID 为 `libretv:<key>`（站点记录落本机 `libretv.json`），Dart 侧经 `SourceSite.registerRuntime` 注册进运行时注册表（`lib/models.dart`），`app_build.go` 的 `nativeSourceAvailable` 对 `libretv:` 前缀直接放行（不受 `--all-sources` 编译开关限制）。新增此类运行期源时需同步：`splitProviderDramaID` 的 ID 切分、`nativeCatalog` / `nativeDetail` / `nativeCategories` 的 default 分支、删除时的缓存清理，以及 `lib/core_bridge.dart` 的 repository 方法与 `lib/sources_screen.dart` 的导入 / 删除 UI。
+例外：**LibreTV 片源**（`native/core/provider_libretv.go`）不走上述编译期内置流程，而是用户在站源管理粘贴订阅配置 / 采集地址后**运行期导入**的动态源：源 ID 为 `libretv:<key>`（站点记录落本机 `libretv.json`），Dart 侧经 `SourceSite.setRuntimeSources` 注册进运行时注册表（`lib/models.dart`），`app_build.go` 的 `nativeSourceAvailable` 对 `libretv:` 前缀直接放行（不受 `--all-sources` 编译开关限制）。新增此类运行期源时需同步：`splitProviderDramaID` 的 ID 切分、`nativeCatalog` / `nativeDetail` / `nativeCategories` 的 default 分支、删除时的缓存清理，以及 `lib/core_bridge.dart` 的 repository 方法与 `lib/sources_screen.dart` 的导入 / 删除 UI。
+
+LibreTV 的解析层按采集格式分两个文件，新增格式时按同样方式扩展：
+
+- `provider_libretv.go`：MacCMS **JSON** 采集（`macCMSResponse` / `rows()` / `libretvDramaFromRow` / `libretvScoreText`）；
+- `provider_libretv_xml.go`：MacCMS **XML** 采集（`<rss><list page pagecount><video>`、分类 `<class><ty id>`、分集 `<dl><dd flag>`），与 JSON 版共用 `libretvChaptersFromGroups` 做分集解析；
+- `provider_libretv_base58.go`：**Base58** 订阅解码（bs58 / Bitcoin 字母表，无校验和），导入时解码后复用同一套 JSON 解析；
+- `libretvSite.Type` 记录采集格式（1 = JSON、2 = XML），旧订阅文件缺省按 JSON 处理；类型未标注时 `errLibreTVNotJSON` / `errLibreTVNotXML` 触发按响应内容自动回退。

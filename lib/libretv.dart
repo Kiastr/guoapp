@@ -7,6 +7,7 @@ class LibreTVSite {
     required this.key,
     required this.name,
     required this.api,
+    this.type = 1,
     this.count = 0,
   });
 
@@ -14,19 +15,26 @@ class LibreTVSite {
   final String name;
   /// 采集接口地址（provide/vod）。
   final String api;
+  /// TVBox 站点类型：1 = JSON 采集接口，2 = XML 采集接口（苹果 CMS at/xml）。
+  final int type;
   /// 本机已缓存的剧集数（站源管理里展示）。
   final int count;
 
   /// 完整源 ID，与 [SourceSite] 运行时注册表一致。
   String get sourceId => 'libretv:$key';
 
+  bool get isXml => type == 2;
+
+  String get typeLabel => isXml ? 'XML 采集' : 'JSON 采集';
+
   SourceSite toSourceSite() =>
-      SourceSite(sourceId, name, 'LibreTV 采集 · ${_apiHost(api)}');
+      SourceSite(sourceId, name, 'LibreTV $typeLabel · ${_apiHost(api)}');
 
   factory LibreTVSite.fromJson(Map<String, dynamic> json) => LibreTVSite(
     key: json['key'] as String? ?? '',
     name: json['name'] as String? ?? '',
     api: json['api'] as String? ?? '',
+    type: intValue(json['type']) == 2 ? 2 : 1,
     count: intValue(json['count']),
   );
 

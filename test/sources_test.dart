@@ -94,6 +94,29 @@ class SourceFixtureRepository extends FixtureRepository {
 }
 
 void main() {
+  test('libretv site json keeps the collection type and defaults to json', () {
+    final xml = LibreTVSite.fromJson(const {
+      'key': 'xml',
+      'name': 'XML 站',
+      'api': 'https://a.example.com/at/xml/',
+      'type': 2,
+      'count': 7,
+    });
+    expect(xml.type, 2);
+    expect(xml.isXml, isTrue);
+    expect(xml.typeLabel, 'XML 采集');
+    expect(xml.count, 7);
+    // 旧订阅文件没有 type 字段（反序列化为 0），按 JSON 采集处理。
+    final legacy = LibreTVSite.fromJson(const {
+      'key': 'json',
+      'name': 'JSON 站',
+      'api': 'https://b.example.com/provide/vod',
+    });
+    expect(legacy.type, 1);
+    expect(legacy.isXml, isFalse);
+    expect(legacy.typeLabel, 'JSON 采集');
+  });
+
   testWidgets('source list keeps bottom content above system navigation', (
     tester,
   ) async {
