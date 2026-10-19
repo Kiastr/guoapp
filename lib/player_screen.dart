@@ -180,6 +180,9 @@ class _PlayerScreenState extends State<PlayerScreen>
           if (line.index == _index) return line.label;
         }
       }
+      // 本源没有画质档位：显示「自动」。清晰度偏好是全局的（比如在红果
+      // 选过 1080P），不能泄漏到没有画质概念的采集源 / 脚本源上。
+      return '自动';
     }
     return _requestedQuality == 0 ? '自动' : '${_requestedQuality}P';
   }
