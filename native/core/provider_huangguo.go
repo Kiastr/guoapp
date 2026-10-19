@@ -86,15 +86,19 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 	if !ok || strings.TrimSpace(sourceID) == "" || !isHuangguoProviderSource(source) {
 		return "", "", false
 	}
-	// LibreTV 站源的剧集 ID 形如 libretv:<key>:<vodId>：第一刀只切出家族名
+	// LibreTV / drpy 站源的剧集 ID 形如 libretv:<key>:<vodId>：第一刀只切出家族名
 	// "libretv"，需要再切一刀才是完整站源 key 与片源 ID。分集 ID 同理
 	// （libretv:<key>:<vodId>:<集键>），sourceID 末尾多带的集键不影响
-	// 调用方只比较 source 的用法。
-	if source == sourceLibreTV {
+	// 调用方只比较 source 的用法。drpy 的 vodId 是 base64url（无冒号），
+	// 切分规则相同。
+	if source == sourceLibreTV || source == sourceDrpy {
 		siteKey, vodID, found := strings.Cut(sourceID, ":")
 		siteKey, vodID = strings.TrimSpace(siteKey), strings.TrimSpace(vodID)
 		if !found || siteKey == "" || vodID == "" {
 			return "", "", false
+		}
+		if source == sourceDrpy {
+			return drpySourceID(siteKey), vodID, true
 		}
 		return libretvSourceID(siteKey), vodID, true
 	}
@@ -103,9 +107,13 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 
 func isHuangguoProviderSource(source string) bool {
 	source = canonicalProviderSource(source)
-	// 运行时导入的 LibreTV（MacCMS provide/vod）站源：家族名 "libretv"
-	// 与完整源 "libretv:<key>" 都要认（ID 切分第一刀只会切出家族名）。
+	// 运行时导入的 LibreTV（MacCMS provide/vod）与 drpy 脚本源：家族名
+	// "libretv"/"drpy" 与完整源 "libretv:<key>"/"drpy:<key>" 都要认
+	// （ID 切分第一刀只会切出家族名）。
 	if source == sourceLibreTV || strings.HasPrefix(source, sourceLibreTVPrefix) {
+		return true
+	}
+	if source == sourceDrpy || strings.HasPrefix(source, sourceDrpyPrefix) {
 		return true
 	}
 	switch source {

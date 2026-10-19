@@ -74,6 +74,9 @@ type Downloader struct {
 	// libretv 运行时导入的 LibreTV（MacCMS provide/vod）站源表，
 	// 由 newNativeEngine 从引擎目录 libretv.json 载入。
 	libretv *libretvStore
+	// drpy 运行时导入的 drpy 脚本源表（goja 执行），
+	// 由 newNativeEngine 从引擎目录 drpy.json + scripts/ 载入。
+	drpy *drpyStore
 }
 
 func defaultConfig() Config { return Config{MaxPagesPerSort: 50, PageSize: 30, Retries: 2} }
@@ -121,6 +124,8 @@ type nativeInput struct {
 	Quality          int                     `json:"quality"`
 	Subscription string `json:"subscription"`
 	LibreTVKey   string `json:"libretvKey"`
+	// drpy 脚本源：subscription 复用为 JS 文本或脚本 URL；drpyKey 为删除时的 key。
+	DrpyKey string `json:"drpyKey"`
 	// Route 期望的起始线路（线路记忆用；越界或不存在时回落到 0）。
 	Route    int    `json:"route"`
 	Session          string                  `json:"session"`
@@ -289,6 +294,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	engine := &nativeEngine{downloader: d, directory: directory, catalogs: map[string][]nativeDrama{}, catalogStates: map[string]nativeCatalogState{}}
 	engine.loadResourceSettings()
 	d.libretv = loadLibreTVStore(directory)
+	d.drpy = loadDrpyStore(directory)
 	d.loadRankingCache()
 	engine.loadCatalogCache()
 	engine.loadSourceRecords()
@@ -474,6 +480,15 @@ func nativeDispatch(input nativeInput) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"removed": input.LibreTVKey}, nil
+	case "drpySites":
+		return map[string]any{"sites": engine.drpySiteList()}, nil
+	case "drpyImport":
+		return engine.importDrpyScript(ctx, input.Subscription)
+	case "drpyRemove":
+		if err := engine.removeDrpySite(input.DrpyKey); err != nil {
+			return nil, err
+		}
+		return map[string]any{"removed": input.DrpyKey}, nil
 	case "cover":
 		return engine.loadCover(ctx, input.Drama, input.Force)
 	case "prepareCover":

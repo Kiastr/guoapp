@@ -112,14 +112,22 @@ class _AppBootstrapState extends State<AppBootstrap>
     setState(() => device = detected);
   }
 
-  /// 拉取已导入的 LibreTV 片源并注册为运行时站源。
+  /// 拉取已导入的 LibreTV 片源与 drpy 脚本源并注册为运行时站源。
   /// 失败（旧版核心不支持等）时静默跳过，不影响内置站源。
-  Future<void> _syncLibreTVSources() async {
+  Future<void> _syncRuntimeSources() async {
     try {
       final sites = await repository.libretvSites();
       SourceSite.setRuntimeSources([
         for (final site in sites)
           if (site.key.isNotEmpty) site.toSourceSite(),
+      ]);
+    } catch (_) {}
+    try {
+      final scripts = await repository.drpySites();
+      SourceSite.setRuntimeSources([
+        ...SourceSite.runtimeValues,
+        for (final script in scripts)
+          if (script.key.isNotEmpty) script.toSourceSite(),
       ]);
     } catch (_) {}
   }
@@ -132,9 +140,9 @@ class _AppBootstrapState extends State<AppBootstrap>
       final preferences = await SharedPreferences.getInstance();
       await _refreshDevice();
       await repository.initialize();
-      // LibreTV 片源由原生核心持久化（libretv.json），启动时同步到
-      // SourceSite 运行时注册表，之后各页面按普通站源使用。
-      await _syncLibreTVSources();
+      // LibreTV 片源与 drpy 脚本源由原生核心持久化（libretv.json / drpy.json），
+      // 启动时同步到 SourceSite 运行时注册表，之后各页面按普通站源使用。
+      await _syncRuntimeSources();
       if (mounted) {
         setState(() {
           store = LocalStore(preferences);

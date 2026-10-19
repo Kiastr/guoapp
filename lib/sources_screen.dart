@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core_bridge.dart';
+import 'drpy.dart';
 import 'libretv.dart';
 import 'local_store.dart';
 import 'models.dart';
@@ -45,6 +46,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
   int _ticks = 0;
   /// 已导入的 LibreTV 站点（来自原生核心 libretv.json，含目录缓存计数）。
   List<LibreTVSite> _libretvSites = const [];
+  /// 已导入的 drpy 脚本源（来自原生核心 drpy.json + scripts/）。
+  List<DrpySite> _drpySites = const [];
   bool _libretvBusy = false;
 
   @override
@@ -74,7 +77,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     if (_polling) return;
     _polling = true;
     final epoch = widget.store.profileEpoch;
-    await _refreshLibreTV(epoch);
+    await _refreshRuntimeSources(epoch);
     try {
       await Future.wait([
         for (final source in widget.store.sources)
@@ -105,25 +108,47 @@ class _SourcesScreenState extends State<SourcesScreen> {
     }
   }
 
-  /// 拉取已导入的 LibreTV 站点并同步 SourceSite 运行时注册表。
-  /// 原生核心 libretv.json 是权威来源；本方法同时承担注册表自愈
+  /// 拉取已导入的 LibreTV 站点与 drpy 脚本源，同步 SourceSite 运行时注册表。
+  /// 原生核心 libretv.json / drpy.json 是权威来源；本方法同时承担注册表自愈
   /// （启动同步失败或其他页面导入后，下次轮询即恢复）。
-  Future<void> _refreshLibreTV(int epoch) async {
+  Future<void> _refreshRuntimeSources(int epoch) async {
     if (!widget.repository.supportsSourceManagement) return;
+    var sites = _libretvSites;
+    var scripts = _drpySites;
     try {
-      final sites = await widget.repository.libretvSites();
+      final fetched = await widget.repository.libretvSites();
       if (!mounted || epoch != widget.store.profileEpoch) return;
-      SourceSite.setRuntimeSources([for (final site in sites) site.toSourceSite()]);
-      final keys = {for (final site in sites) site.sourceId};
-      final previous = {for (final site in _libretvSites) site.sourceId};
-      final changed = keys.length != previous.length ||
-          keys.any((key) => !previous.contains(key));
-      setState(() => _libretvSites = sites);
-      // 注册表发生变化才广播，避免每 10 秒轮询都惊动首页刷新。
-      if (changed) widget.store.notifySourceRegistryChanged();
+      sites = fetched;
     } catch (_) {
       // 非原生环境或核心暂不可用时静默跳过，不影响其他站源状态展示。
     }
+    try {
+      final fetched = await widget.repository.drpySites();
+      if (!mounted || epoch != widget.store.profileEpoch) return;
+      scripts = fetched;
+    } catch (_) {
+      // 旧版核心没有 drpy 动作时静默跳过，LibreTV 片源不受影响。
+    }
+    final keys = {
+      for (final site in sites) site.sourceId,
+      for (final script in scripts) script.sourceId,
+    };
+    final previous = {
+      for (final site in _libretvSites) site.sourceId,
+      for (final script in _drpySites) script.sourceId,
+    };
+    final changed = keys.length != previous.length ||
+        keys.any((key) => !previous.contains(key));
+    SourceSite.setRuntimeSources([
+      for (final site in sites) site.toSourceSite(),
+      for (final script in scripts) script.toSourceSite(),
+    ]);
+    setState(() {
+      _libretvSites = sites;
+      _drpySites = scripts;
+    });
+    // 注册表发生变化才广播，避免每 10 秒轮询都惊动首页刷新。
+    if (changed) widget.store.notifySourceRegistryChanged();
   }
 
   Future<void> _run(SourceSite source, String operation) async {
@@ -253,20 +278,25 @@ class _SourcesScreenState extends State<SourcesScreen> {
     },
   );
 
-  /// LibreTV 片源导入入口卡片：说明支持的输入形态 + 已导入站点管理。
+  /// LibreTV / 扩展片源导入入口卡片：说明支持的输入形态 + 已导入来源管理
+  /// （LibreTV 片源与 drpy 脚本源同卡分两区）。
   Widget _libretvCard() {
     final theme = Theme.of(context);
     final sites = _libretvSites;
+    final scripts = _drpySites;
     final supported = widget.repository.supportsSourceManagement;
+    final total = sites.length + scripts.length;
     return Card(
       clipBehavior: Clip.antiAlias,
       margin: const EdgeInsets.only(bottom: 16),
       child: ExpansionTile(
         key: const PageStorageKey('libretv-import'),
         leading: const Icon(Icons.playlist_add_outlined),
-        title: const Text('LibreTV 片源'),
+        title: const Text('LibreTV / 扩展片源'),
         subtitle: Text(
-          sites.isEmpty ? '导入 LibreTV / MacCMS 片源' : '已导入 ${sites.length} 个站点',
+          total == 0
+              ? '导入 LibreTV / MacCMS 片源与 drpy 脚本源'
+              : '已导入 $total 个来源（${sites.length} 片源 · ${scripts.length} 脚本）',
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
@@ -274,8 +304,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
             '可粘贴四种内容：LibreTV 订阅配置链接（返回 {"sites":[...]} 的 JSON 地址）、'
             '配置 JSON 原文、社区工具导出的 Base58 订阅文本（LunaTV-config 的 format=2 / format=3），'
             '或单个 MacCMS provide/vod 采集地址。'
-            '支持 type 0/1（JSON 采集）与 type 2（XML 采集）；'
-            'type≥3 的 drpy 源暂不支持，会自动跳过。',
+            '支持 type 0/1（JSON 采集）与 type 2（XML 采集）。'
+            '也可以直接粘贴 drpy 脚本源（含 var rule 的 JS，或 .js 脚本地址），'
+            '导入时会自动识别分流。',
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -283,17 +314,24 @@ class _SourcesScreenState extends State<SourcesScreen> {
             alignment: Alignment.centerLeft,
             child: Tooltip(
               message: supported
-                  ? '粘贴订阅链接、配置 JSON、Base58 订阅文本或 MacCMS 采集地址'
+                  ? '粘贴订阅链接、配置 JSON、Base58 订阅文本、MacCMS 采集地址或 drpy 脚本'
                   : '当前环境不支持导入片源',
               child: FilledButton.icon(
                 onPressed: supported && !_libretvBusy ? _importLibreTV : null,
                 icon: const Icon(Icons.add_link_rounded),
-                label: Text(_libretvBusy ? '导入中…' : '导入片源'),
+                label: Text(_libretvBusy ? '导入中…' : '导入片源 / 脚本'),
               ),
             ),
           ),
           if (sites.isNotEmpty) ...[
             const Divider(height: 24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'LibreTV 片源',
+                style: theme.textTheme.titleSmall,
+              ),
+            ),
             for (final site in sites)
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -304,6 +342,34 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 trailing: IconButton(
                   tooltip: '删除${site.name}',
                   onPressed: _libretvBusy ? null : () => _removeLibreTV(site),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ),
+          ],
+          if (scripts.isNotEmpty) ...[
+            const Divider(height: 24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'drpy 脚本源',
+                style: theme.textTheme.titleSmall,
+              ),
+            ),
+            for (final script in scripts)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.javascript_outlined),
+                title: Text(script.name),
+                subtitle: Text(
+                  '${script.detailLabel}${script.scriptUrl.isNotEmpty ? '\n${script.scriptUrl}' : ''}\n'
+                  '${script.count} 部',
+                ),
+                isThreeLine: true,
+                trailing: IconButton(
+                  tooltip: '删除${script.name}',
+                  onPressed: _libretvBusy
+                      ? null
+                      : () => _removeLibreTVKey(script.sourceId, script.name),
                   icon: const Icon(Icons.delete_outline),
                 ),
               ),
@@ -319,6 +385,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
       builder: (_) => const _LibreTVImportDialog(),
     );
     if (input == null || input.isEmpty) return;
+    if (_looksLikeDrpyInput(input)) {
+      await _importDrpy(input);
+      return;
+    }
     setState(() => _libretvBusy = true);
     try {
       final result = await widget.repository.libretvImport(input);
@@ -369,14 +439,75 @@ class _SourcesScreenState extends State<SourcesScreen> {
     }
   }
 
+  /// 输入是否更像 drpy 脚本：含 var/let/const rule 的 JS 文本，
+  /// 或指向 .js 的 http(s) 地址（排除 provide/vod 采集接口）。
+  bool _looksLikeDrpyInput(String input) {
+    final text = input.trim();
+    if (RegExp(r'\b(?:var|let|const)\s+rule\b').hasMatch(text)) return true;
+    if (text.startsWith('http') &&
+        RegExp(r'\.js(?:[?#]|$)').hasMatch(text) &&
+        !text.contains('provide/vod')) {
+      return true;
+    }
+    return false;
+  }
+
+  /// 导入 drpy 脚本源：导入成功即刷新列表与运行时注册表。
+  Future<void> _importDrpy(String script) async {
+    setState(() => _libretvBusy = true);
+    try {
+      final result = await widget.repository.drpyImport(script);
+      if (!mounted) return;
+      final site = DrpySite(key: result.key, name: result.name);
+      final merged = <DrpySite>[
+        for (final existing in _drpySites)
+          if (existing.key != result.key) existing,
+        site,
+      ];
+      SourceSite.setRuntimeSources([
+        for (final existing in _libretvSites) existing.toSourceSite(),
+        for (final script in merged) script.toSourceSite(),
+      ]);
+      setState(() {
+        _drpySites = merged;
+        _libretvBusy = false;
+      });
+      widget.store.notifySourceRegistryChanged();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已导入脚本源「${result.name}」')));
+      try {
+        final scripts = await widget.repository.drpySites();
+        if (!mounted) return;
+        SourceSite.setRuntimeSources([
+          for (final site in _libretvSites) site.toSourceSite(),
+          for (final script in scripts) script.toSourceSite(),
+        ]);
+        setState(() => _drpySites = scripts);
+      } catch (_) {
+        // 计数校正失败不影响导入结果，下次轮询会补齐。
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导入失败：$error')));
+      }
+    }
+  }
+
   Future<void> _removeLibreTV(LibreTVSite site) =>
       _removeLibreTVKey(site.sourceId, site.name);
 
-  /// 删除 LibreTV 片源：连同原生核心的目录缓存一并清除（Go 侧
-  /// removeLibreTVSite 负责），并同步注销运行时注册表。
+  /// 删除 LibreTV 片源或 drpy 脚本源：连同原生核心的目录缓存一并清除
+  /// （Go 侧 removeLibreTVSite / removeDrpySite 负责），并同步注销运行时注册表。
   Future<void> _removeLibreTVKey(String sourceId, String name) async {
+    final isDrpy = sourceId.startsWith('drpy:');
     final key = sourceId.startsWith('libretv:')
         ? sourceId.substring('libretv:'.length)
+        : sourceId.startsWith('drpy:')
+        ? sourceId.substring('drpy:'.length)
         : sourceId;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -398,13 +529,23 @@ class _SourcesScreenState extends State<SourcesScreen> {
     if (confirmed != true) return;
     setState(() => _libretvBusy = true);
     try {
-      await widget.repository.libretvRemove(key);
+      if (isDrpy) {
+        await widget.repository.drpyRemove(key);
+      } else {
+        await widget.repository.libretvRemove(key);
+      }
       if (!mounted) return;
       SourceSite.unregisterRuntime(sourceId);
       setState(() {
-        _libretvSites = _libretvSites
-            .where((site) => site.sourceId != sourceId)
-            .toList();
+        if (isDrpy) {
+          _drpySites = _drpySites
+              .where((script) => script.sourceId != sourceId)
+              .toList();
+        } else {
+          _libretvSites = _libretvSites
+              .where((site) => site.sourceId != sourceId)
+              .toList();
+        }
         _libretvBusy = false;
       });
       widget.store.notifySourceRegistryChanged();
@@ -701,19 +842,20 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('导入 LibreTV 片源'),
+    title: const Text('导入 LibreTV 片源 / drpy 脚本'),
     content: TextField(
       controller: _controller,
       maxLines: 6,
       autofocus: true,
       decoration: const InputDecoration(
-        labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址',
+        labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址 / drpy 脚本',
         hintText:
             'https://example.com/libretv/config.json\n'
             '或 {"sites":[{"key":"a","name":"A","type":1,'
             '"api":"https://example.com/provide/vod"}]}\n'
             '或 LunaTV-config 导出的 Base58 订阅（format=2 / format=3）\n'
-            '或 https://example.com/api.php/provide/vod/at/xml/',
+            '或 https://example.com/api.php/provide/vod/at/xml/\n'
+            '或含 var rule 的 drpy 脚本（JS 原文或 .js 地址）',
         border: OutlineInputBorder(),
       ),
     ),

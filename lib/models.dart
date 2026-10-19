@@ -18,15 +18,17 @@ class SourceSite {
       isRuntime;
   bool get searchSuggestions => id == 'hongguo';
 
-  /// 运行时导入的 LibreTV 片源（`libretv:<key>`，由订阅导入注册）。
-  bool get isRuntime => id.startsWith('libretv:');
+  /// 运行时导入的 LibreTV 片源（`libretv:<key>`）与 drpy 脚本源
+  /// （`drpy:<key>`），由导入注册。
+  bool get isRuntime => id.startsWith('libretv:') || id.startsWith('drpy:');
   String get groupId => switch (id) {
     'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
-    _ => isRuntime ? 'libretv' : id,
+    _ => isRuntime ? (id.startsWith('drpy:') ? 'drpy' : 'libretv') : id,
   };
   String get groupName => switch (groupId) {
     'huangguo' => '黄果',
     'libretv' => 'LibreTV 片源',
+    'drpy' => 'drpy 脚本源',
     _ => name,
   };
   String get entryName => switch (id) {

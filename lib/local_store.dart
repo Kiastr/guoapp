@@ -137,11 +137,13 @@ class LocalStore extends ChangeNotifier {
       !locked &&
       SourceSite.isAvailable(source) &&
       profile.allows(source) &&
-      // 用户导入的 LibreTV 片源视同内置主站源：导入即授权，不占用敏感站源解锁。
+      // 用户导入的 LibreTV 片源与 drpy 脚本源视同内置主站源：导入即授权，
+      // 不占用敏感站源解锁。
       (_gateOff ||
           _sourcesUnlocked ||
           SourceSite.isPrimary(source) ||
-          source.startsWith('libretv:'));
+          source.startsWith('libretv:') ||
+          source.startsWith('drpy:'));
   List<SourceSite> get sources => SourceSite.visibleValues(
     unlocked: _gateOff || _sourcesUnlocked,
   ).where((site) => allowsSource(site.id)).toList();

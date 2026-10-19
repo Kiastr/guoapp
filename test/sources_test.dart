@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:duanju_app/core_bridge.dart';
+import 'package:duanju_app/drpy.dart';
 import 'package:duanju_app/libretv.dart';
 import 'package:duanju_app/local_profiles.dart';
 import 'package:duanju_app/models.dart';
@@ -88,6 +89,32 @@ class SourceFixtureRepository extends FixtureRepository {
   Future<void> libretvRemove(String key) async {
     libretvRemovals.add(key);
     libretvSitesResult = libretvSitesResult
+        .where((site) => site.key != key)
+        .toList();
+  }
+
+  /// drpy 脚本源导入桩：drpySites 返回的列表即原生核心 drpy.json 内容。
+  List<DrpySite> drpySitesResult = const [];
+  final drpyImports = <String>[];
+  final drpyRemovals = <String>[];
+  bool drpyFail = false;
+
+  @override
+  Future<List<DrpySite>> drpySites() async => drpySitesResult;
+
+  @override
+  Future<DrpyImportResult> drpyImport(String script) async {
+    if (drpyFail) throw AppFailure('未找到 drpy 脚本（需要包含 var rule 定义的 JS）');
+    drpyImports.add(script);
+    final site = DrpySite(key: 'rule123', name: '演示脚本源');
+    drpySitesResult = [...drpySitesResult, site];
+    return DrpyImportResult(key: site.key, name: site.name);
+  }
+
+  @override
+  Future<void> drpyRemove(String key) async {
+    drpyRemovals.add(key);
+    drpySitesResult = drpySitesResult
         .where((site) => site.key != key)
         .toList();
   }
@@ -411,14 +438,14 @@ void main() {
     await tester.pumpAndSettle();
     // 导入卡片头部来自原生核心的权威列表；已导入站点同时以运行时源
     // 身份出现在下方源卡片（导入即授权，默认可见）。
-    expect(find.text('LibreTV 片源'), findsOneWidget);
-    expect(find.text('已导入 1 个站点'), findsOneWidget);
+    expect(find.text('LibreTV / 扩展片源'), findsOneWidget);
+    expect(find.text('已导入 1 个来源（1 片源 · 0 脚本）'), findsOneWidget);
     expect(find.text('测试采集站'), findsOneWidget);
     expect(SourceSite.isKnown('libretv:abc123'), isTrue);
     expect(SourceSite.byId('libretv:abc123').isRuntime, isTrue);
 
     // 展开卡片：显示采集地址、缓存剧集数与导入入口。
-    await tester.tap(find.text('LibreTV 片源'));
+    await tester.tap(find.text('LibreTV / 扩展片源'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('https://demo.test/provide/vod'),
@@ -427,11 +454,11 @@ void main() {
     expect(find.textContaining('12 部'), findsOneWidget);
 
     // 导入：粘贴裸 provide/vod 地址 → 对话框 → 导入。
-    final importButton = find.text('导入片源');
+    final importButton = find.text('导入片源 / 脚本');
     await tester.ensureVisible(importButton);
     await tester.tap(importButton);
     await tester.pumpAndSettle();
-    expect(find.text('导入 LibreTV 片源'), findsOneWidget);
+    expect(find.text('导入 LibreTV 片源 / drpy 脚本'), findsOneWidget);
     await tester.enterText(
       find.byType(TextField),
       'https://new.test/provide/vod',
@@ -442,7 +469,7 @@ void main() {
     expect(find.textContaining('新增 1 个片源 · 已验证 1 个'), findsOneWidget);
     // 卡片列表与源卡片各出现一次名称。
     expect(find.text('新采集站'), findsNWidgets(2));
-    expect(find.text('已导入 2 个站点'), findsOneWidget);
+    expect(find.text('已导入 2 个来源（2 片源 · 0 脚本）'), findsOneWidget);
     expect(SourceSite.isKnown('libretv:new456'), isTrue);
 
     // 删除新导入的站点（确认对话框 → 删除）；卡片保持展开。
@@ -480,9 +507,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('LibreTV 片源'));
+    await tester.tap(find.text('LibreTV / 扩展片源'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('导入片源'));
+    await tester.tap(find.text('导入片源 / 脚本'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '坏输入');
     await tester.tap(find.text('导入'));

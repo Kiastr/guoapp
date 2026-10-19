@@ -9,6 +9,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
+import 'drpy.dart';
 import 'libretv.dart';
 import 'danmaku_models.dart';
 import 'background_downloads.dart';
@@ -133,6 +134,13 @@ abstract class AppRepository {
       throw AppFailure('当前环境不支持导入 LibreTV 片源');
   /// 删除已导入的 LibreTV 站点（连同其目录缓存）。
   Future<void> libretvRemove(String key) async {}
+  /// drpy 脚本源：列出已导入脚本（启动时同步到 SourceSite 运行时注册表）。
+  Future<List<DrpySite>> drpySites() async => const [];
+  /// 导入 drpy 脚本源：输入 JS 文本（含 var rule）或脚本 URL。
+  Future<DrpyImportResult> drpyImport(String script) async =>
+      throw AppFailure('当前环境不支持导入 drpy 脚本源');
+  /// 删除已导入的 drpy 脚本源（连同其目录缓存）。
+  Future<void> drpyRemove(String key) async {}
   Future<List<String>> suggestions(String query) async => const [];
   Future<Map<String, dynamic>> storage() async => {};
   Future<String> downloadDirectory() async =>
@@ -497,6 +505,29 @@ class NativeRepository extends AppRepository {
   Future<void> libretvRemove(String key) async {
     _adminPermission('仅管理员可删除 LibreTV 片源');
     await _call({'action': 'libretvRemove', 'libretvKey': key});
+  }
+
+  @override
+  Future<List<DrpySite>> drpySites() async {
+    final result = await _call({'action': 'drpySites'});
+    return (result['sites'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => DrpySite.fromJson(Map<String, dynamic>.from(row)))
+        .toList();
+  }
+
+  @override
+  Future<DrpyImportResult> drpyImport(String script) async {
+    _adminPermission('仅管理员可导入 drpy 脚本源');
+    return DrpyImportResult.fromJson(
+      await _call({'action': 'drpyImport', 'subscription': script}),
+    );
+  }
+
+  @override
+  Future<void> drpyRemove(String key) async {
+    _adminPermission('仅管理员可删除 drpy 脚本源');
+    await _call({'action': 'drpyRemove', 'drpyKey': key});
   }
 
   @override

@@ -11,9 +11,12 @@ var errNativeBuildSource = errors.New("当前版本不包含此站源")
 
 func nativeSourceAvailable(source string) bool {
 	source = canonicalProviderSource(source)
-	// LibreTV 片源由用户运行时导入（libretv:<key>），不受编译开关限制；
-	// 未导入的 key 会在请求具体接口时得到明确错误。
+	// LibreTV 片源与 drpy 脚本源由用户运行时导入（libretv:<key> / drpy:<key>），
+	// 不受编译开关限制；未导入的 key 会在请求具体接口时得到明确错误。
 	if strings.HasPrefix(source, sourceLibreTVPrefix) {
+		return true
+	}
+	if strings.HasPrefix(source, sourceDrpyPrefix) {
 		return true
 	}
 	return source == sourceHongguo || buildAllSources == "true" && isHuangguoProviderSource(source)
