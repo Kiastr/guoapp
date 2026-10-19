@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -529,7 +530,17 @@ func (d *Downloader) fetchCatVodCatalogPage(
 		case query != "":
 			raw, callErr = catVodCall(vm, "search", query, false)
 		case strings.TrimSpace(category) == "":
-			raw, callErr = catVodCall(vm, "homeVod")
+			// 首页：优先 homeVod；没有实现时退到 home() 的第一个分类，
+			// 否则「全部 / 推荐」页会直接报 missing homeVod。
+			if catVodHasFunction(vm, "homeVod") {
+				raw, callErr = catVodCall(vm, "homeVod")
+				break
+			}
+			firstTid := catVodFirstClassID(vm)
+			if firstTid == "" {
+				return errors.New("蜘蛛既没有 homeVod，也没有可用分类")
+			}
+			raw, callErr = catVodCall(vm, "category", firstTid, page, true, map[string]any{})
 		default:
 			raw, callErr = catVodCall(vm, "category", category, page, true, map[string]any{})
 		}
@@ -554,6 +565,36 @@ func (d *Downloader) fetchCatVodCatalogPage(
 		return nil, false, err
 	}
 	return dramas, hasMore, nil
+}
+
+// catVodHasFunction 蜘蛛是否实现了某个 API 方法。
+func catVodHasFunction(vm *goja.Runtime, name string) bool {
+	value, err := vm.RunString(
+		"(typeof __catApi === 'object' && __catApi !== null && typeof __catApi[" +
+			strconv.Quote(name) + "] === 'function')",
+	)
+	if err != nil || value == nil {
+		return false
+	}
+	return value.ToBoolean()
+}
+
+// catVodFirstClassID 取 home() 里第一个分类 ID（首页回退用）。
+func catVodFirstClassID(vm *goja.Runtime) string {
+	raw, err := catVodCall(vm, "home", true)
+	if err != nil {
+		return ""
+	}
+	response, decodeErr := catVodDecodeMacCMS(raw)
+	if decodeErr != nil {
+		return ""
+	}
+	for _, entry := range response.Class {
+		if id := strings.TrimSpace(nativeText(entry.TypeID)); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // fetchCatVodDetail 跑 detail(id) 取剧集元数据与分集（返回结构与 MacCMS
@@ -627,7 +668,7 @@ func installCatVodCallHelper(vm *goja.Runtime) error {
 		globalThis.__catCall = function (fnName, args) {
 			var api = globalThis.__catApi;
 			if (!api || typeof api[fnName] !== 'function') {
-				globalThis.__drpyError = 'missing ' + fnName;
+				globalThis.__drpyError = '蜘蛛没有实现 ' + fnName + ' 方法';
 				globalThis.__drpyDone = true;
 				return;
 			}

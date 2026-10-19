@@ -83,6 +83,10 @@ func (d *Downloader) resolveDrpyMedia(ctx context.Context, task Task, site drpyS
 		var callErr error
 		if drpySiteIsCatVod(site) {
 			result, callErr = catVodCallPlay(vm, flag, episodeKey)
+		} else if !drpyHasFunction(vm, "play") && !drpyHasFunction(vm, "lazy") {
+			// rule 驱动型脚本没有取流函数：分集地址本身就是播放地址
+			// （相对路径后面按 host 补全，播放页地址走嗅探兜底）。
+			result = drpyPlayResult{url: episodeKey}
 		} else {
 			result, callErr = drpyCallPlay(vm, flag, episodeKey)
 		}
@@ -96,6 +100,9 @@ func (d *Downloader) resolveDrpyMedia(ctx context.Context, task Task, site drpyS
 			return errors.New("脚本未返回播放地址")
 		}
 		address := drpyJoinURL(drpySiteReferer(site), result.url)
+		if strings.HasPrefix(address, "tvbox-xg:") {
+			return errors.New("该源使用 TVBox 专有协议（tvbox-xg），本机播放器无法播放")
+		}
 		referer := media.Referer
 		if value := drpyHeaderValue(result.header, "Referer"); value != "" {
 			referer = value

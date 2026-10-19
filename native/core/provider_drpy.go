@@ -612,6 +612,27 @@ func (d *Downloader) fetchDrpyCatalogPage(ctx context.Context, site drpySite, pa
 	var dramas []Drama
 	var hasMore bool
 	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
+		// rule 驱动型脚本：没有对应函数时走模板 + 片段（一级 / 搜索）。
+		if query != "" && !drpyHasFunction(vm, "search") {
+			spec, ok := drpyReadRule(vm)
+			if !ok {
+				return errors.New("脚本没有 search 函数，也缺少 rule 配置")
+			}
+			drpyRuleInstallRequest(vm, &drpyHost{downloader: d, ctx: ctx, vm: vm}, spec.Headers)
+			items, more, ruleErr := drpyRuleSearch(vm, site, spec, query, page)
+			dramas, hasMore = items, more
+			return ruleErr
+		}
+		if query == "" && !drpyHasFunction(vm, "category") {
+			spec, ok := drpyReadRule(vm)
+			if !ok {
+				return errors.New("脚本没有 category 函数，也缺少 rule 配置")
+			}
+			drpyRuleInstallRequest(vm, &drpyHost{downloader: d, ctx: ctx, vm: vm}, spec.Headers)
+			items, more, ruleErr := drpyRuleCategory(vm, site, spec, category, page)
+			dramas, hasMore = items, more
+			return ruleErr
+		}
 		var raw any
 		var callErr error
 		if query != "" {
@@ -649,6 +670,18 @@ func (d *Downloader) fetchDrpyCategories(ctx context.Context, site drpySite) ([]
 	}
 	var categories []nativeCategory
 	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
+		// rule 驱动型脚本没有 home：用 class_name / class_url 生成分类。
+		if !drpyHasFunction(vm, "home") {
+			spec, ok := drpyReadRule(vm)
+			if !ok {
+				return errors.New("脚本没有 home 函数，也缺少 rule 配置")
+			}
+			categories = drpyRuleCategories(spec)
+			if len(categories) == 0 {
+				return errors.New("脚本没有 home 函数，rule 里也没有 class_name / class_url")
+			}
+			return nil
+		}
 		raw, callErr := drpyCall(vm, "home", map[string]any{})
 		if callErr != nil {
 			return callErr
@@ -686,6 +719,17 @@ func (d *Downloader) fetchDrpyDetail(ctx context.Context, site drpySite, vodID s
 	var drama Drama
 	var chapters []Chapter
 	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
+		// rule 驱动型脚本：没有 detail 函数时用 detailUrl + 二级片段。
+		if !drpyHasFunction(vm, "detail") {
+			spec, ok := drpyReadRule(vm)
+			if !ok {
+				return errors.New("脚本没有 detail 函数，也缺少 rule 配置")
+			}
+			drpyRuleInstallRequest(vm, &drpyHost{downloader: d, ctx: ctx, vm: vm}, spec.Headers)
+			ruleDrama, ruleChapters, ruleErr := drpyRuleDetail(vm, site, spec, decoded)
+			drama, chapters = ruleDrama, ruleChapters
+			return ruleErr
+		}
 		raw, callErr := drpyCall(vm, "detail", decoded)
 		if callErr != nil {
 			return callErr

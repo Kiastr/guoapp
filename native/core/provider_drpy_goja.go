@@ -145,6 +145,12 @@ func installDrpyHost(vm *goja.Runtime, host *drpyHost) {
 	vm.Set("log", func(call goja.FunctionCall) goja.Value {
 		return goja.Undefined()
 	})
+	// setResult rule 驱动型脚本的「一级 / 搜索 / 推荐」片段用它交回列表
+	// （见 provider_drpy_rule.go）。
+	vm.Set("setResult", func(call goja.FunctionCall) goja.Value {
+		_ = vm.Set("__drpyRuleResult", call.Argument(0))
+		return goja.Undefined()
+	})
 }
 
 // drpyExportOptions 解析 req 的第二参（method/headers/body）。
@@ -242,7 +248,7 @@ func installDrpyCallHelper(vm *goja.Runtime) error {
 		globalThis.__drpyCall = function(fnName, args){
 			var fn = globalThis[fnName];
 			if (typeof fn !== 'function') {
-				globalThis.__drpyError = 'missing ' + fnName;
+				globalThis.__drpyError = '脚本没有定义 ' + fnName + ' 函数';
 				globalThis.__drpyDone = true;
 				return;
 			}

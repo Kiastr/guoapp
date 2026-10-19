@@ -2,11 +2,15 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+113**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+114**。
 
 早期版本在 0.2.50 基线上新增两个原生站源：**韩小圈**（`hanxiaoquan`，韩剧 / 韩国电影 / 韩国综艺 / 韩国动漫）与**鬼片网**（`guipian`，鬼片 / 电视剧 / 动漫）。默认可见站源顺序为：**红果 → 韩小圈 → 鬼片 → 青空**。
 
-## 最近更新（0.2.73+113）
+## 最近更新（0.2.73+114）
+
+| 版本 | 变更 |
+| --- | --- |
+| +114 | 支持 **rule 驱动型 drpy2 脚本**（只写 `rule`、没有 `home / category / detail / search` 函数，如社区「荐片」一类）：分类从 `class_name / class_url` 生成，一级 / 二级 / 搜索按 `url / detailUrl / searchUrl` 模板 + `js:` 片段执行（`fyclass / fypage / fyid / fyfilter / **` 替换，同步 `request()`、`setResult()`、`VOD`）。同时修 CatVod **没有 `homeVod` 时首页直接报错**（改为回退 `home()` 的第一个分类）；「缺少函数」的提示改为中文，并对「接口返回网页」单独说明 |
 
 | 版本 | 变更 |
 | --- | --- |
@@ -150,6 +154,22 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **分集与播放**：分集 ID 记录 `$` 后的播放源标识（drpy2 约定），播放时依次尝试 `play` → `lazy`（含全局 `input` 兼容） → 结果里的 `url` 直链；返回 `jx=1 / parse=1` 时按解析页做简单嗅探（正则提取媒体地址），嗅探失败回退原地址。播放地址为 m3u8 时自动拉取播放列表（Referer 取脚本声明的 host）。
 - **上限与去重**：单次最多导入 50 个脚本源；同一脚本重复导入按内容 key 覆盖更新。脚本正文保存在本机 `scripts/<key>.js`，站点记录在 `drpy.json`，删除时连同目录缓存一并清除。
 - **兼容边界**：只实现 drpy2 核心函数约定，不模拟完整 TVBox 环境（如 `js2p` 之外的加解密引擎、WebView 依赖的脚本暂不支持）；导入前会做静态校验，明显不是 drpy 脚本的内容会被拒绝并说明原因。若脚本以 `import` / `export` 开头（ES Module），会提示「这是 ES Module 脚本，请导入 ext 里的站点脚本」——TVBox 的 drpy 站点 `api` 字段指向的运行时库正是这种格式。
+
+#### rule 驱动型脚本（只写配置、不写函数）
+
+社区里很大一部分 drpy2 脚本只声明 `rule`，浏览逻辑交给运行时内置函数（例如「荐片」）。这类脚本没有 `home / category / detail / search`，我们按下面的方式补齐：
+
+| 环节 | 取值来源 |
+| --- | --- |
+| 分类 | `class_name` / `class_url`（`&` 分隔，按顺序配对） |
+| 列表 | `url` 模板（`fyclass` → 分类 ID、`fypage` → 页码、`fyfilter` → 由 `filter_url` + `filter_def` 拼出的筛选串）+ `一级` 片段 |
+| 详情 | `detailUrl`（`fyid` → 剧集 ID）+ `二级` 片段（片段写全局 `VOD`） |
+| 搜索 | `searchUrl`（`**` → 关键词）+ `搜索` 片段 |
+| 取流 | 没有 `play / lazy` 时直接用分集地址：相对路径按站点 host 补全，页面地址走嗅探，`tvbox-xg:` 这类 TVBox 专有协议给出明确提示 |
+
+片段运行环境与 drpy2 对齐：`input / MY_PAGE / MY_URL / MY_HOME / HOST / cateObj / fl` 变量，**同步** `request()`（返回响应正文，与异步 `req()` 不同）、`setResult()`、`pdfh / pdfa / pd / joinUrl`；`rule.headers` 会作为 `request` 的默认请求头。片段被包在 IIFE 里执行，同一虚拟机内重复调用不会因 `let` 重复声明失败。
+
+> 接口本身失效时（返回 HTML 404），错误会写成「一级解析失败（URL）：…（接口返回的是网页而不是 JSON，源接口可能已失效或被拦截）」，便于判断是源的问题还是脚本的问题。
 
 #### CatVod 蜘蛛（`[cat]` / `./cat/*.js`）
 
@@ -356,6 +376,7 @@ python3 scripts/sync_source.py --check
 - `provider_drpy_media.go`：播放闭环——`play` / `lazy` 分流、`jx=1 / parse=1` 嗅探、直链兜底与 m3u8 播放列表拉取；
 - `provider_libretv.go` 的 `parseLibreTVSubscription`：混合订阅里 `type ≥ 3` 且 `api` 为 `.js` 的条目收成 `drpyCandidate`，经 `importLibreTVSubscription` 的 `drpy` 字段透传给 Dart 侧候选框（CatVod 蜘蛛的相对路径按订阅地址补全后再判定）。
 - `provider_catvod.go`：**CatVod 蜘蛛**方言（`drpySite.Engine == "catvod"`）——ESM → 普通脚本转换（剥离 `import` / 顶层 `export`，`export{…}` 改成 `globalThis.__cat = {…}` 注入）、`lib/cat.js` 下载与 `catlib/<hash>.js` 缓存、Node 垫片（`process` / `Buffer` / `console` / `setTimeout`）、`__jsEvalReturn()` 取 API 对象后经 `__catCall` 调方法；浏览 / 详情 / 播放在 `provider_drpy.go` 与 `provider_drpy_media.go` 里按 `drpySiteIsCatVod` 分流，结果映射与 drpy 共用（CatVod 多一层「返回 JSON 字符串」解码）。
+- `provider_drpy_rule.go`：**rule 驱动型脚本**的默认函数——`drpyHasFunction` 判断脚本是否真的定义了 `home / category / detail / search`，缺失时按 `rule` 模板 + `js:` 片段补齐（模板替换、`filter_url` 默认值、同步 `request`、`setResult` / `VOD`、片段 IIFE 包装）；片段错误会带上请求地址，接口返回网页时追加「源接口可能已失效」的说明。
 
 注意：goja 的 `Export()` 对 JS 整数返回 `int64`，宿主侧取整需同时兼容 int64 / int32 / float32；Go 结构体直接转 JS 对象会暴露 Go 字段名，drpy 脚本按小写约定读取，`req` 的 resolve 必须用 `map[string]any`。
 
