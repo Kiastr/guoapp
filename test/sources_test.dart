@@ -437,7 +437,9 @@ void main() {
   testWidgets('libretv import adds runtime source and removal clears it', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(390, 1400);
+    // 视口要足够高：ListView 会裁剪视口外的子元素，卡片与片源列表需同屏
+    // 才能同时断言「名称各出现一次」。
+    tester.view.physicalSize = const Size(390, 2200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);

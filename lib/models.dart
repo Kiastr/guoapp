@@ -120,14 +120,27 @@ class SourceGroup {
   final String name;
   final List<SourceSite> sources;
 
-  static List<SourceGroup> fromSources(Iterable<SourceSite> sources) {
+  static List<SourceGroup> fromSources(
+    Iterable<SourceSite> sources, {
+    Set<String> favoriteIds = const {},
+  }) {
     final groups = <String, List<SourceSite>>{};
     for (final source in sources) {
-      (groups[source.groupId] ??= []).add(source);
+      // 收藏的运行时片源（libretv:/drpy:）不并入 LibreTV / drpy 大组，
+      // 独占一组、组名即源名，与红果等内置源同级出现在片源选择里。
+      final favorite = favoriteIds.contains(source.id);
+      final groupId = favorite ? source.id : source.groupId;
+      (groups[groupId] ??= []).add(source);
     }
     return [
       for (final group in groups.entries)
-        SourceGroup(group.key, group.value.first.groupName, group.value),
+        SourceGroup(
+          group.key,
+          favoriteIds.contains(group.value.first.id)
+              ? group.value.first.name
+              : group.value.first.groupName,
+          group.value,
+        ),
     ];
   }
 }

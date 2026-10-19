@@ -37,6 +37,15 @@ class LocalStore extends ChangeNotifier {
   final Map<String, Drama> _favorites = {};
   final Map<String, FollowState> _followStates = {};
   final Map<String, Drama> _seriesCandidates = {};
+
+  /// 收藏的运行时片源 ID（`libretv:` / `drpy:`）：收藏后首页不再并入
+  /// LibreTV / drpy 大组，与红果等同级独占一组。
+  final Set<String> _favoriteSources = {};
+
+  /// 隐藏的运行时片源 ID：与黄果等敏感站源同逻辑——不出现在首页片源
+  /// 选择里，allowsSource 直接拒绝（追剧/历史里的条目一并过滤），
+  /// 可在站源管理页恢复显示。
+  final Set<String> _hiddenSources = {};
   Future<void> _writes = Future<void>.value();
   List<LocalProfile> _profiles = [];
   String _current = 'default';
@@ -143,7 +152,9 @@ class LocalStore extends ChangeNotifier {
           _sourcesUnlocked ||
           SourceSite.isPrimary(source) ||
           source.startsWith('libretv:') ||
-          source.startsWith('drpy:'));
+          source.startsWith('drpy:')) &&
+      // 被用户隐藏的运行时片源与黄果等隐藏源同逻辑：一律不可见。
+      !_hiddenSources.contains(source);
   List<SourceSite> get sources => SourceSite.visibleValues(
     unlocked: _gateOff || _sourcesUnlocked,
   ).where((site) => allowsSource(site.id)).toList();
@@ -218,6 +229,51 @@ class LocalStore extends ChangeNotifier {
   /// 让监听 [sources] 的界面（首页、站源管理等）立即刷新。
   void notifySourceRegistryChanged() => _notify();
 
+  // ---- 运行时片源的收藏 / 隐藏 ----
+
+  /// 收藏的运行时片源 ID 集合（拷贝，避免外部改动内部状态）。
+  Set<String> get favoriteSourceIds => Set.of(_favoriteSources);
+
+  /// 隐藏的运行时片源 ID 集合（拷贝）。
+  Set<String> get hiddenSourceIds => Set.of(_hiddenSources);
+
+  bool isFavoriteSource(String id) => _favoriteSources.contains(id);
+
+  bool isHiddenSource(String id) => _hiddenSources.contains(id);
+
+  /// 收藏 / 取消收藏运行时片源。收藏后首页把它从 LibreTV / drpy 大组
+  /// 里拆出来独占一组（与红果同级）。仅 `libretv:` / `drpy:` 源有效。
+  Future<void> toggleFavoriteSource(String id) => _queue(() async {
+    final source = id.trim();
+    if (!source.startsWith('libretv:') && !source.startsWith('drpy:')) {
+      throw StateError('只能收藏导入的 LibreTV / drpy 片源');
+    }
+    final next = Set.of(_favoriteSources);
+    if (!next.remove(source)) next.add(source);
+    await _commit({
+      _key('favoriteSources'): jsonEncode(next.toList()..sort()),
+    });
+    _loadLibrary();
+    _notify();
+  });
+
+  /// 隐藏 / 恢复运行时片源，与敏感站源（黄果等）同逻辑：
+  /// 隐藏后不出现在首页片源选择，allowsSource 拒绝其内容；
+  /// 在站源管理页点同一按钮可恢复。
+  Future<void> toggleSourceHidden(String id) => _queue(() async {
+    final source = id.trim();
+    if (!source.startsWith('libretv:') && !source.startsWith('drpy:')) {
+      throw StateError('只能隐藏导入的 LibreTV / drpy 片源');
+    }
+    final next = Set.of(_hiddenSources);
+    if (!next.remove(source)) next.add(source);
+    await _commit({
+      _key('hiddenSources'): jsonEncode(next.toList()..sort()),
+    });
+    _loadLibrary();
+    _notify();
+  });
+
   /// 设置或更换密码锁，并立即解锁。
   Future<void> enableSourceGate(String pin) => _queue(() async {
     _requireAdmin();
@@ -291,6 +347,12 @@ class LocalStore extends ChangeNotifier {
     _favorites.clear();
     _followStates.clear();
     _seriesCandidates.clear();
+    _favoriteSources
+      ..clear()
+      ..addAll(_readStringSet(_string(_key('favoriteSources'))));
+    _hiddenSources
+      ..clear()
+      ..addAll(_readStringSet(_string(_key('hiddenSources'))));
     if (_configurationError != null) return;
     for (final row in readJsonList(_string(_key('history')))) {
       try {
@@ -617,6 +679,20 @@ class LocalStore extends ChangeNotifier {
   String _encodeFollowStates(Map<String, FollowState> states) => jsonEncode({
     for (final entry in states.entries) entry.key: entry.value.toJson(),
   });
+
+  /// 读一个字符串集合（收藏 / 隐藏的片源 ID 等）。解析失败按空集合处理，
+  /// 与 readJsonList 的容错策略一致：坏数据不应让整个仓库打不开。
+  Set<String> _readStringSet(String? value) {
+    try {
+      return (jsonDecode(value ?? '[]') as List)
+          .whereType<String>()
+          .map((entry) => entry.trim())
+          .where((entry) => entry.isNotEmpty)
+          .toSet();
+    } catch (_) {
+      return {};
+    }
+  }
 
   Future<void> setFollowStatus(Drama drama, FollowStatus status) {
     final epoch = _epoch;

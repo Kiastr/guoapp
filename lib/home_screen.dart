@@ -75,7 +75,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _catalogLoadScheduled = false;
 
   List<SourceGroup> get _sourceGroups {
-    final groups = SourceGroup.fromSources(widget.store.sources);
+    // store.sources 已排除被隐藏的运行时片源（与黄果同逻辑）；
+    // favoriteSourceIds 让收藏的片源独占一组，与红果等同级。
+    final groups = SourceGroup.fromSources(
+      widget.store.sources,
+      favoriteIds: widget.store.favoriteSourceIds,
+    );
     return [
       if (groups.length > 1) SourceGroup('all', '全部站源', widget.store.sources),
       ...groups,
@@ -1245,6 +1250,9 @@ class _HomeScreenState extends State<HomeScreen> {
           category: _displayCategory,
           error: _categoriesError,
           onCategory: _changeCategory,
+          // 标签栏轻拉 = 刷新当前分类目录；重拉 = 打开分类面板
+          // （面板内可排序选择分类）。
+          onRefresh: () => unawaited(_refreshCatalog()),
           onRetry: () => _loadCategories(force: true),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,

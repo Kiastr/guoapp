@@ -795,6 +795,16 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
         if (drama.description.isNotEmpty) ...[
           const SizedBox(height: 12),
+          // 简介块内注明片源：多片源合并展示时（LibreTV / drpy 收藏后与
+          // 内置源同级），用户需要知道这一部具体来自哪个站源。
+          Text(
+            '片源：${SourceSite.byId(drama.source).name}',
+            style: TextStyle(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
           Text(
             drama.description,
             maxLines: _expandedDescription ? null : 3,

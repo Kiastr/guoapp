@@ -390,10 +390,47 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   '${site.api}\n${site.typeLabel} · ${site.count} 部',
                 ),
                 isThreeLine: true,
-                trailing: IconButton(
-                  tooltip: '删除${site.name}',
-                  onPressed: _libretvBusy ? null : () => _removeLibreTV(site),
-                  icon: const Icon(Icons.delete_outline),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: widget.store.isFavoriteSource(site.sourceId)
+                          ? '取消收藏${site.name}'
+                          : '收藏${site.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _toggleFavoriteSource(
+                              site.sourceId,
+                              site.name,
+                            ),
+                      icon: Icon(
+                        widget.store.isFavoriteSource(site.sourceId)
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: widget.store.isHiddenSource(site.sourceId)
+                          ? '恢复显示${site.name}'
+                          : '隐藏${site.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _toggleHiddenSource(
+                              site.sourceId,
+                              site.name,
+                            ),
+                      icon: Icon(
+                        widget.store.isHiddenSource(site.sourceId)
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '删除${site.name}',
+                      onPressed: _libretvBusy ? null : () => _removeLibreTV(site),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -437,12 +474,49 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   '${script.count} 部',
                 ),
                 isThreeLine: true,
-                trailing: IconButton(
-                  tooltip: '删除${script.name}',
-                  onPressed: _libretvBusy
-                      ? null
-                      : () => _removeLibreTVKey(script.sourceId, script.name),
-                  icon: const Icon(Icons.delete_outline),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: widget.store.isFavoriteSource(script.sourceId)
+                          ? '取消收藏${script.name}'
+                          : '收藏${script.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _toggleFavoriteSource(
+                              script.sourceId,
+                              script.name,
+                            ),
+                      icon: Icon(
+                        widget.store.isFavoriteSource(script.sourceId)
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: widget.store.isHiddenSource(script.sourceId)
+                          ? '恢复显示${script.name}'
+                          : '隐藏${script.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _toggleHiddenSource(
+                              script.sourceId,
+                              script.name,
+                            ),
+                      icon: Icon(
+                        widget.store.isHiddenSource(script.sourceId)
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '删除${script.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _removeLibreTVKey(script.sourceId, script.name),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -644,6 +718,56 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
   Future<void> _removeLibreTV(LibreTVSite site) =>
       _removeLibreTVKey(site.sourceId, site.name);
+
+  /// 收藏 / 取消收藏导入的片源：收藏后首页把它从 LibreTV / drpy 大组拆出
+  /// 独占一组（与红果同级），不影响站源管理与更新检测。
+  Future<void> _toggleFavoriteSource(String sourceId, String name) async {
+    if (_libretvBusy) return;
+    try {
+      await widget.store.toggleFavoriteSource(sourceId);
+      if (!mounted) return;
+      final favorite = widget.store.isFavoriteSource(sourceId);
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            favorite ? '已收藏「$name」，首页将独立显示该片源' : '已取消收藏「$name」',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('操作失败：$error')));
+      }
+    }
+  }
+
+  /// 隐藏 / 恢复导入的片源：与黄果等隐藏源同逻辑——隐藏后首页片源选择
+  /// 不再显示，其追剧 / 历史内容一并过滤；在本页点同一按钮恢复。
+  Future<void> _toggleHiddenSource(String sourceId, String name) async {
+    if (_libretvBusy) return;
+    try {
+      await widget.store.toggleSourceHidden(sourceId);
+      if (!mounted) return;
+      final hidden = widget.store.isHiddenSource(sourceId);
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            hidden ? '已隐藏「$name」，可在本页恢复显示' : '已恢复显示「$name」',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('操作失败：$error')));
+      }
+    }
+  }
 
   /// 删除 LibreTV 片源或 drpy 脚本源：连同原生核心的目录缓存一并清除
   /// （Go 侧 removeLibreTVSite / removeDrpySite 负责），并同步注销运行时注册表。
