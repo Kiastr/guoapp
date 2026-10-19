@@ -2,13 +2,15 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+106**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+107**。
 
 早期版本在 0.2.50 基线上新增两个原生站源：**韩小圈**（`hanxiaoquan`，韩剧 / 韩国电影 / 韩国综艺 / 韩国动漫）与**鬼片网**（`guipian`，鬼片 / 电视剧 / 动漫）。默认可见站源顺序为：**红果 → 韩小圈 → 鬼片 → 青空**。
 
-## 最近更新（0.2.73+106）
+## 最近更新（0.2.73+107）
 
 | 版本 | 变更 |
+| --- | --- |
+| +107 | 新增第三层 **WebView 嗅探**（解析 type 0 / 4 等价实现）：播放前用无界面 WebView 打开播放页，拦截 m3u8 / mp4 请求得到直链，再交给播放器（Android / iOS）。站源管理可识别并选择「WebView 嗅探」类解析；该方式不支持下载 |
 | --- | --- |
 | +106 | LibreTV 订阅支持 **parses 解析规则**：导入时保留 name/type/url/ext，站源管理新增「播放解析方式」下拉。默认「直链 / 嗅探」无需后端；可选标准 **type=1 JSON 解析接口**（依赖第三方服务）；新增**本地解析脚本**扩展类型（type=2 且 url 为 .js，goja 执行 `parse(url)`，纯 Go 无后端）。仅对非直链播放页生效 |
 | --- | --- |
@@ -104,6 +106,7 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
   - **直链 / 嗅探（默认）**：抓取播放页，用正则从 HTML / JSON 里提取媒体地址（移动端 UA，30 秒上限）。
   - **JSON 解析接口（type=1）**：`GET <url>?url=<播放页>`，从返回 JSON 的 `url / playUrl / data.url` 取地址，并透传 `header.Referer`。**依赖第三方解析服务，不是无后端方案**，仅在对方接口可用时有效。
   - **本地解析脚本（type=2 且 url 为 .js）——本项目扩展类型，不是 TVBox 标准语义**：脚本按需下载并缓存到本机 `parses/<hash>.js`，由 goja 执行脚本里的 `parse(url)`，返回 `{url, jx, parse, header}`（当前仅应用 `header.Referer`，其余头与 drpy 保持一致暂不转发）；`jx / parse > 0` 或返回的仍不是直链时，再按默认嗅探处理。宿主环境与 drpy 完全一致（`req` / `pdfh` / `pdfa` / 30 秒看门狗），Android / Windows / iOS 同一套纯 Go 实现，**不需要后端**；代价是脚本要自己维护或从社区找 JS 版。标准 TVBox 配置里的 `type=2`（聚合解析）不会被误当成脚本，选中时会明确提示「暂不支持」。
+  - **WebView 嗅探（type 0 / 4，TVBox 标准语义）**：播放前用**无界面的内置 WebView**（Headless）以移动端 UA 打开播放页，拦截页面发出的 m3u8 / mp4 请求，命中即把该地址交给播放器；页面不自动播放时再用 JS 读取 `<video>/<source>` 兜底，25 秒超时。**Android / iOS 可用**（插件无 Windows 实现，桌面端会提示改用其他解析方式）。该方式**不支持下载**（下载链路没有浏览器环境），也不写入「下一集预加载」。
   - 解析方式与订阅一起保存在本机，对全部已导入的 LibreTV 站点生效；订阅更新后若该解析已不存在，自动回到「直链 / 嗅探」。
 - **去重与上限**：同一采集接口在配置里重复出现会静默去重；单次最多导入 50 个站点，key 冲突时自动改为按地址派生。站点记录只保存在本机。
 - **管理**：导入卡片列出全部已导入站点（名称、采集地址、**采集类型（JSON / XML）**、缓存剧集数）并可单个删除；片源卡片「更多」菜单也有「删除此片源」。删除会同时清除该片源的本机目录缓存，之后需重新导入。
@@ -316,5 +319,5 @@ LibreTV 的解析层按采集格式分两个文件，新增格式时按同样方
 - `provider_libretv.go`：MacCMS **JSON** 采集（`macCMSResponse` / `rows()` / `libretvDramaFromRow` / `libretvScoreText`）；
 - `provider_libretv_xml.go`：MacCMS **XML** 采集（`<rss><list page pagecount><video>`、分类 `<class><ty id>`、分集 `<dl><dd flag>`），与 JSON 版共用 `libretvChaptersFromGroups` 做分集解析；
 - `provider_libretv_base58.go`：**Base58** 订阅解码（bs58 / Bitcoin 字母表，无校验和），导入时解码后复用同一套 JSON 解析；
-- `provider_libretv_parse.go`：**播放解析**——直链直接播、非直链按所选方式走嗅探 / JSON 接口 / 本地脚本（goja 复用 drpy 宿主，脚本缓存于 `parses/`）；
+- `provider_libretv_parse.go`：**播放解析**——直链直接播、非直链按所选方式走嗅探 / JSON 接口 / 本地脚本（goja 复用 drpy 宿主，脚本缓存于 `parses/`）；type 0/4 的 **WebView 嗅探**在 Dart 侧（`lib/webview_sniffer.dart`，Headless InAppWebView 拦截媒体请求）先换成直链，Go 只报出「需要 WebView」的明确错误；
 - `libretvSite.Type` 记录采集格式（1 = JSON、2 = XML），旧订阅文件缺省按 JSON 处理；类型未标注时 `errLibreTVNotJSON` / `errLibreTVNotXML` 触发按响应内容自动回退。

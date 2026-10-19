@@ -72,8 +72,12 @@ func (d *Downloader) resolveLibreTVMedia(ctx context.Context, task Task, site li
 		resolved, headers, err = d.runLibretvScriptParse(ctx, parse, address, referer)
 	case hasParse && parse.Type == 1:
 		resolved, headers, err = d.runLibretvJSONParse(ctx, parse, address, referer)
+	case hasParse && libretvParseNeedsWebView(parse):
+		// type 0/4 需要真实浏览器环境。播放器会先由 Dart 侧 WebView 嗅探并把
+		// 章节地址替换成直链，不会走到这里；下载等无 WebView 的链路给出明确提示。
+		return providerMedia{}, errors.New("该解析方式需要 WebView 嗅探，请在播放器中使用；下载暂不支持此解析方式")
 	case hasParse:
-		return providerMedia{}, fmt.Errorf("所选解析方式（%s）暂不支持，请改用「直链/嗅探」或本地解析脚本", libretvParseKind(parse))
+		return providerMedia{}, fmt.Errorf("所选解析方式（%s）暂不支持，请改用「直链/嗅探」、「WebView 嗅探」或本地解析脚本", libretvParseKind(parse))
 	default:
 		// 默认「直链/嗅探」：直链在函数开头已处理，这里只剩网页。
 		resolved, err = d.drpySniffPlayPage(ctx, address, referer)

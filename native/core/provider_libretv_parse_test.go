@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,12 +38,21 @@ func TestLibreTVParseRulesExtraction(t *testing.T) {
 	if libretvParseKind(parses[0]) != "JSON 接口" {
 		t.Fatalf("类型名错误: %s", libretvParseKind(parses[0]))
 	}
-	// type=2 + .js = 本地脚本扩展；type=2 + 非 .js 仍按 TVBox 聚合语义展示为嗅探。
+	// type=2 + .js = 本地脚本扩展；type=2 + 非 .js 属于未知类型。
 	if !libretvParseIsScript(parses[1]) || libretvParseKind(parses[1]) != "本地脚本" {
 		t.Fatalf("脚本条目识别错误: %+v", parses[1])
 	}
-	if libretvParseIsScript(parses[2]) || libretvParseKind(parses[2]) != "嗅探" {
+	if libretvParseIsScript(parses[2]) || libretvParseKind(parses[2]) != "其他解析" {
 		t.Fatalf("非 .js 的 type=2 不应识别为脚本: %+v", parses[2])
+	}
+	// type 0 / 4 是 WebView 嗅探类。
+	if libretvParseKind(libretvParse{Type: 0, URL: "https://a.com/x"}) != "WebView 嗅探" ||
+		!libretvParseNeedsWebView(libretvParse{Type: 0}) {
+		t.Fatal("type=0 应识别为 WebView 嗅探")
+	}
+	if libretvParseKind(libretvParse{Type: 4, URL: "https://a.com/x"}) != "WebView 嗅探" ||
+		!libretvParseNeedsWebView(libretvParse{Type: 4}) {
+		t.Fatal("type=4 应识别为 WebView 嗅探")
 	}
 	// 缺名称时用主机名。
 	if parses[3].Name != "parse.b.com" {
@@ -276,6 +286,32 @@ func TestLibreTVResolveDefaultSniff(t *testing.T) {
 	}
 	if !strings.HasSuffix(media.URL, "/direct-sniffed.mp4") {
 		t.Fatalf("默认嗅探结果错误: %q", media.URL)
+	}
+}
+
+func TestLibreTVResolveWebViewParseNeedsDart(t *testing.T) {
+	fixture := newLibreTVFixture(t, func(path string, query map[string]string) (int, string) {
+		return 404, ""
+	})
+	downloader := libretvParseTestDownloader(t, fixture)
+	putLibreTVTestSite(t, downloader, fixture)
+	// type=0 / 4：Go 不实现浏览器，必须由 Dart 侧 WebView 嗅探后替换直链。
+	for _, parseType := range []int{0, 4} {
+		parseURL := fmt.Sprintf("%s/parse-%d", fixture.server.URL, parseType)
+		if err := downloader.libretv.putParses([]libretvParse{{Name: "Web", Type: parseType, URL: parseURL}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := downloader.libretv.setSelectedParse(parseURL); err != nil {
+			t.Fatal(err)
+		}
+		task := Task{
+			DramaID: "libretv:k:1",
+			Chapter: Chapter{ID: "libretv:k:1:0-1", Source: "libretv:k", VideoURL: "https://page.example.com/watch/1"},
+		}
+		_, err := downloader.resolveProviderMedia(context.Background(), task)
+		if err == nil || !strings.Contains(err.Error(), "WebView") {
+			t.Fatalf("type=%d 应提示需要 WebView: %v", parseType, err)
+		}
 	}
 }
 

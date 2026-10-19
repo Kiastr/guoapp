@@ -85,15 +85,25 @@ type libretvParse struct {
 }
 
 // libretvParseKind 返回解析方式的中文类型名（UI 展示用）。
+// type 0 与 4 在 TVBox 里都是「嗅探」类，需要 WebView 实际加载播放页；
+// 本实现由 Dart 侧 WebView 完成（Go 内没有浏览器环境）。
 func libretvParseKind(parse libretvParse) string {
 	switch {
 	case libretvParseIsScript(parse):
 		return "本地脚本"
 	case parse.Type == 1:
 		return "JSON 接口"
+	case parse.Type == 0 || parse.Type == 4:
+		return "WebView 嗅探"
 	default:
-		return "嗅探"
+		return "其他解析"
 	}
+}
+
+// libretvParseNeedsWebView type 0 / 4：需要 WebView 加载播放页并拦截媒体请求。
+// Dart 侧播放前会先嗅探，把章节地址替换为直链；Go 侧只负责报出明确错误。
+func libretvParseNeedsWebView(parse libretvParse) bool {
+	return parse.Type == 0 || parse.Type == 4
 }
 
 // libretvParseIsScript 判断是否为「本地解析脚本」扩展类型：

@@ -352,10 +352,11 @@ class _SourcesScreenState extends State<SourcesScreen> {
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 isDense: true,
-                helperMaxLines: 3,
+                helperMaxLines: 4,
                 helperText:
                     '默认「直链/嗅探」不需要后端：直链直接播，播放页会尝试从网页里嗅探视频地址。'
-                    '「JSON 接口」依赖第三方解析服务；「本地脚本」在本机执行，无后端。'
+                    '「JSON 接口」依赖第三方解析服务；「本地脚本」在本机执行，无后端；'
+                    '「WebView 嗅探」用内置浏览器打开播放页并截获媒体请求（Android / iOS，暂不支持下载）。'
                     '仅对非直链播放页生效，直链采集源不受影响。',
               ),
               items: [

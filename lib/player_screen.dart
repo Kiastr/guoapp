@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -21,6 +20,7 @@ import 'download_picker.dart';
 import 'downloads_screen.dart';
 import 'follow_state.dart';
 import 'local_store.dart';
+import 'libretv.dart';
 import 'models.dart';
 import 'playback_loader.dart';
 import 'playback_preloader.dart';
@@ -37,6 +37,7 @@ import 'lan_controller.dart';
 import 'lan_screen.dart';
 import 'video_enhancement.dart';
 import 'video_output_size.dart';
+import 'webview_sniffer.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -77,6 +78,12 @@ class _PlayerScreenState extends State<PlayerScreen>
   late final VideoEnhancementController _enhancement;
   late final PlaybackLoader _loader;
   late final PlaybackPreloader _preloader;
+
+  /// 当前选中的 LibreTV 解析方式（仅 type 0/4 的 WebView 嗅探会用到）。
+  LibreTVParse? _webViewParse;
+
+  /// 解析方式读取完成的信号：首集播放可能早于配置返回，必须先等它。
+  late final Future<void> _webViewParseReady;
   bool _preloadEnabled = true;
   late final DanmakuController _danmaku;
   int _seekSequence = 0;
@@ -198,6 +205,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _preloadEnabled = true;
     _loader = PlaybackLoader(widget.repository);
     _preloader = PlaybackPreloader(widget.repository);
+    _webViewParseReady = _loadWebViewParse();
     _danmaku = DanmakuController(widget.repository)
       ..setEnabled(_danmakuEnabled);
     widget.store.addListener(_accessChanged);
@@ -688,6 +696,12 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   void _syncPreload() {
     if (_closed) return;
+    // WebView 嗅探类解析（type 0/4）在 Go 侧取不到流，预加载没有意义，
+    // 直接停掉，避免每 30 秒一次的无用解析请求。
+    if (_webViewParse != null) {
+      _preloader.pause();
+      return;
+    }
     if (!_preloadEnabled ||
         !_foreground ||
         widget.localOnly ||
@@ -958,6 +972,65 @@ class _PlayerScreenState extends State<PlayerScreen>
     return next;
   }
 
+  /// 读取 LibreTV 当前选中的解析方式；只有 type 0/4 需要 WebView 嗅探。
+  Future<void> _loadWebViewParse() async {
+    try {
+      final config = await widget.repository.libretvParseConfig();
+      if (!mounted || _closed) return;
+      LibreTVParse? selected;
+      for (final parse in config.parses) {
+        if (parse.url == config.selected) {
+          selected = parse;
+          break;
+        }
+      }
+      final needsWebView =
+          selected != null && (selected.type == 0 || selected.type == 4);
+      setState(() => _webViewParse = needsWebView ? selected : null);
+    } catch (_) {
+      // 非原生环境 / 旧核心：按直链处理。
+    }
+  }
+
+  /// type 0/4 解析：用内置 WebView 打开播放页，截获媒体请求后把章节地址
+  /// 替换成直链，Go 侧就会按直链播放（解析只对非直链生效，不会二次解析）。
+  Future<Episode> _prepareWebViewEpisode(Episode episode) async {
+    await _webViewParseReady;
+    final parse = _webViewParse;
+    if (parse == null) return episode;
+    if (!(episode.raw['source'] as String? ?? '').startsWith('libretv:')) {
+      return episode;
+    }
+    final address = (episode.raw['videoUrl'] as String? ?? '').trim();
+    if (address.isEmpty || WebViewSniffer.looksLikeMediaUrl(address)) {
+      return episode;
+    }
+    if (!WebViewSniffer.supported) {
+      throw AppFailure(
+        '「${parse.name}」需要 WebView 嗅探，当前平台不支持；'
+        '请在站源管理改用「直链/嗅探」或本地解析脚本。',
+      );
+    }
+    if (mounted && !_closed) {
+      setState(() => _loadingMessage = '正在用内置浏览器嗅探播放地址…');
+    }
+    final sniffed = await WebViewSniffer.shared.sniff(
+      address,
+      referer: (episode.raw['referer'] as String? ?? '').trim(),
+    );
+    if (sniffed == null || sniffed.isEmpty) {
+      throw AppFailure('WebView 未嗅探到播放地址，请换解析方式或稍后重试。');
+    }
+    DiaryService.add('[Parse] WebView 嗅探成功: $sniffed');
+    return Episode({
+      ...episode.raw,
+      'videoUrl': sniffed,
+      // 播放页作为 Referer 命中率最高（部分 CDN 校验来源页）。
+      'referer': address,
+      'currentEpisode': episode.number,
+    }, episode.number);
+  }
+
   Future<void> _play(
     int index, {
     double position = 0,
@@ -1046,13 +1119,20 @@ class _PlayerScreenState extends State<PlayerScreen>
       if (_closed || ticket != _generation) {
         return;
       }
+      // WebView 嗅探（type 0/4）只在真正要重新取流时执行：线路切换与
+      // 预加载结果都不需要，避免重复打开浏览器。嗅探较慢，放在后台解析前。
+      Episode playEpisode = widget.detail.episodes[index];
+      if (retained == null && warmed == null) {
+        playEpisode = await _prepareWebViewEpisode(playEpisode);
+        if (_closed || ticket != _generation) return;
+      }
       prepared = retained != null
           ? await _loader.fallback(retained!)
           : warmed != null
           ? await _loader.use(warmed)
           : await _loader.load(
               widget.detail.drama,
-              widget.detail.episodes[index],
+              playEpisode,
               quality: _requestedQuality,
               localOnly: widget.localOnly,
               online: _forceOnline,
