@@ -323,6 +323,9 @@ func (d *Downloader) catVodInvoke(ctx context.Context, site drpySite, invoke fun
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(site.CatLib) == "" {
+		return errors.New("该源缺少 CatVod 运行时库（lib/cat.js），请删除后重新导入")
+	}
 	libProgram, err := d.catVodLibProgram(site.CatLib)
 	if err != nil {
 		return err

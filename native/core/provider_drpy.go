@@ -115,7 +115,23 @@ func loadDrpyStore(directory string) *drpyStore {
 		if _, statErr := os.Stat(filepath.Join(directory, filepath.FromSlash(file))); statErr != nil {
 			continue
 		}
-		store.sites[key] = drpySite{Key: key, Name: name, ScriptURL: site.ScriptURL, File: file, Title: site.Title, Host: site.Host}
+		// 必须整体保留站点记录：CatVod 蜘蛛依赖 Engine / CatLib / Bindings /
+		// LibURL，字段一旦在这里丢掉，重启后站点会被当成 drpy2 处理
+		// （catVodInvoke 不再执行，蜘蛛里的 import 绑定全部缺失，
+		// 表现为「_ is not defined」）。
+		store.sites[key] = drpySite{
+			Key:       key,
+			Name:      name,
+			ScriptURL: site.ScriptURL,
+			File:      file,
+			Title:     site.Title,
+			Host:      site.Host,
+			Count:     site.Count,
+			Engine:    site.Engine,
+			CatLib:    site.CatLib,
+			Bindings:  site.Bindings,
+			LibURL:    site.LibURL,
+		}
 	}
 	return store
 }

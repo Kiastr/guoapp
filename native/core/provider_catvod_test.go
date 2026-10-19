@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +301,48 @@ func TestCatVodRealLibSample(t *testing.T) {
 	}
 	if value.Export() != "/x" {
 		t.Fatalf("cheerio 结果错误: %v", value.Export())
+	}
+}
+
+// TestCatVodStoreRoundTripKeepsEngine 回归：站点记录落盘再读回时必须保留
+// Engine / CatLib / Bindings，否则重启后 CatVod 站点退回 drpy 路径，
+// 表现为「_ is not defined」（import 绑定没人注入、lib 也没加载）。
+func TestCatVodStoreRoundTripKeepsEngine(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(directory, drpyScriptsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, drpyScriptsDir, "catkey.js"), []byte("function home(){}\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	store := newDrpyStore(directory)
+	if _, err := store.put(drpySite{
+		Key:       "catkey",
+		Name:      "视聚场",
+		File:      drpyScriptsDir + "/catkey.js",
+		Host:      "http://api.cntv.cn",
+		Engine:    catVodEngine,
+		CatLib:    "catlib/abc.js",
+		Bindings:  "_",
+		LibURL:    "https://cdn.test/cat/lib/cat.js",
+		ScriptURL: "https://cdn.test/cat/cntv_open.js",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := loadDrpyStore(directory)
+	site, ok := reloaded.get("drpy:catkey")
+	if !ok {
+		t.Fatal("站点未读回")
+	}
+	if !drpySiteIsCatVod(site) {
+		t.Fatalf("重启后丢失 CatVod 标记: %+v", site)
+	}
+	if site.CatLib != "catlib/abc.js" || site.Bindings != "_" || site.LibURL != "https://cdn.test/cat/lib/cat.js" {
+		t.Fatalf("重启后丢失 CatVod 字段: %+v", site)
+	}
+	if site.ScriptURL != "https://cdn.test/cat/cntv_open.js" || site.Host != "http://api.cntv.cn" {
+		t.Fatalf("既有字段被破坏: %+v", site)
 	}
 }
