@@ -642,6 +642,18 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 			result.HasMore = more
 			return result, nil
 		}
+		if site, ok := engine.downloader.drpySite(source); ok {
+			// drpy 脚本源走脚本的 search(wd, quick, pg)。
+			dramas, more, err := engine.downloader.fetchDrpyCatalogPage(ctx, site, 1, "", query)
+			if err != nil {
+				return result, err
+			}
+			for _, drama := range dramas {
+				result.Items = append(result.Items, nativeNormalize(drama))
+			}
+			result.HasMore = more
+			return result, nil
+		}
 		engine.mu.Lock()
 		items := append([]nativeDrama{}, engine.catalogs[source]...)
 		engine.mu.Unlock()
@@ -737,13 +749,17 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	// switch 没有匹配分支时 items/err 保持原值，不会被覆盖。
 	if site, ok := engine.downloader.libretvSite(source); ok {
 		items, result.HasMore, err = d.fetchLibreTVCatalogPage(ctx, site, page, category, query)
+	} else if site, ok := engine.downloader.drpySite(source); ok {
+		items, result.HasMore, err = d.fetchDrpyCatalogPage(ctx, site, page, category, query)
 	} else if libretvKeyFromSource(source) != "" {
 		items, err = nil, errors.New("LibreTV 片源未导入或已删除，请在站源管理重新导入")
+	} else if drpyKeyFromSource(source) != "" {
+		items, err = nil, errors.New("drpy 脚本源未导入或已删除，请在站源管理重新导入")
 	}
 	if err != nil && len(items) == 0 {
 		return result, err
 	}
-	if len(items) == 0 && page == 1 && libretvKeyFromSource(source) == "" && source != sourceHuangju && source != sourceYeguo && source != sourceDSD && source != sourceSorani && source != sourceGuipian && source != sourceHanxiaoquan {
+	if len(items) == 0 && page == 1 && libretvKeyFromSource(source) == "" && drpyKeyFromSource(source) == "" && source != sourceHuangju && source != sourceYeguo && source != sourceDSD && source != sourceSorani && source != sourceGuipian && source != sourceHanxiaoquan {
 		return result, errors.New("站源暂未返回剧集，请稍后刷新")
 	}
 	if err != nil {
@@ -792,8 +808,12 @@ func (engine *nativeEngine) nativeDetail(ctx context.Context, drama nativeDrama)
 	default:
 		if site, ok := engine.downloader.libretvSite(source); ok {
 			raw, chapters, err = engine.downloader.fetchLibreTVDetail(ctx, site, sourceID)
+		} else if site, ok := engine.downloader.drpySite(source); ok {
+			raw, chapters, err = engine.downloader.fetchDrpyDetail(ctx, site, sourceID)
 		} else if libretvKeyFromSource(source) != "" {
 			err = errors.New("LibreTV 片源未导入或已删除，请在站源管理重新导入")
+		} else if drpyKeyFromSource(source) != "" {
+			err = errors.New("drpy 脚本源未导入或已删除，请在站源管理重新导入")
 		} else {
 			title, chapters, err = engine.downloader.GetHuangguoChapters(ctx, source, sourceID)
 		}

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -411,13 +412,13 @@ func (engine *nativeEngine) importDrpyScript(ctx context.Context, raw string) (a
 	}
 	engine.downloader.drpy.invalidateProgram(key)
 	return map[string]any{
-		"key":    site.Key,
-		"name":   site.Name,
-		"title":  site.Title,
-		"host":   site.Host,
-		"file":   site.File,
-		"added":  added,
-		"total":  1,
+		"key":   site.Key,
+		"name":  site.Name,
+		"title": site.Title,
+		"host":  site.Host,
+		"file":  site.File,
+		"added": added,
+		"total": 1,
 	}, nil
 }
 
@@ -519,4 +520,228 @@ func drpyPartsFromBlob(blob string) (flag, episodeKey string, ok bool) {
 		return "", "", false
 	}
 	return flag, episodeKey, true
+}
+
+// drpySiteReferer 站点 Referer：优先 rule.host，缺省空串（由播放层兜底）。
+func drpySiteReferer(site drpySite) string {
+	host := strings.TrimSpace(site.Host)
+	if host == "" {
+		return ""
+	}
+	if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+		host = "https://" + host
+	}
+	return strings.TrimRight(host, "/") + "/"
+}
+
+// drpyDecodeMacCMS 脚本返回值 → macCMSResponse。
+// drpy 的 category/detail/search 返回 {list:[...], page, pagecount, limit, total}，
+// 字段名与 MacCMS provide/vod 一致；部分脚本不返回 code，宽松校验。
+func drpyDecodeMacCMS(raw any) (*macCMSResponse, error) {
+	if raw == nil {
+		return nil, errors.New("脚本未返回数据")
+	}
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return nil, errors.New("脚本返回数据无法解析")
+	}
+	var response macCMSResponse
+	if json.Unmarshal(body, &response) != nil {
+		return nil, errors.New("脚本返回格式不是 MacCMS 结构")
+	}
+	return &response, nil
+}
+
+// drpyHasMore 由 pagecount/limit 推断是否还有下一页。
+func drpyHasMore(response *macCMSResponse, page int) bool {
+	if pageCount, err := strconv.Atoi(nativeText(response.PageCount)); err == nil && pageCount > 0 {
+		return page < pageCount
+	}
+	limit, err := strconv.Atoi(nativeText(response.Limit))
+	if err != nil || limit <= 0 {
+		limit = 20
+	}
+	return len(response.List) >= limit
+}
+
+// fetchDrpyCatalogPage 跑 category/search 取一页列表。
+func (d *Downloader) fetchDrpyCatalogPage(ctx context.Context, site drpySite, page int, category, query string) ([]Drama, bool, error) {
+	var dramas []Drama
+	var hasMore bool
+	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
+		var raw any
+		var callErr error
+		if query != "" {
+			raw, callErr = drpyCall(vm, "search", query, 0, 1)
+		} else {
+			raw, callErr = drpyCall(vm, "category", category, page, map[string]any{}, map[string]any{})
+		}
+		if callErr != nil {
+			return callErr
+		}
+		response, decodeErr := drpyDecodeMacCMS(raw)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		source := drpySourceID(site.Key)
+		for _, row := range response.rows() {
+			if row.Name == "" {
+				continue
+			}
+			dramas = append(dramas, drpyDramaFromRow(source, row, ""))
+		}
+		hasMore = drpyHasMore(response, page)
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return dramas, hasMore, nil
+}
+
+// fetchDrpyCategories 跑 home({}) 取分类列表。
+func (d *Downloader) fetchDrpyCategories(ctx context.Context, site drpySite) ([]nativeCategory, error) {
+	var categories []nativeCategory
+	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
+		raw, callErr := drpyCall(vm, "home", map[string]any{})
+		if callErr != nil {
+			return callErr
+		}
+		response, decodeErr := drpyDecodeMacCMS(raw)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		for _, entry := range response.Class {
+			id := strings.TrimSpace(nativeText(entry.TypeID))
+			name := strings.TrimSpace(entry.TypeName)
+			if id == "" || name == "" || len([]rune(name)) > 24 {
+				continue
+			}
+			categories = append(categories, nativeCategory{ID: id, Name: name})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return categories, nil
+}
+
+// fetchDrpyDetail 跑 detail(vodId) 取剧集元数据与分集。
+// vodID 为 base64 编码串（调用方来自 splitProviderDramaID）。
+func (d *Downloader) fetchDrpyDetail(ctx context.Context, site drpySite, vodID string) (Drama, []Chapter, error) {
+	decoded, ok := drpyDecodeSegment(vodID)
+	if !ok || strings.TrimSpace(decoded) == "" {
+		return Drama{}, nil, errors.New("片源 ID 无效")
+	}
+	var drama Drama
+	var chapters []Chapter
+	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
+		raw, callErr := drpyCall(vm, "detail", decoded)
+		if callErr != nil {
+			return callErr
+		}
+		response, decodeErr := drpyDecodeMacCMS(raw)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		rows := response.rows()
+		if len(rows) == 0 {
+			return errors.New("脚本没有返回该剧的详情")
+		}
+		row := rows[0]
+		first := response.List[0]
+		source := drpySourceID(site.Key)
+		drama = drpyDramaFromRow(source, row, libretvHTMLText(first.VodContent))
+		playFrom := strings.Split(first.VodPlayFrom, "$$$")
+		playGroups := strings.Split(first.VodPlayURL, "$$$")
+		chapters = drpyChaptersFromGroups(source, decoded, drpySiteReferer(site), playFrom, playGroups)
+		return nil
+	})
+	if err != nil {
+		return Drama{}, nil, err
+	}
+	return drama, chapters, nil
+}
+
+// drpyDramaFromRow 列表行 → Drama（ID 的 vodId 段为 base64 编码）。
+func drpyDramaFromRow(source string, row macCMSListRow, content string) Drama {
+	count := episodeIndex(row.Remarks, 0)
+	return Drama{
+		ID:            providerDramaID(source, drpyEncodeSegment(row.ID)),
+		Source:        source,
+		SourceID:      drpyEncodeSegment(row.ID),
+		Title:         row.Name,
+		Name:          row.Name,
+		Cover:         row.Pic,
+		TypeName:      row.TypeName,
+		Remark:        row.Remarks,
+		Score:         row.Score,
+		Actor:         row.Actor,
+		Director:      row.Director,
+		Views:         row.Hits,
+		OnlineDate:    row.Year,
+		Episodes:      count,
+		Desc:          strings.TrimSpace(content),
+		Tags:          libretvTags(row),
+		ReleaseStatus: libretvRemarksStatus(row.Remarks),
+	}
+}
+
+// drpyChaptersFromGroups 把「播放源分组」解析成分集列表（复用 MacCMS 的
+// $$$/#/$ 分隔约定）。与 libretv 版的区别：分集 ID 编码 flag+episodeKey 的
+// blob（播放时反解喂给 play()），VideoURL 仅在地址本身就是直链时保留
+// （play() 失败时的兜底），否则留空。
+func drpyChaptersFromGroups(source, vodID, referer string, playFrom, playGroups []string) []Chapter {
+	var chapters []Chapter
+	seenEpisode := map[int]string{}
+	for playIndex, group := range playGroups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		playName := ""
+		if playIndex < len(playFrom) {
+			playName = strings.TrimSpace(playFrom[playIndex])
+		}
+		episodeIndexInGroup := 0
+		for _, entry := range strings.Split(group, "#") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			name, address, found := strings.Cut(entry, "$")
+			if !found {
+				continue
+			}
+			episodeKey := strings.TrimSpace(name)
+			if episodeKey == "" {
+				continue
+			}
+			episodeIndexInGroup++
+			title := episodeKey
+			number := episodeIndex(title, episodeIndexInGroup)
+			if previous, duplicated := seenEpisode[number]; duplicated && playName != "" && previous != playName {
+				title = fmt.Sprintf("%s·%s", title, playName)
+			}
+			seenEpisode[number] = playName
+			videoURL := ""
+			if isProviderHTTPMediaURL(strings.TrimSpace(address)) {
+				videoURL = strings.TrimSpace(address)
+			}
+			chapters = append(chapters, Chapter{
+				ID:             providerChapterID(source, drpyEncodeSegment(vodID), drpyBlobFromParts(playName, episodeKey)),
+				Source:         source,
+				Title:          title,
+				VideoURL:       videoURL,
+				CurrentEpisode: rawEpisode(number),
+				Referer:        referer,
+			})
+		}
+	}
+	if len(chapters) == 0 {
+		return nil
+	}
+	sortProviderChapters(chapters)
+	return uniqueChapters(chapters)
 }
