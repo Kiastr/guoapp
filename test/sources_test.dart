@@ -25,6 +25,7 @@ class SourceFixtureRepository extends FixtureRepository {
   final libretvImports = <String>[];
   final libretvRemovals = <String>[];
   bool libretvFail = false;
+
   /// 混合订阅里附带的 drpy 脚本候选（type≥3 .js），导入结果透传。
   List<DrpyCandidate> libretvDrpyCandidates = const [];
 
@@ -78,11 +79,7 @@ class SourceFixtureRepository extends FixtureRepository {
   Future<LibreTVImportResult> libretvImport(String subscription) async {
     if (libretvFail) throw AppFailure('配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON');
     libretvImports.add(subscription);
-    final site = LibreTVSite(
-      key: 'new456',
-      name: '新采集站',
-      api: subscription,
-    );
+    final site = LibreTVSite(key: 'new456', name: '新采集站', api: subscription);
     libretvSitesResult = [...libretvSitesResult, site];
     return LibreTVImportResult(
       added: [site],
@@ -98,6 +95,22 @@ class SourceFixtureRepository extends FixtureRepository {
     libretvSitesResult = libretvSitesResult
         .where((site) => site.key != key)
         .toList();
+  }
+
+  /// LibreTV 解析方式桩：默认「直链/嗅探」，测试可按需注入 parses。
+  LibreTVParseConfig parseConfigResult = const LibreTVParseConfig();
+  final parseSelections = <String>[];
+
+  @override
+  Future<LibreTVParseConfig> libretvParseConfig() async => parseConfigResult;
+
+  @override
+  Future<void> libretvSelectParse(String url) async {
+    parseSelections.add(url);
+    parseConfigResult = LibreTVParseConfig(
+      parses: parseConfigResult.parses,
+      selected: url,
+    );
   }
 
   /// drpy 脚本源导入桩：drpySites 返回的列表即原生核心 drpy.json 内容。
@@ -126,9 +139,7 @@ class SourceFixtureRepository extends FixtureRepository {
   @override
   Future<void> drpyRemove(String key) async {
     drpyRemovals.add(key);
-    drpySitesResult = drpySitesResult
-        .where((site) => site.key != key)
-        .toList();
+    drpySitesResult = drpySitesResult.where((site) => site.key != key).toList();
   }
 }
 
@@ -593,6 +604,58 @@ void main() {
     expect(find.text('发现 drpy 脚本候选'), findsNothing);
     expect(find.text('演示脚本源'), findsNWidgets(2));
     expect(SourceSite.isKnown('drpy:rule123'), isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
+
+  testWidgets('libretv parse selector switches the playback parser', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => SourceSite.setRuntimeSources(const []));
+    SharedPreferences.setMockInitialValues({});
+    final store = testStore(await SharedPreferences.getInstance());
+    final repository = SourceFixtureRepository()
+      ..parseConfigResult = const LibreTVParseConfig(
+        parses: [
+          LibreTVParse(
+            name: '本地脚本',
+            type: 2,
+            url: 'https://a.example.com/p.js',
+            kind: '本地脚本',
+            script: true,
+          ),
+          LibreTVParse(
+            name: 'JSON 接口',
+            type: 1,
+            url: 'https://a.example.com/api',
+            kind: 'JSON 接口',
+          ),
+        ],
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourcesScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LibreTV / 扩展片源'));
+    await tester.pumpAndSettle();
+
+    // 订阅带 parses 时展示「播放解析方式」下拉，默认直链/嗅探。
+    expect(find.text('播放解析方式'), findsOneWidget);
+    expect(find.textContaining('直链 / 嗅探'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('libretv-parse-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('本地脚本 · 本地脚本').last);
+    await tester.pumpAndSettle();
+
+    expect(repository.parseSelections, ['https://a.example.com/p.js']);
+    expect(find.textContaining('解析方式已切换为「本地脚本」'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });

@@ -79,7 +79,7 @@ func TestLibreTVParseSubscriptionConfig(t *testing.T) {
  {"name":"无键站点","type":1,"api":"https://other.example.com/api.php/provide/vod"},
  {"name":"重复站点","type":1,"api":"https://api.dsd.com/provide/vod/"}
  ]}`
-	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, _, skipped, err := parseLibreTVSubscription(body)
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -105,14 +105,14 @@ func TestLibreTVParseSubscriptionConfig(t *testing.T) {
 }
 
 func TestLibreTVParseSubscriptionRejectsGarbage(t *testing.T) {
-	if _, _, _, err := parseLibreTVSubscription("not a config at all"); err == nil {
+	if _, _, _, _, err := parseLibreTVSubscription("not a config at all"); err == nil {
 		t.Fatal("非配置内容应当报错")
 	}
-	if _, _, _, err := parseLibreTVSubscription(`{"sites":[]}`); err == nil {
+	if _, _, _, _, err := parseLibreTVSubscription(`{"sites":[]}`); err == nil {
 		t.Fatal("空 sites 应当报错")
 	}
 	// 仅有 type=3 的 .js 脚本源：不算失败，返回 drpy 候选由用户确认导入。
-	_, drpyCandidates, skipped, err := parseLibreTVSubscription(`{"sites":[{"key":"x","name":"x","type":3,"api":"https://a.com/x.js"}]}`)
+	_, drpyCandidates, _, skipped, err := parseLibreTVSubscription(`{"sites":[{"key":"x","name":"x","type":3,"api":"https://a.com/x.js"}]}`)
 	if err != nil {
 		t.Fatalf("仅有 drpy 候选时不应报错: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestLibreTVParseSubscriptionMixedDrpyCandidates(t *testing.T) {
  {"key":"dup","name":"重复脚本","type":3,"api":"https://example.com/drpy.js"},
  {"key":"bad","name":"非脚本","type":3,"api":"https://api.b.com/provide/vod"}
  ]}`
-	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, _, skipped, err := parseLibreTVSubscription(body)
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}

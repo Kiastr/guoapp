@@ -69,6 +69,65 @@ func libretvNormalizeSiteType(siteType int) int {
 	return 1
 }
 
+// libretvParse 订阅 parses 数组里的一条解析规则。
+//
+// Type 沿用 TVBox 约定：0 = 嗅探（内置 WebView，桌面端不可用）、
+// 1 = JSON 解析接口（需要第三方后端，我方按「可选项」支持）。
+// 本项目扩展：Type == 2 且 URL 以 .js 结尾 = 本地脚本解析，
+// 由 goja 执行脚本里的 parse(url)，**不是 TVBox 标准语义**，
+// 标准配置里的 type=2 聚合解析不会被当成脚本。
+type libretvParse struct {
+	Name string `json:"name"`
+	Type int    `json:"type"`
+	URL  string `json:"url"`
+	// Ext 原样保留订阅里的 ext（对象/数组），仅存档展示，不参与执行。
+	Ext json.RawMessage `json:"ext,omitempty"`
+}
+
+// libretvParseKind 返回解析方式的中文类型名（UI 展示用）。
+func libretvParseKind(parse libretvParse) string {
+	switch {
+	case libretvParseIsScript(parse):
+		return "本地脚本"
+	case parse.Type == 1:
+		return "JSON 接口"
+	default:
+		return "嗅探"
+	}
+}
+
+// libretvParseIsScript 判断是否为「本地解析脚本」扩展类型：
+// type=2 且 url 是 http(s) 的 .js 地址。
+func libretvParseIsScript(parse libretvParse) bool {
+	if parse.Type != 2 {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(parse.URL))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsed.Path), ".js")
+}
+
+// normalizeLibreTVParse 归一化订阅里的 parses 条目；返回 false 表示不可用
+// （内嵌 WebView 嗅探、相对地址、空地址等）。
+func normalizeLibreTVParse(raw libretvParse) (libretvParse, bool) {
+	address := strings.TrimSpace(raw.URL)
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return libretvParse{}, false
+	}
+	name := strings.TrimSpace(raw.Name)
+	if name == "" {
+		name = parsed.Host
+	}
+	parseType := raw.Type
+	if parseType < 0 {
+		parseType = 0
+	}
+	return libretvParse{Name: name, Type: parseType, URL: address, Ext: raw.Ext}, true
+}
+
 // looksLikeLibreTVXMLAPI 由接口地址判断是否更像 XML 采集接口。
 // 苹果CMS 的 XML 版本通常写成 /at/xml/ 路径或带 at=xml / ac=xml 参数。
 func looksLikeLibreTVXMLAPI(raw string) bool {
@@ -83,10 +142,19 @@ type libretvStore struct {
 	directory string
 	mu        chan struct{}
 	sites     map[string]libretvSite
+	// parses 订阅里的解析规则（按 URL 去重）。
+	parses map[string]libretvParse
+	// parseURL 当前选中的解析方式；空 = 直链/嗅探。
+	parseURL string
 }
 
 func newLibreTVStore(directory string) *libretvStore {
-	return &libretvStore{directory: directory, mu: make(chan struct{}, 1), sites: map[string]libretvSite{}}
+	return &libretvStore{
+		directory: directory,
+		mu:        make(chan struct{}, 1),
+		sites:     map[string]libretvSite{},
+		parses:    map[string]libretvParse{},
+	}
 }
 
 // loadLibreTVStore 从引擎目录读取已保存的订阅；文件缺失或损坏时返回空表。
@@ -97,7 +165,9 @@ func loadLibreTVStore(directory string) *libretvStore {
 		return store
 	}
 	var payload struct {
-		Sites []libretvSite `json:"sites"`
+		Sites    []libretvSite  `json:"sites"`
+		Parses   []libretvParse `json:"parses"`
+		ParseURL string         `json:"parseUrl"`
 	}
 	if json.Unmarshal(body, &payload) != nil {
 		return store
@@ -106,6 +176,15 @@ func loadLibreTVStore(directory string) *libretvStore {
 		if key, name, api, ok := normalizeLibreTVSite(site.Key, site.Name, site.API, site.Type); ok {
 			store.sites[key] = libretvSite{Key: key, Name: name, API: api, Type: libretvNormalizeSiteType(site.Type)}
 		}
+	}
+	for _, parse := range payload.Parses {
+		if normalized, ok := normalizeLibreTVParse(parse); ok {
+			store.parses[normalized.URL] = normalized
+		}
+	}
+	// 选择已失效（对应解析被新订阅覆盖掉）时回到直链/嗅探。
+	if _, ok := store.parses[strings.TrimSpace(payload.ParseURL)]; ok {
+		store.parseURL = strings.TrimSpace(payload.ParseURL)
 	}
 	return store
 }
@@ -118,10 +197,23 @@ func (store *libretvStore) saveLocked() error {
 	}
 	sort.Strings(keys)
 	payload := struct {
-		Sites []libretvSite `json:"sites"`
-	}{Sites: make([]libretvSite, 0, len(keys))}
+		Sites    []libretvSite  `json:"sites"`
+		Parses   []libretvParse `json:"parses,omitempty"`
+		ParseURL string         `json:"parseUrl,omitempty"`
+	}{
+		Sites:    make([]libretvSite, 0, len(keys)),
+		ParseURL: store.parseURL,
+	}
 	for _, key := range keys {
 		payload.Sites = append(payload.Sites, store.sites[key])
+	}
+	urls := make([]string, 0, len(store.parses))
+	for address := range store.parses {
+		urls = append(urls, address)
+	}
+	sort.Strings(urls)
+	for _, address := range urls {
+		payload.Parses = append(payload.Parses, store.parses[address])
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -187,6 +279,84 @@ func (d *Downloader) libretvSite(source string) (libretvSite, bool) {
 		return libretvSite{}, false
 	}
 	return d.libretv.get(source)
+}
+
+// putParses 合并订阅里的解析规则（按 URL 去重，新条目覆盖旧条目）并落盘。
+func (store *libretvStore) putParses(parses []libretvParse) error {
+	if len(parses) == 0 {
+		return nil
+	}
+	store.lock()
+	defer store.unlock()
+	for _, parse := range parses {
+		normalized, ok := normalizeLibreTVParse(parse)
+		if !ok {
+			continue
+		}
+		store.parses[normalized.URL] = normalized
+	}
+	return store.saveLocked()
+}
+
+// listParses 返回全部解析规则（按名称 + URL 排序，输出稳定）。
+func (store *libretvStore) listParses() []libretvParse {
+	store.lock()
+	items := make([]libretvParse, 0, len(store.parses))
+	for _, parse := range store.parses {
+		items = append(items, parse)
+	}
+	store.unlock()
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Name != items[j].Name {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].URL < items[j].URL
+	})
+	return items
+}
+
+// selectedParse 返回当前选中的解析方式；空 URL 表示直链/嗅探。
+func (store *libretvStore) selectedParse() (libretvParse, bool) {
+	store.lock()
+	defer store.unlock()
+	if store.parseURL == "" {
+		return libretvParse{}, false
+	}
+	parse, ok := store.parses[store.parseURL]
+	return parse, ok
+}
+
+// selectedParseURL 返回当前选中的解析 URL（空 = 直链/嗅探）。
+func (store *libretvStore) selectedParseURL() string {
+	store.lock()
+	defer store.unlock()
+	return store.parseURL
+}
+
+// setSelectedParse 持久化解析方式选择；空串 = 直链/嗅探。
+// 选择不存在的解析时返回错误，避免 UI 与存储状态漂移。
+func (store *libretvStore) setSelectedParse(address string) error {
+	address = strings.TrimSpace(address)
+	store.lock()
+	defer store.unlock()
+	if address != "" {
+		if _, ok := store.parses[address]; !ok {
+			return errors.New("该解析方式不在已导入的订阅里，请重新导入订阅")
+		}
+	}
+	if store.parseURL == address {
+		return nil
+	}
+	store.parseURL = address
+	return store.saveLocked()
+}
+
+// Downloader 便捷方法：当前选中的解析方式。
+func (d *Downloader) libretvSelectedParse() (libretvParse, bool) {
+	if d.libretv == nil {
+		return libretvParse{}, false
+	}
+	return d.libretv.selectedParse()
 }
 
 // libretvKeyFromSource 从完整源 ID 取出站点 key；不是 libretv 源时返回空串。
@@ -301,23 +471,40 @@ func looksLikeDrpyScriptURL(raw string) bool {
 }
 
 // parseLibreTVSubscription 解析 LibreTV 订阅配置，返回可导入站点、drpy
-// 脚本候选与被跳过原因。type≥3 且 api 是 .js 脚本地址的收成 drpy 候选
-// （用户在站源管理一键导入）；type≥3 的非脚本地址（csp_ 规则等）与历史
-// 行为一致带原因跳过；type=0/1/缺省按 JSON 采集接口导入，type=2 按 XML
-// 采集接口导入（TVBox 的苹果CMS XML 版本）。
-func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates []drpyCandidate, skipped []string, err error) {
+// 脚本候选、解析规则（parses）与被跳过原因。type≥3 且 api 是 .js 脚本
+// 地址的收成 drpy 候选（用户在站源管理一键导入）；type≥3 的非脚本地址
+// （csp_ 规则等）与历史行为一致带原因跳过；type=0/1/缺省按 JSON 采集接口
+// 导入，type=2 按 XML 采集接口导入（TVBox 的苹果CMS XML 版本）。
+func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates []drpyCandidate, parses []libretvParse, skipped []string, err error) {
 	document := libretvExtractJSONObject(body)
 	if document == "" {
-		return nil, nil, nil, errors.New("未找到有效的 LibreTV 配置（需要包含 sites 的 JSON）")
+		return nil, nil, nil, nil, errors.New("未找到有效的 LibreTV 配置（需要包含 sites 的 JSON）")
 	}
 	var config struct {
-		Sites []libretvConfigSite `json:"sites"`
+		Sites  []libretvConfigSite `json:"sites"`
+		Parses []libretvParse      `json:"parses"`
 	}
 	if json.Unmarshal([]byte(document), &config) != nil {
-		return nil, nil, nil, errors.New("配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON")
+		return nil, nil, nil, nil, errors.New("配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON")
 	}
-	if len(config.Sites) == 0 {
-		return nil, nil, nil, errors.New("配置里没有 sites 条目")
+	// parses 与 sites 相互独立：只带解析规则的订阅也可以导入（解析方式本身
+	// 对已导入的站点同样生效）。
+	seenParse := map[string]bool{}
+	for _, raw := range config.Parses {
+		parse, ok := normalizeLibreTVParse(raw)
+		if !ok {
+			// TVBox 内置 WebView 嗅探（url 是 "Web" 之类的标记）在纯 Go 端
+			// 无法执行，静默跳过——不打断导入，也不误导用户。
+			continue
+		}
+		if seenParse[parse.URL] {
+			continue
+		}
+		seenParse[parse.URL] = true
+		parses = append(parses, parse)
+	}
+	if len(config.Sites) == 0 && len(parses) == 0 {
+		return nil, nil, nil, nil, errors.New("配置里没有 sites 条目")
 	}
 	seenAPI := map[string]bool{}
 	usedKey := map[string]bool{}
@@ -358,11 +545,11 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates 
 			break
 		}
 	}
-	// 只有 drpy 候选时不算失败：用户可一键导入脚本源。
-	if len(sites) == 0 && len(drpyCandidates) == 0 {
-		return nil, nil, skipped, errors.New("配置里没有可导入的采集接口站点")
+	// 只有 drpy 候选 / 解析规则时不算失败：用户可一键导入脚本源或直接用解析。
+	if len(sites) == 0 && len(drpyCandidates) == 0 && len(parses) == 0 {
+		return nil, nil, nil, skipped, errors.New("配置里没有可导入的采集接口站点")
 	}
-	return sites, drpyCandidates, skipped, nil
+	return sites, drpyCandidates, parses, skipped, nil
 }
 
 // looksLikeMacCMSAPI 判断裸地址是否像 MacCMS 采集接口（用于配置解析失败的兜底）。
@@ -395,16 +582,16 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 	} else {
 		body = text
 	}
-	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, parses, skipped, err := parseLibreTVSubscription(body)
 	if err != nil && looksLikeLibreTVBase58(body) {
 		// 社区配置工具（LunaTV-config 等）的 Base58 订阅：format=2 是原始 JSON、
 		// format=3 是带代理前缀的 JSON，解码后复用同一套解析，客户端不需要
 		// 实时解析 type≥3 脚本，也不需要自建后端。
 		if decoded, decodeErr := libretvBase58Decode(body); decodeErr == nil {
-			decodedSites, decodedDrpy, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded))
+			decodedSites, decodedDrpy, decodedParses, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded))
 			// 部分站点不可用时也保留跳过原因（例如配置里混了 drpy 源）。
 			if decodedErr == nil || len(decodedSkipped) > 0 {
-				sites, drpyCandidates, skipped, err = decodedSites, decodedDrpy, decodedSkipped, decodedErr
+				sites, drpyCandidates, parses, skipped, err = decodedSites, decodedDrpy, decodedParses, decodedSkipped, decodedErr
 			}
 		}
 	}
@@ -425,6 +612,10 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 		}
 	}
 	store := d.libretv
+	// 解析规则先入库：即使本次没有新站点，用户也能在站源管理里选择解析方式。
+	if err := store.putParses(parses); err != nil {
+		skipped = append(skipped, fmt.Sprintf("解析规则保存失败（%s）", publicError(err)))
+	}
 	added := make([]map[string]any, 0, len(sites))
 	verified := 0
 	budget := libretvProbeBudget
@@ -459,12 +650,23 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 	for _, candidate := range drpyCandidates {
 		drpy = append(drpy, map[string]any{"name": candidate.Name, "api": candidate.API})
 	}
+	// 解析规则已入库；这里同样回传一份，导入结果对话框可直接展示。
+	importedParses := make([]map[string]any, 0, len(parses))
+	for _, parse := range parses {
+		importedParses = append(importedParses, map[string]any{
+			"name": parse.Name,
+			"type": parse.Type,
+			"url":  parse.URL,
+			"kind": libretvParseKind(parse),
+		})
+	}
 	return map[string]any{
 		"added":    added,
 		"skipped":  skipped,
 		"verified": verified,
 		"total":    len(added),
 		"drpy":     drpy,
+		"parses":   importedParses,
 	}, nil
 }
 
@@ -544,6 +746,38 @@ func (engine *nativeEngine) libretvSiteList() []map[string]any {
 		})
 	}
 	return out
+}
+
+// libretvParseConfig 供 libretvParseConfig 操作返回：已导入的解析方式列表
+// 与当前选择。cached 表示本地脚本是否已缓存（远程脚本首次使用才下载）。
+func (engine *nativeEngine) libretvParseConfig() map[string]any {
+	store := engine.downloader.libretv
+	items := store.listParses()
+	out := make([]map[string]any, 0, len(items))
+	for _, parse := range items {
+		cached := false
+		if libretvParseIsScript(parse) {
+			_, err := os.Stat(filepath.Join(engine.directory, libretvParseScriptFile(parse)))
+			cached = err == nil
+		}
+		out = append(out, map[string]any{
+			"name":   parse.Name,
+			"type":   parse.Type,
+			"url":    parse.URL,
+			"kind":   libretvParseKind(parse),
+			"script": libretvParseIsScript(parse),
+			"cached": cached,
+		})
+	}
+	return map[string]any{"parses": out, "selected": store.selectedParseURL()}
+}
+
+// libretvSetParse 切换解析方式；空 URL = 直链/嗅探。
+func (engine *nativeEngine) libretvSetParse(address string) (map[string]any, error) {
+	if err := engine.downloader.libretv.setSelectedParse(address); err != nil {
+		return nil, err
+	}
+	return map[string]any{"selected": engine.downloader.libretv.selectedParseURL()}, nil
 }
 
 // macCMSResponse MacCMS provide/vod 通用响应信封。
@@ -926,10 +1160,7 @@ func (d *Downloader) fetchLibreTVDetail(ctx context.Context, site libretvSite, v
 	source := libretvSourceID(site.Key)
 	first := response.List[0]
 	drama := libretvDramaFromRow(source, row, libretvHTMLText(first.VodContent))
-	referer := site.API
-	if parsed, err := url.Parse(site.API); err == nil {
-		referer = parsed.Scheme + "://" + parsed.Host + "/"
-	}
+	referer := firstNonEmpty(libretvSiteReferer(site), site.API)
 	playFrom := strings.Split(first.VodPlayFrom, "$$$")
 	playGroups := strings.Split(first.VodPlayURL, "$$$")
 	return drama, libretvChaptersFromGroups(source, vodID, referer, playFrom, playGroups), nil

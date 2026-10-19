@@ -44,10 +44,15 @@ class _SourcesScreenState extends State<SourcesScreen> {
   Timer? _timer;
   bool _polling = false;
   int _ticks = 0;
+
   /// 已导入的 LibreTV 站点（来自原生核心 libretv.json，含目录缓存计数）。
   List<LibreTVSite> _libretvSites = const [];
+
   /// 已导入的 drpy 脚本源（来自原生核心 drpy.json + scripts/）。
   List<DrpySite> _drpySites = const [];
+
+  /// LibreTV 解析方式（订阅 parses + 当前选择）。
+  LibreTVParseConfig _parseConfig = const LibreTVParseConfig();
   bool _libretvBusy = false;
 
   @override
@@ -115,6 +120,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     if (!widget.repository.supportsSourceManagement) return;
     var sites = _libretvSites;
     var scripts = _drpySites;
+    var parseConfig = _parseConfig;
     try {
       final fetched = await widget.repository.libretvSites();
       if (!mounted || epoch != widget.store.profileEpoch) return;
@@ -129,6 +135,13 @@ class _SourcesScreenState extends State<SourcesScreen> {
     } catch (_) {
       // 旧版核心没有 drpy 动作时静默跳过，LibreTV 片源不受影响。
     }
+    try {
+      final fetched = await widget.repository.libretvParseConfig();
+      if (!mounted || epoch != widget.store.profileEpoch) return;
+      parseConfig = fetched;
+    } catch (_) {
+      // 旧版核心没有解析方式动作时静默跳过，按「直链/嗅探」展示。
+    }
     final keys = {
       for (final site in sites) site.sourceId,
       for (final script in scripts) script.sourceId,
@@ -137,7 +150,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
       for (final site in _libretvSites) site.sourceId,
       for (final script in _drpySites) script.sourceId,
     };
-    final changed = keys.length != previous.length ||
+    final changed =
+        keys.length != previous.length ||
         keys.any((key) => !previous.contains(key));
     SourceSite.setRuntimeSources([
       for (final site in sites) site.toSourceSite(),
@@ -146,6 +160,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     setState(() {
       _libretvSites = sites;
       _drpySites = scripts;
+      _parseConfig = parseConfig;
     });
     // 注册表发生变化才广播，避免每 10 秒轮询都惊动首页刷新。
     if (changed) widget.store.notifySourceRegistryChanged();
@@ -323,21 +338,56 @@ class _SourcesScreenState extends State<SourcesScreen> {
               ),
             ),
           ),
+          if (_parseConfig.parses.isNotEmpty) ...[
+            const Divider(height: 24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('播放解析方式', style: theme.textTheme.titleSmall),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              key: const ValueKey('libretv-parse-select'),
+              initialValue: _parseConfig.selected,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperMaxLines: 3,
+                helperText:
+                    '默认「直链/嗅探」不需要后端：直链直接播，播放页会尝试从网页里嗅探视频地址。'
+                    '「JSON 接口」依赖第三方解析服务；「本地脚本」在本机执行，无后端。'
+                    '仅对非直链播放页生效，直链采集源不受影响。',
+              ),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('直链 / 嗅探（默认）')),
+                for (final parse in _parseConfig.parses)
+                  DropdownMenuItem(
+                    value: parse.url,
+                    child: Text(
+                      '${parse.name} · ${parse.kind}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: supported && !_libretvBusy ? _selectParse : null,
+            ),
+            const SizedBox(height: 8),
+          ],
           if (sites.isNotEmpty) ...[
             const Divider(height: 24),
             Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                'LibreTV 片源',
-                style: theme.textTheme.titleSmall,
-              ),
+              child: Text('LibreTV 片源', style: theme.textTheme.titleSmall),
             ),
             for (final site in sites)
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.subscriptions_outlined),
                 title: Text(site.name),
-                subtitle: Text('${site.api}\n${site.typeLabel} · ${site.count} 部'),
+                subtitle: Text(
+                  '${site.api}\n${site.typeLabel} · ${site.count} 部',
+                ),
                 isThreeLine: true,
                 trailing: IconButton(
                   tooltip: '删除${site.name}',
@@ -350,10 +400,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
             const Divider(height: 24),
             Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                'drpy 脚本源',
-                style: theme.textTheme.titleSmall,
-              ),
+              child: Text('drpy 脚本源', style: theme.textTheme.titleSmall),
             ),
             for (final script in scripts)
               ListTile(
@@ -412,6 +459,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
       final skipped = result.skipped;
       final summary = StringBuffer('新增 ${result.added.length} 个片源');
       summary.write(' · 已验证 ${result.verified} 个');
+      if (result.parses.isNotEmpty) {
+        summary.write(' · ${result.parses.length} 种解析方式');
+      }
       if (skipped.isNotEmpty) {
         final preview = skipped.take(2).join('、');
         summary.write(
@@ -444,6 +494,14 @@ class _SourcesScreenState extends State<SourcesScreen> {
       } catch (_) {
         // 计数校正失败不影响导入结果，下次轮询会补齐。
       }
+      // 订阅里可能带新的解析规则：刷新一次，让下拉框立即可选。
+      try {
+        final parseConfig = await widget.repository.libretvParseConfig();
+        if (!mounted) return;
+        setState(() => _parseConfig = parseConfig);
+      } catch (_) {
+        // 旧版核心没有该动作时静默跳过。
+      }
     } catch (error) {
       if (mounted) {
         setState(() => _libretvBusy = false);
@@ -465,6 +523,38 @@ class _SourcesScreenState extends State<SourcesScreen> {
       return true;
     }
     return false;
+  }
+
+  /// 切换 LibreTV 解析方式；空串 = 直链/嗅探。
+  Future<void> _selectParse(String? url) async {
+    if (url == null || _libretvBusy) return;
+    if (url == _parseConfig.selected) return;
+    setState(() => _libretvBusy = true);
+    try {
+      await widget.repository.libretvSelectParse(url);
+      final config = await widget.repository.libretvParseConfig();
+      if (!mounted) return;
+      setState(() {
+        _parseConfig = config;
+        _libretvBusy = false;
+      });
+      var label = url.isEmpty ? '直链 / 嗅探' : '所选解析';
+      for (final parse in _parseConfig.parses) {
+        if (parse.url == url) {
+          label = parse.name;
+          break;
+        }
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('解析方式已切换为「$label」')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _libretvBusy = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('切换解析方式失败：$error')));
+    }
   }
 
   /// 导入 drpy 脚本源：导入成功即刷新列表与运行时注册表。
@@ -891,8 +981,7 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
         child: const Text('取消'),
       ),
       FilledButton(
-        onPressed: () =>
-            Navigator.pop(context, _controller.text.trim()),
+        onPressed: () => Navigator.pop(context, _controller.text.trim()),
         child: const Text('导入'),
       ),
     ],
@@ -908,6 +997,7 @@ class _DrpyCandidatesDialog extends StatefulWidget {
   });
 
   final List<DrpyCandidate> candidates;
+
   /// 导入单个候选（由外部复用 drpy 导入链路，含列表刷新与提示）。
   final Future<void> Function(DrpyCandidate candidate) onImport;
 
@@ -968,10 +1058,9 @@ class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final pending =
-        widget.candidates
-            .where((candidate) => !_imported.contains(candidate.api))
-            .length;
+    final pending = widget.candidates
+        .where((candidate) => !_imported.contains(candidate.api))
+        .length;
     return AlertDialog(
       title: const Text('发现 drpy 脚本候选'),
       content: SizedBox(
@@ -988,9 +1077,7 @@ class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
               const SizedBox(height: 8),
               Text(
                 _error!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
             const SizedBox(height: 8),

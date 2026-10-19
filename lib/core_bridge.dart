@@ -83,6 +83,7 @@ abstract class AppRepository {
   Future<ResourceSettings> saveResourceSettings(
     ResourceSettings settings,
   ) async => throw AppFailure('当前环境不支持资源设置');
+
   final catalogUpdates = CatalogUpdates();
   Future<void> cancelPreload() async {}
   Future<PlaybackPlan?> preload(
@@ -127,18 +128,31 @@ abstract class AppRepository {
   }) async => throw AppFailure('当前环境不支持站源管理');
   Future<SourceStatus> cancelSourceJob(String source) async =>
       throw AppFailure('当前环境不支持站源管理');
+
   /// LibreTV 片源：列出已导入站点（启动时同步到 SourceSite 运行时注册表）。
   Future<List<LibreTVSite>> libretvSites() async => const [];
+
   /// 导入 LibreTV 订阅：输入片源链接、配置 JSON 或裸 provide/vod 地址。
   Future<LibreTVImportResult> libretvImport(String subscription) async =>
       throw AppFailure('当前环境不支持导入 LibreTV 片源');
+
   /// 删除已导入的 LibreTV 站点（连同其目录缓存）。
   Future<void> libretvRemove(String key) async {}
+
+  /// LibreTV 解析方式：已导入的 parses 与当前选择（空 = 直链/嗅探）。
+  Future<LibreTVParseConfig> libretvParseConfig() async =>
+      const LibreTVParseConfig();
+
+  /// 切换 LibreTV 解析方式；url 为空串表示「直链/嗅探」。
+  Future<void> libretvSelectParse(String url) async {}
+
   /// drpy 脚本源：列出已导入脚本（启动时同步到 SourceSite 运行时注册表）。
   Future<List<DrpySite>> drpySites() async => const [];
+
   /// 导入 drpy 脚本源：输入 JS 文本（含 var rule）或脚本 URL。
   Future<DrpyImportResult> drpyImport(String script) async =>
       throw AppFailure('当前环境不支持导入 drpy 脚本源');
+
   /// 删除已导入的 drpy 脚本源（连同其目录缓存）。
   Future<void> drpyRemove(String key) async {}
   Future<List<String>> suggestions(String query) async => const [];
@@ -505,6 +519,18 @@ class NativeRepository extends AppRepository {
   Future<void> libretvRemove(String key) async {
     _adminPermission('仅管理员可删除 LibreTV 片源');
     await _call({'action': 'libretvRemove', 'libretvKey': key});
+  }
+
+  @override
+  Future<LibreTVParseConfig> libretvParseConfig() async =>
+      LibreTVParseConfig.fromJson(
+        await _call({'action': 'libretvParseConfig'}),
+      );
+
+  @override
+  Future<void> libretvSelectParse(String url) async {
+    _adminPermission('仅管理员可调整解析方式');
+    await _call({'action': 'libretvSelectParse', 'parseUrl': url});
   }
 
   @override

@@ -125,6 +125,8 @@ type nativeInput struct {
 	Quality          int                     `json:"quality"`
 	Subscription string `json:"subscription"`
 	LibreTVKey   string `json:"libretvKey"`
+	// ParseURL 选择 LibreTV 解析方式（parses 里的 url）；空 = 直链/嗅探。
+	ParseURL string `json:"parseUrl"`
 	// drpy 脚本源：subscription 复用为 JS 文本或脚本 URL；drpyKey 为删除时的 key。
 	DrpyKey string `json:"drpyKey"`
 	// Route 期望的起始线路（线路记忆用；越界或不存在时回落到 0）。
@@ -482,6 +484,10 @@ func nativeDispatch(input nativeInput) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"removed": input.LibreTVKey}, nil
+	case "libretvParseConfig":
+		return engine.libretvParseConfig(), nil
+	case "libretvSelectParse":
+		return engine.libretvSetParse(input.ParseURL)
 	case "drpySites":
 		return map[string]any{"sites": engine.drpySiteList()}, nil
 	case "drpyImport":
