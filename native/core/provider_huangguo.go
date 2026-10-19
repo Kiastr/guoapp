@@ -198,6 +198,12 @@ func mergeDramaMetadata(base, extra Drama) Drama {
 	if strings.TrimSpace(base.Score) == "" {
 		base.Score = extra.Score
 	}
+	if strings.TrimSpace(base.Actor) == "" {
+		base.Actor = extra.Actor
+	}
+	if strings.TrimSpace(base.Director) == "" {
+		base.Director = extra.Director
+	}
 	if strings.TrimSpace(base.Views) == "" {
 		base.Views = extra.Views
 	}

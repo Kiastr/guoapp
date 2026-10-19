@@ -46,6 +46,8 @@ type Drama struct {
 	SortNameSnake     string             `json:"sort_name"`
 	Remark            string             `json:"remark,omitempty"`
 	Score             string             `json:"score,omitempty"`
+	Actor             string             `json:"actor,omitempty"`
+	Director          string             `json:"director,omitempty"`
 	Views             string             `json:"views,omitempty"`
 	Heat              string             `json:"heat,omitempty"`
 	OnlineDate        string             `json:"onlineDate,omitempty"`

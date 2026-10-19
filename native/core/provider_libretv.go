@@ -489,6 +489,9 @@ type macCMSResponse struct {
 		VodArea     string `json:"vod_area"`
 		VodLang     string `json:"vod_lang"`
 		VodHits     any    `json:"vod_hits"`
+		VodScore    any    `json:"vod_score"`
+		VodActor    string `json:"vod_actor"`
+		VodDirector string `json:"vod_director"`
 		VodContent  string `json:"vod_content"`
 		VodPlayFrom string `json:"vod_play_from"`
 		VodPlayURL  string `json:"vod_play_url"`
@@ -511,6 +514,38 @@ type macCMSListRow struct {
 	Area     string
 	Lang     string
 	Hits     string
+	Score    string
+	Actor    string
+	Director string
+}
+
+// libretvScoreText 评分归一化：MacCMS 的 vod_score 有的站返回数字、有的返回字符串。
+// 不能复用 nativeText——它对 float64 走 strconv.Itoa(int(v)) 截断，8.6 会变成 "8"。
+// 0 / 0.0 视为「未评分」返回空串，避免详情页显示「0 分」这种占位。
+func libretvScoreText(value any) string {
+	text := ""
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		text = strings.TrimSpace(v)
+	case json.Number:
+		text = strings.TrimSpace(string(v))
+	case float64:
+		// 'f' + -1 精度：8.6 → "8.6"，8 → "8"，不产生多余尾零。
+		text = strconv.FormatFloat(v, 'f', -1, 64)
+	case int:
+		text = strconv.Itoa(v)
+	case int64:
+		text = strconv.FormatInt(v, 10)
+	default:
+		text = strings.TrimSpace(nativeText(value))
+	}
+	switch text {
+	case "", "0", "0.0", "0.00", "<nil>":
+		return ""
+	}
+	return text
 }
 
 func (response *macCMSResponse) rows() []macCMSListRow {
@@ -530,6 +565,9 @@ func (response *macCMSResponse) rows() []macCMSListRow {
 			Area:     strings.TrimSpace(row.VodArea),
 			Lang:     strings.TrimSpace(row.VodLang),
 			Hits:     strings.TrimSpace(nativeText(row.VodHits)),
+			Score:    libretvScoreText(row.VodScore),
+			Actor:    strings.TrimSpace(row.VodActor),
+			Director: strings.TrimSpace(row.VodDirector),
 		})
 	}
 	return out
@@ -602,6 +640,9 @@ func libretvDramaFromRow(source string, row macCMSListRow, content string) Drama
 		Cover:         row.Pic,
 		TypeName:      row.TypeName,
 		Remark:        row.Remarks,
+		Score:         row.Score,
+		Actor:         row.Actor,
+		Director:      row.Director,
 		Views:         row.Hits,
 		OnlineDate:    row.Year,
 		Episodes:      count,

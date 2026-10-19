@@ -639,9 +639,23 @@ class _DetailScreenState extends State<DetailScreen> {
     return ((width - 40) / minimum).floor().clamp(1, 12);
   }
 
+  // MacCMS 的 vod_actor / vod_director 用逗号分隔多人，中英文逗号、顿号、
+  // 斜杠都见过（如「张三,李四」「张三，李四」），统一渲染成中文顿号。
+  // 全部切分后为空时回退原文，避免出现「主演：」这种空壳。
+  String _creditText(String raw) {
+    final names = raw
+        .split(RegExp(r'[,，、/]'))
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .join('、');
+    return names.isEmpty ? raw.trim() : names;
+  }
+
   Widget _overview(Drama drama) {
     final colors = Theme.of(context).colorScheme;
     final meta = [
+      // 评分放在信息行最前面，没有评分的源不会出现占位。
+      if (drama.score.isNotEmpty) '★ ${drama.score}',
       SourceSite.byId(drama.source).name,
       if (drama.episodes > 0) '共 ${drama.episodes} 集',
       if (drama.releaseStatus.isNotEmpty && drama.releaseStatus != 'unknown')
@@ -716,6 +730,37 @@ class _DetailScreenState extends State<DetailScreen> {
                 if (drama.views.isNotEmpty) '播放 ${drama.views}',
               ].join(' · '),
               style: TextStyle(color: colors.onSurfaceVariant, fontSize: 12),
+            ),
+          ),
+        if (drama.actor.isNotEmpty || drama.director.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (drama.actor.isNotEmpty)
+                  Text(
+                    '主演：${_creditText(drama.actor)}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.onSurfaceVariant,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                if (drama.director.isNotEmpty)
+                  Text(
+                    '导演：${_creditText(drama.director)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.onSurfaceVariant,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+              ],
             ),
           ),
         if (drama.tags.isNotEmpty)

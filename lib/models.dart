@@ -157,6 +157,9 @@ class Drama {
     this.episodes = 0,
     this.category = '',
     bool? vip,
+    this.score = '',
+    this.actor = '',
+    this.director = '',
     this.heat = '',
     this.views = '',
     this.onlineDate = '',
@@ -173,6 +176,9 @@ class Drama {
   final String category;
   final bool? vipStatus;
   bool get vip => vipStatus == true;
+  final String score;
+  final String actor;
+  final String director;
   final String heat;
   final String views;
   final String onlineDate;
@@ -201,6 +207,10 @@ class Drama {
         ? false
         : null,
     heat: json['heat']?.toString() ?? '',
+    // score 在个别源里是数字，统一转字符串；旧备份没有这些键，缺省空串。
+    score: json['score']?.toString() ?? '',
+    actor: json['actor']?.toString() ?? '',
+    director: json['director']?.toString() ?? '',
     views: json['views']?.toString() ?? '',
     onlineDate: json['onlineDate'] as String? ?? '',
     tags: (json['tags'] as List? ?? const []).whereType<String>().toList(),
@@ -218,6 +228,9 @@ class Drama {
     'category': category,
     'vip': vipStatus,
     'heat': heat,
+    'score': score,
+    'actor': actor,
+    'director': director,
     'views': views,
     'onlineDate': onlineDate,
     'tags': tags,
@@ -254,6 +267,9 @@ class Drama {
           : fresh.category,
       vip: fresh.vipStatus ?? vipStatus,
       heat: fresh.heat.isEmpty ? heat : fresh.heat,
+      score: fresh.score.isEmpty ? score : fresh.score,
+      actor: fresh.actor.isEmpty ? actor : fresh.actor,
+      director: fresh.director.isEmpty ? director : fresh.director,
       views: fresh.views.isEmpty ? views : fresh.views,
       onlineDate: fresh.onlineDate.isEmpty ? onlineDate : fresh.onlineDate,
       tags: fresh.tags.isEmpty ? tags : fresh.tags,

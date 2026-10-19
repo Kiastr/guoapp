@@ -59,12 +59,13 @@ func libretvTestDownloader(t *testing.T, fixture *libretvFixture) *Downloader {
 }
 
 const libretvListBody = `{"code":1,"msg":"数据列表","page":1,"pagecount":3,"limit":"20","total":48,"list":[
- {"vod_id":101,"vod_name":"测试剧甲","vod_pic":"//img.example.com/a.jpg","type_name":"国产剧","vod_remarks":"更新至10集","vod_year":"2024","vod_area":"内地","vod_lang":"汉语普通话","vod_hits":"1234"},
+ {"vod_id":101,"vod_name":"测试剧甲","vod_pic":"//img.example.com/a.jpg","type_name":"国产剧","vod_remarks":"更新至10集","vod_year":"2024","vod_area":"内地","vod_lang":"汉语普通话","vod_hits":"1234","vod_score":"8.5","vod_actor":"张三,李四","vod_director":"王五"},
  {"vod_id":102,"vod_name":"测试剧乙","vod_pic":"https://img.example.com/b.jpg","type_name":"动作片","vod_remarks":"全30集","vod_year":"2023","vod_hits":"56"}
 ]}`
 
 const libretvDetailBody = `{"code":1,"msg":"数据列表","page":1,"pagecount":1,"limit":"20","total":1,"list":[
  {"vod_id":101,"vod_name":"测试剧甲","vod_pic":"https://img.example.com/a.jpg","type_name":"国产剧","vod_remarks":"更新至10集","vod_year":"2024","vod_area":"内地",
+  "vod_score":8.6,"vod_actor":"张三,李四","vod_director":"王五",
   "vod_content":"<p>剧情简介&amp;彩蛋</p>","vod_play_from":"ffm3u8$$$mihua",
   "vod_play_url":"第01集$https://cdn.example.com/a1.m3u8#第02集$https://cdn.example.com/a2.m3u8$$$第01集$https://cdn.example.com/b1.m3u8#第02集$https://cdn.example.com/b2.m3u8"}
 ]}`
@@ -177,8 +178,14 @@ func TestLibreTVFetchCatalogPage(t *testing.T) {
 	if first.Episodes != 10 || first.ReleaseStatus != "ongoing" {
 		t.Fatalf("集数/状态解析错误: %+v", first)
 	}
+	if first.Score != "8.5" || first.Actor != "张三,李四" || first.Director != "王五" {
+		t.Fatalf("评分/主演/导演解析错误: %+v", first)
+	}
 	if second := dramas[1]; second.Episodes != 30 || second.ReleaseStatus != "finished" {
 		t.Fatalf("完结状态解析错误: %+v", second)
+	} else if second.Score != "" || second.Actor != "" || second.Director != "" {
+		// 缺省字段不得产生占位值。
+		t.Fatalf("缺省评分/主演/导演应为空: %+v", second)
 	}
 	if !hasMore {
 		t.Fatal("page=2 < pagecount=3，应当还有下一页")
@@ -232,6 +239,10 @@ func TestLibreTVFetchDetailMultiPlaySources(t *testing.T) {
 	}
 	if drama.Title != "测试剧甲" || drama.Desc != "剧情简介&彩蛋" {
 		t.Fatalf("详情元数据错误: %+v", drama)
+	}
+	// vod_score 为数字（8.6）时也要归一化成字符串。
+	if drama.Score != "8.6" || drama.Actor != "张三,李四" || drama.Director != "王五" {
+		t.Fatalf("详情评分/主演/导演错误: %+v", drama)
 	}
 	if len(chapters) != 4 {
 		t.Fatalf("两个播放源各 2 集，应有 4 集，实际 %d", len(chapters))
