@@ -237,3 +237,29 @@ func (transport fixtureTransport) RoundTrip(request *http.Request) (*http.Respon
 	forwarded.Host = ""
 	return http.DefaultTransport.RoundTrip(forwarded)
 }
+
+// TestDrpyRuleHTMLResponseHint 接口挂了返回 HTML 时，错误要能说明是网页
+// 而不是 JSON（而不是只抛 SyntaxError）。
+func TestDrpyRuleHTMLResponseHint(t *testing.T) {
+	fixture := newLibreTVFixture(t, func(path string, query map[string]string) (int, string) {
+		return http.StatusNotFound, "<html><body>404</body></html>"
+	})
+	engine := drpyFixtureEngine(t, fixture)
+	script := strings.ReplaceAll(drpyRuleScript, "__HOST__", fixture.server.URL)
+	result, err := engine.importDrpyScript(context.Background(), script)
+	if err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+	site, _ := engine.downloader.drpy.get(drpySourceID(result.(map[string]any)["key"].(string)))
+	_, _, err = engine.downloader.fetchDrpyCatalogPage(context.Background(), site, 1, "0", "")
+	if err == nil {
+		t.Fatal("接口返回网页时应当报错")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "网页") || !strings.Contains(message, "一级解析失败") {
+		t.Fatalf("错误文案缺少上下文: %v", message)
+	}
+	if len([]rune(message)) > 200 {
+		t.Fatalf("错误文案超长会被截断: %d 字", len([]rune(message)))
+	}
+}

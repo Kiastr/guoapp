@@ -272,7 +272,7 @@ func drpyRuleRunSnippet(vm *goja.Runtime, code string, vars map[string]any) (any
 		// 单独点明一下，避免只看到「invalid character '<'」。
 		if strings.Contains(message, "invalid character '<'") ||
 			strings.Contains(message, "Unexpected token '<'") {
-			return nil, fmt.Errorf("%w（接口返回的是网页而不是 JSON，源接口可能已失效或被拦截）", drpyWrapError(err))
+			return nil, errors.New("接口返回的是网页而不是 JSON（源接口可能已失效或被拦截）")
 		}
 		return nil, drpyWrapError(err)
 	}
@@ -373,7 +373,7 @@ func drpyRuleCategory(
 	}
 	raw, err := drpyRuleRunSnippet(vm, code, drpyRuleVars(spec, input, page, tid, "", ""))
 	if err != nil {
-		return nil, false, fmt.Errorf("一级解析失败（%s）：%w", input, err)
+		return nil, false, fmt.Errorf("一级解析失败（%s）：%w", drpyShortURL(input), err)
 	}
 	dramas := drpyRuleList(drpySourceID(site.Key), raw)
 	// 片段结果没有总页数，用「本页是否有内容」判断还能不能翻页。
@@ -394,7 +394,7 @@ func drpyRuleSearch(
 	input := drpyRuleURL(spec, spec.SearchURL, "", "", keyword, page)
 	raw, err := drpyRuleRunSnippet(vm, spec.Search, drpyRuleVars(spec, input, page, "", "", ""))
 	if err != nil {
-		return nil, false, fmt.Errorf("搜索解析失败（%s）：%w", input, err)
+		return nil, false, fmt.Errorf("搜索解析失败（%s）：%w", drpyShortURL(input), err)
 	}
 	dramas := drpyRuleList(drpySourceID(site.Key), raw)
 	return dramas, len(dramas) > 0, nil
@@ -412,7 +412,7 @@ func drpyRuleDetail(
 	}
 	input := drpyRuleURL(spec, spec.DetailURL, "", vodID, "", 1)
 	if _, err := drpyRuleRunSnippet(vm, spec.Second, drpyRuleVars(spec, input, 1, "", "", vodID)); err != nil {
-		return Drama{}, nil, fmt.Errorf("二级解析失败（%s）：%w", input, err)
+		return Drama{}, nil, fmt.Errorf("二级解析失败（%s）：%w", drpyShortURL(input), err)
 	}
 	value := vm.Get("VOD")
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
@@ -447,4 +447,16 @@ func drpyRuleDetail(
 	playGroups := strings.Split(drpyFirstString(vod, "vod_play_url"), "$$$")
 	chapters := drpyChaptersFromGroups(source, row.ID, drpySiteReferer(site), playFrom, playGroups)
 	return drama, chapters, nil
+}
+
+// drpyShortURL 错误文案里的地址简称（drpyWrapError 会在 200 字处截断，
+// 太长会把真正的原因挤掉）。
+func drpyShortURL(raw string) string {
+	text := strings.TrimSpace(raw)
+	text = strings.TrimPrefix(text, "https://")
+	text = strings.TrimPrefix(text, "http://")
+	if len([]rune(text)) > 60 {
+		text = string([]rune(text)[:60]) + "…"
+	}
+	return text
 }
