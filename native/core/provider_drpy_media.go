@@ -77,8 +77,15 @@ func (d *Downloader) resolveDrpyMedia(ctx context.Context, task Task, site drpyS
 		return providerMedia{}, errors.New("分集信息无效，请刷新剧库")
 	}
 	media := providerMedia{Referer: drpySiteReferer(site)}
-	playErr := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
-		result, callErr := drpyCallPlay(vm, flag, episodeKey)
+	// 两种方言共用同一套结果处理：{url, jx, parse, header} → 直链 / 嗅探。
+	apply := func(vm *goja.Runtime) error {
+		var result drpyPlayResult
+		var callErr error
+		if drpySiteIsCatVod(site) {
+			result, callErr = catVodCallPlay(vm, flag, episodeKey)
+		} else {
+			result, callErr = drpyCallPlay(vm, flag, episodeKey)
+		}
 		if callErr != nil {
 			return callErr
 		}
@@ -106,7 +113,13 @@ func (d *Downloader) resolveDrpyMedia(ctx context.Context, task Task, site drpyS
 		}
 		media.URL, media.Referer = address, referer
 		return nil
-	})
+	}
+	var playErr error
+	if drpySiteIsCatVod(site) {
+		playErr = d.catVodInvoke(ctx, site, apply)
+	} else {
+		playErr = d.drpyInvoke(ctx, site, apply)
+	}
 	if playErr == nil {
 		return d.finishProviderMedia(ctx, media, source)
 	}
@@ -124,7 +137,9 @@ func (d *Downloader) resolveDrpyMedia(ctx context.Context, task Task, site drpyS
 func drpyCallPlay(vm *goja.Runtime, flag, episodeKey string) (drpyPlayResult, error) {
 	raw, err := drpyCall(vm, "play", flag, episodeKey, flag)
 	if err != nil || raw == nil {
-		if lazyRaw, lazyErr := drpyCall(vm, "lazy", flag, episodeKey, flag); lazyErr == nil {
+		// lazy 必须真的给出结果才替换；否则保留 play 的错误
+		// （例如 play 抛异常、lazy 只是返回空，不该把错误抹掉）。
+		if lazyRaw, lazyErr := drpyCall(vm, "lazy", flag, episodeKey, flag); lazyErr == nil && lazyRaw != nil {
 			raw, err = lazyRaw, nil
 		}
 	}

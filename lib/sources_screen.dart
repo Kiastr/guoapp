@@ -407,7 +407,31 @@ class _SourcesScreenState extends State<SourcesScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.javascript_outlined),
-                title: Text(script.name),
+                title: Row(
+                  children: [
+                    Flexible(child: Text(script.name)),
+                    if (script.isCatVod) ...[
+                      const SizedBox(width: 6),
+                      // CatVod 蜘蛛依赖 lib/cat.js，标记一下便于区分方言。
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'CatVod',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSecondaryContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
                 subtitle: Text(
                   '${script.detailLabel}${script.scriptUrl.isNotEmpty ? '\n${script.scriptUrl}' : ''}\n'
                   '${script.count} 部',
@@ -579,7 +603,11 @@ class _SourcesScreenState extends State<SourcesScreen> {
     try {
       final result = await widget.repository.drpyImport(script);
       if (!mounted) return;
-      final site = DrpySite(key: result.key, name: result.name);
+      final site = DrpySite(
+        key: result.key,
+        name: result.name,
+        engine: result.engine,
+      );
       final merged = <DrpySite>[
         for (final existing in _drpySites)
           if (existing.key != result.key) existing,
@@ -972,7 +1000,8 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
             '"api":"https://example.com/provide/vod"}]}\n'
             '或 LunaTV-config 导出的 Base58 订阅（format=2 / format=3）\n'
             '或 https://example.com/api.php/provide/vod/at/xml/\n'
-            '或含 var rule 的 drpy 脚本（JS 原文或 .js 地址）',
+            '或含 var rule 的 drpy 脚本（JS 原文或 .js 地址）\n'
+            '或 CatVod 蜘蛛的 .js 地址（如 ./cat/xxx_open.js，需填完整地址）',
         border: OutlineInputBorder(),
       ),
     ),

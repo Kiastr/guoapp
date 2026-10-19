@@ -65,6 +65,15 @@ type drpySite struct {
 	Host string `json:"host,omitempty"`
 	// Count 探测缓存的剧集数（展示用）。
 	Count int `json:"count,omitempty"`
+	// Engine 脚本方言：空 = drpy2（var rule + 全局函数），
+	// "catvod" = CatVod 蜘蛛（__jsEvalReturn + import './lib/cat.js'）。
+	Engine string `json:"engine,omitempty"`
+	// CatLib catvod 专用：catlib/<hash>.js（lib/cat.js 的转换后缓存）。
+	CatLib string `json:"catLib,omitempty"`
+	// Bindings catvod 专用：蜘蛛 import 的绑定名（逗号分隔，运行前注入）。
+	Bindings string `json:"bindings,omitempty"`
+	// LibURL catvod 专用：lib/cat.js 的原始地址（重新下载缓存用）。
+	LibURL string `json:"libUrl,omitempty"`
 }
 
 // drpyStore 脚本源订阅表（进程内 + drpy.json 落盘 + Program 编译缓存）。
@@ -396,6 +405,11 @@ func (engine *nativeEngine) importDrpyScript(ctx context.Context, raw string) (a
 		}
 		script, scriptURL = fetched, text
 	}
+	// CatVod 蜘蛛（__jsEvalReturn + import './lib/cat.js'）走另一套处理：
+	// 需要先剥离 import、下载并转换 lib/cat.js，再按普通脚本保存。
+	if looksLikeCatVodScript(script) {
+		return engine.importCatVodScript(ctx, script, scriptURL)
+	}
 	if err := validateDrpyScript(script); err != nil {
 		return nil, err
 	}
@@ -494,6 +508,7 @@ func (engine *nativeEngine) drpySiteList() []map[string]any {
 			"file":      site.File,
 			"title":     site.Title,
 			"host":      site.Host,
+			"engine":    site.Engine,
 			"count":     counts[site.Key],
 		})
 	}
@@ -575,6 +590,9 @@ func drpyHasMore(response *macCMSResponse, page int) bool {
 
 // fetchDrpyCatalogPage 跑 category/search 取一页列表。
 func (d *Downloader) fetchDrpyCatalogPage(ctx context.Context, site drpySite, page int, category, query string) ([]Drama, bool, error) {
+	if drpySiteIsCatVod(site) {
+		return d.fetchCatVodCatalogPage(ctx, site, page, category, query)
+	}
 	var dramas []Drama
 	var hasMore bool
 	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
@@ -610,6 +628,9 @@ func (d *Downloader) fetchDrpyCatalogPage(ctx context.Context, site drpySite, pa
 
 // fetchDrpyCategories 跑 home({}) 取分类列表。
 func (d *Downloader) fetchDrpyCategories(ctx context.Context, site drpySite) ([]nativeCategory, error) {
+	if drpySiteIsCatVod(site) {
+		return d.fetchCatVodCategories(ctx, site)
+	}
 	var categories []nativeCategory
 	err := d.drpyInvoke(ctx, site, func(vm *goja.Runtime) error {
 		raw, callErr := drpyCall(vm, "home", map[string]any{})
@@ -642,6 +663,9 @@ func (d *Downloader) fetchDrpyDetail(ctx context.Context, site drpySite, vodID s
 	decoded, ok := drpyDecodeSegment(vodID)
 	if !ok || strings.TrimSpace(decoded) == "" {
 		return Drama{}, nil, errors.New("片源 ID 无效")
+	}
+	if drpySiteIsCatVod(site) {
+		return d.fetchCatVodDetail(ctx, site, vodID)
 	}
 	var drama Drama
 	var chapters []Chapter

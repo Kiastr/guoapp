@@ -2,13 +2,15 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+110**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+111**。
 
 早期版本在 0.2.50 基线上新增两个原生站源：**韩小圈**（`hanxiaoquan`，韩剧 / 韩国电影 / 韩国综艺 / 韩国动漫）与**鬼片网**（`guipian`，鬼片 / 电视剧 / 动漫）。默认可见站源顺序为：**红果 → 韩小圈 → 鬼片 → 青空**。
 
-## 最近更新（0.2.73+110）
+## 最近更新（0.2.73+111）
 
 | 版本 | 变更 |
+| --- | --- |
+| +111 | 新增 **CatVod 蜘蛛**（配置里带 `[cat]` / `./cat/*.js` 的源）支持：导入时自动下载并转换 `lib/cat.js`，剥离 ES Module 的 `import` / `export`，跑 `__jsEvalReturn()` 入口，覆盖分类 / 首页 / 分类页 / 搜索 / 详情 / 播放；订阅里的相对路径按配置地址解析成候选。同时修复 drpy 连续调用会读到上一次结果的缺陷 |
 | --- | --- |
 | +110 | 新增 **type=4 服务器源**（T4 / CatVod / drpy-node，响应与 MacCMS 同构）与 **csp_AppYsV2**（苹果CMS 二开 `/v1.vod`，接口地址在 ext）直接按 JSON 采集站导入；其余 csp_* 跳过时**点名具体 Java Spider** |
 | --- | --- |
@@ -109,6 +111,7 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 | type=3 的形态 | 结果 | 提示原因 |
 | --- | --- | --- |
 | drpy 脚本（ext 为 `.js`，或 api 直接是脚本） | 收成候选，可导入 | — |
+| **CatVod 蜘蛛**（`api` / `ext` 是 `./cat/xxx_open.js` 这类相对路径） | **收成候选**（按订阅地址补全后导入，自动下载 `lib/cat.js`） | — |
 | **type=4 服务器源**（T4 / CatVod / drpy-node，api 是 vod 接口） | **按 JSON 采集站导入** | — |
 | **`csp_AppYsV2`**（苹果CMS 二开 `/v1.vod`，接口地址在 ext） | **按 JSON 采集站导入** | — |
 | api 只是 drpy 运行时库（`drpy.min.js` / `drpy2.min.js` / `drpy2.js`）且无 ext 脚本 | 跳过 | 只有 drpy 运行时库（api），缺少站点脚本（ext） |
@@ -139,6 +142,22 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **分集与播放**：分集 ID 记录 `$` 后的播放源标识（drpy2 约定），播放时依次尝试 `play` → `lazy`（含全局 `input` 兼容） → 结果里的 `url` 直链；返回 `jx=1 / parse=1` 时按解析页做简单嗅探（正则提取媒体地址），嗅探失败回退原地址。播放地址为 m3u8 时自动拉取播放列表（Referer 取脚本声明的 host）。
 - **上限与去重**：单次最多导入 50 个脚本源；同一脚本重复导入按内容 key 覆盖更新。脚本正文保存在本机 `scripts/<key>.js`，站点记录在 `drpy.json`，删除时连同目录缓存一并清除。
 - **兼容边界**：只实现 drpy2 核心函数约定，不模拟完整 TVBox 环境（如 `js2p` 之外的加解密引擎、WebView 依赖的脚本暂不支持）；导入前会做静态校验，明显不是 drpy 脚本的内容会被拒绝并说明原因。若脚本以 `import` / `export` 开头（ES Module），会提示「这是 ES Module 脚本，请导入 ext 里的站点脚本」——TVBox 的 drpy 站点 `api` 字段指向的运行时库正是这种格式。
+
+#### CatVod 蜘蛛（`[cat]` / `./cat/*.js`）
+
+订阅里标注 `[cat]` 的源是 **CatVod JS 蜘蛛**，和 drpy2 是两种方言，但在本机走同一套 goja 宿主，导入后同样出现在「drpy 脚本源」列表里（带 `CatVod` 标记）：
+
+| 差异点 | drpy2 | CatVod 蜘蛛 |
+|---|---|---|
+| 形态 | 普通脚本 + 全局 `rule` | **ES Module**：`import { _, load } from './lib/cat.js'` |
+| 入口 | 全局函数 `home / category / detail / play` | 末尾 `export function __jsEvalReturn() { return { init, home, … } }` |
+| 返回 | 直接返回对象 | 返回 **JSON 字符串**（同构字段：`class` / `list` / `vod_*`） |
+| 依赖库 | 无 | `lib/cat.js`（约 500 KB 打包产物，含 cheerio / dayjs / jinja2 / Crypto） |
+
+- **导入链路**：粘贴蜘蛛的 `.js` 地址（或经混合订阅收成候选）→ 从脚本的 `import` 里解析出 `./lib/cat.js` 的相对路径，按蜘蛛地址补全后**下载一次并缓存**在本机 `catlib/<hash>.js`（保存的是转换后的版本）；蜘蛛脚本剥离 `import` / 顶层 `export` 后写入 `scripts/<key>.js`，`import` 的绑定名记录在站点记录里，运行前注入成全局变量。
+- **运行时**：先执行 `lib/cat.js`（尾部 `export{…}` 已被替换成 `globalThis.__cat = {…}` 注入），再补 4 个轻量 Node 垫片（`process` / `Buffer`（`isBuffer` `from` `alloc` `concat` `byteLength`）/ `console` / `setTimeout`），然后跑蜘蛛、调 `__jsEvalReturn()` 取 API 对象，后续按名调用 `home / homeVod / category / search / detail / play`；`init(cfg)` 用空配置调用，失败不致命。
+- **结果映射**：`{class:[{type_id,type_name}]}`、`{list:[{vod_id,vod_name,vod_pic,vod_remarks}]}`、`detail` 里的 `vod_play_from / vod_play_url` 与 MacCMS 同构，直接复用 drpy 的行映射与分集解析；`play` 返回的 `{url, parse}` 与 drpy 同构，`parse > 0` 时沿用同一套嗅探兜底。宿主函数 `req / pdfh / pdfa / pd / joinUrl` 是运行时全局，蜘蛛里直接可用，不需要额外注入。
+- **限制**：蜘蛛必须提供地址（裸文本无法定位 `lib/cat.js`）；`lib/cat.js` 下载失败或没有 `export` 语句时导入直接报错并说明原因；单次调用仍受 30 秒看门狗约束。
 
 ### 网络与资源设置
 
@@ -327,7 +346,8 @@ python3 scripts/sync_source.py --check
 - `provider_drpy_goja.go`：goja 桥接层——`req`（同步 HTTP）、`pdfh / pdfa / pd` 选择器宿主函数、`installDrpyCallHelper`（空 program 泵微任务驱动 async 脚本函数）、`vm.Interrupt` + `cancel` 双保险看门狗（30 秒）、Program 按 key 缓存与 Runtime 用后即弃；
 - `provider_drpy_select.go`：drpy 选择器方言的 `x/net/html` 实现（`&&` 后代链、`||` 备选、`[attr]` / `#id` / `.class`）；
 - `provider_drpy_media.go`：播放闭环——`play` / `lazy` 分流、`jx=1 / parse=1` 嗅探、直链兜底与 m3u8 播放列表拉取；
-- `provider_libretv.go` 的 `parseLibreTVSubscription`：混合订阅里 `type ≥ 3` 且 `api` 为 `.js` 的条目收成 `drpyCandidate`，经 `importLibreTVSubscription` 的 `drpy` 字段透传给 Dart 侧候选框。
+- `provider_libretv.go` 的 `parseLibreTVSubscription`：混合订阅里 `type ≥ 3` 且 `api` 为 `.js` 的条目收成 `drpyCandidate`，经 `importLibreTVSubscription` 的 `drpy` 字段透传给 Dart 侧候选框（CatVod 蜘蛛的相对路径按订阅地址补全后再判定）。
+- `provider_catvod.go`：**CatVod 蜘蛛**方言（`drpySite.Engine == "catvod"`）——ESM → 普通脚本转换（剥离 `import` / 顶层 `export`，`export{…}` 改成 `globalThis.__cat = {…}` 注入）、`lib/cat.js` 下载与 `catlib/<hash>.js` 缓存、Node 垫片（`process` / `Buffer` / `console` / `setTimeout`）、`__jsEvalReturn()` 取 API 对象后经 `__catCall` 调方法；浏览 / 详情 / 播放在 `provider_drpy.go` 与 `provider_drpy_media.go` 里按 `drpySiteIsCatVod` 分流，结果映射与 drpy 共用（CatVod 多一层「返回 JSON 字符串」解码）。
 
 注意：goja 的 `Export()` 对 JS 整数返回 `int64`，宿主侧取整需同时兼容 int64 / int32 / float32；Go 结构体直接转 JS 对象会暴露 Go 字段名，drpy 脚本按小写约定读取，`req` 的 resolve 必须用 `map[string]any`。
 

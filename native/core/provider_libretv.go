@@ -605,7 +605,9 @@ func looksLikeDrpyScriptURL(raw string) bool {
 // 地址的收成 drpy 候选（用户在站源管理一键导入）；type≥3 的非脚本地址
 // （csp_ 规则等）与历史行为一致带原因跳过；type=0/1/缺省按 JSON 采集接口
 // 导入，type=2 按 XML 采集接口导入（TVBox 的苹果CMS XML 版本）。
-func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates []drpyCandidate, parses []libretvParse, skipped []string, err error) {
+// baseURL 为订阅自身的地址，用于把 CatVod 蜘蛛常见的相对写法
+// （./cat/xxx_open.js）补全成完整地址后再判定候选。
+func parseLibreTVSubscription(body, baseURL string) (sites []libretvSite, drpyCandidates []drpyCandidate, parses []libretvParse, skipped []string, err error) {
 	document := libretvExtractJSONObject(body)
 	if document == "" {
 		return nil, nil, nil, nil, errors.New("未找到有效的 LibreTV 配置（需要包含 sites 的 JSON）")
@@ -648,6 +650,12 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates 
 			// drpy/spider 脚本：优先取 ext（TVBox 约定 ext 是站点脚本，
 			// api 是 drpy 运行时库）；其余（csp_ 规则等）不支持。
 			candidate := libretvConfigScriptCandidate(entry)
+			// 相对路径（CatVod 蜘蛛的 ./cat/xxx.js）：按订阅地址补全。
+			if !isProviderHTTPMediaURL(candidate) {
+				if resolved := catVodResolveURL(baseURL, candidate); resolved != "" {
+					candidate = resolved
+				}
+			}
 			if looksLikeDrpyScriptURL(candidate) && !seenAPI[candidate] {
 				drpyCandidates = append(drpyCandidates, drpyCandidate{Name: libretvDisplayName(entry), API: candidate})
 				seenAPI[candidate] = true
@@ -736,13 +744,17 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 	} else {
 		body = text
 	}
-	sites, drpyCandidates, parses, skipped, err := parseLibreTVSubscription(body)
+	configURL := ""
+	if isProviderHTTPMediaURL(text) && !strings.ContainsAny(text, "\n\r") {
+		configURL = text
+	}
+	sites, drpyCandidates, parses, skipped, err := parseLibreTVSubscription(body, configURL)
 	if err != nil && looksLikeLibreTVBase58(body) {
 		// 社区配置工具（LunaTV-config 等）的 Base58 订阅：format=2 是原始 JSON、
 		// format=3 是带代理前缀的 JSON，解码后复用同一套解析，客户端不需要
 		// 实时解析 type≥3 脚本，也不需要自建后端。
 		if decoded, decodeErr := libretvBase58Decode(body); decodeErr == nil {
-			decodedSites, decodedDrpy, decodedParses, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded))
+			decodedSites, decodedDrpy, decodedParses, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded), configURL)
 			// 部分站点不可用时也保留跳过原因（例如配置里混了 drpy 源）。
 			if decodedErr == nil || len(decodedSkipped) > 0 {
 				sites, drpyCandidates, parses, skipped, err = decodedSites, decodedDrpy, decodedParses, decodedSkipped, decodedErr

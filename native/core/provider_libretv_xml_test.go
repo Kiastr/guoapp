@@ -87,7 +87,7 @@ func TestLibreTVParseSubscriptionSupportsXMLType(t *testing.T) {
 	 {"key":"xml","name":"XML站","type":2,"api":"https://b.example.com/api.php/provide/vod/at/xml/"},
 	 {"key":"drpy","name":"脚本站","type":3,"api":"https://c.example.com/api.js"}
 	]}`
-	sites, drpyCandidates, _, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, _, skipped, err := parseLibreTVSubscription(body, "")
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}

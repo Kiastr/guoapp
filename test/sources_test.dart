@@ -659,4 +659,42 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });
+
+  testWidgets('catvod spiders are labelled in the drpy list', (tester) async {
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => SourceSite.setRuntimeSources(const []));
+    SharedPreferences.setMockInitialValues({});
+    final store = testStore(await SharedPreferences.getInstance());
+    final repository = SourceFixtureRepository()
+      ..drpySitesResult = const [
+        DrpySite(
+          key: 'cat123',
+          name: '兔小贝[cat]',
+          scriptUrl: 'https://a.example.com/cat/tuxiaobei_open.js',
+          engine: 'catvod',
+        ),
+        DrpySite(key: 'rule456', name: '普通脚本源'),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourcesScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LibreTV / 扩展片源'));
+    await tester.pumpAndSettle();
+
+    // CatVod 方言加标记，普通 drpy2 脚本不加。
+    expect(find.text('CatVod'), findsOneWidget);
+    // 站点名同时出现在上方站源卡片与下方脚本列表，各一次。
+    expect(find.text('兔小贝[cat]'), findsWidgets);
+    expect(find.text('普通脚本源'), findsWidgets);
+    expect(repository.drpySitesResult.first.isCatVod, isTrue);
+    expect(repository.drpySitesResult.last.isCatVod, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
 }

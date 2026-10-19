@@ -261,6 +261,13 @@ func installDrpyCallHelper(vm *goja.Runtime) error {
 // drpyCall 调用脚本函数并等待结果（空 program 泵微任务）。
 // 返回 Export() 后的任意值；调用方负责转成目标结构。
 func drpyCall(vm *goja.Runtime, name string, args ...any) (any, error) {
+	// 复位完成标记：上一次调用已经把它置为 true，不复位的话下一调用会立刻
+	// 读到上一次的结果（play 失败后再调 lazy 就会拿到 play 的错误）。
+	if _, err := vm.RunString(
+		"globalThis.__drpyDone = false; globalThis.__drpyError = null; globalThis.__drpyResult = null;",
+	); err != nil {
+		return nil, drpyWrapError(err)
+	}
 	if _, err := vm.RunString(fmt.Sprintf("__drpyCall(%q, %s)", name, drpyArgsLiteral(args))); err != nil {
 		return nil, drpyWrapError(err)
 	}
