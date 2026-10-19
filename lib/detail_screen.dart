@@ -797,11 +797,12 @@ class _DetailScreenState extends State<DetailScreen> {
           const SizedBox(height: 12),
           // 简介块内注明片源：多片源合并展示时（LibreTV / drpy 收藏后与
           // 内置源同级），用户需要知道这一部具体来自哪个站源。
+          // 标红处理：片源归属是排查「内容对不上」时的关键信息，需要醒目。
           Text(
             '片源：${SourceSite.byId(drama.source).name}',
             style: TextStyle(
-              color: colors.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
+              color: colors.error,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 4),

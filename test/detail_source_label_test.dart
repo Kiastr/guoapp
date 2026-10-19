@@ -66,9 +66,15 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // 运行时片源：显示导入时注册的名称。
+    // 运行时片源：显示导入时注册的名称；标红（error 色）便于识别归属。
     expect(find.text('片源：咪咕'), findsOneWidget);
     expect(find.text('这是一部来自咪咕采集站的短剧。'), findsOneWidget);
+    final sourceLabel = tester.widget<Text>(find.text('片源：咪咕'));
+    expect(sourceLabel.style?.color, isNotNull);
+    expect(
+      sourceLabel.style!.color,
+      equals(Theme.of(tester.element(find.byType(Scaffold).first)).colorScheme.error),
+    );
 
     // 先卸载再挂载：DetailScreen 的 detail 只在 initState 加载，
     // 原地替换 widget 会复用 State 拿到上一个剧集的详情。
