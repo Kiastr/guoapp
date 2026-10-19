@@ -164,6 +164,14 @@ func catVodTransformSpider(script string) (string, []string) {
 }
 
 // catVodInjectBindings 把 __cat 的导出注入成蜘蛛脚本里的全局变量。
+//
+// 这里**不能**用 `var NAME = ...`：部分 lib/cat.js 变体在顶层用
+// `let _ = ...` / `const _ = ...` 声明导出名（再 `export{_ as _}`），
+// 与 var 声明同名会直接抛
+// `SyntaxError: Identifier '_' has already been declared`。
+// 因此改成先按「赋值」写入（能改 let、能落地到已有 var / 隐式全局），
+// 常量绑定赋值会抛错，捕获后保留库自身的值（通常就是同一份导出）；
+// 再兜一层 globalThis 赋值，覆盖脚本作用域里没有同名绑定的情况。
 func catVodInjectBindings(vm *goja.Runtime, names []string) error {
 	if len(names) == 0 {
 		return nil
@@ -173,7 +181,12 @@ func catVodInjectBindings(vm *goja.Runtime, names []string) error {
 		if !gojaIdentifierPattern.MatchString(name) {
 			continue
 		}
-		fmt.Fprintf(&builder, "var %s = __cat && __cat.%s !== undefined ? __cat.%s : undefined;\n", name, name, name)
+		fmt.Fprintf(&builder, "try { %s = __cat ? __cat.%s : undefined; } catch (e) {}\n", name, name)
+		fmt.Fprintf(
+			&builder,
+			"if (typeof %s === 'undefined' && globalThis.__cat) { globalThis[%q] = __cat.%s; }\n",
+			name, name, name,
+		)
 	}
 	if builder.Len() == 0 {
 		return nil

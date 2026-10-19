@@ -110,6 +110,64 @@ func TestCatVodScriptDetectionAndTransform(t *testing.T) {
 	}
 }
 
+// TestCatVodInjectBindingsWithoutRedeclaration 回归：某些 lib/cat.js 变体在
+// 顶层用 let / const 声明导出名（export{_ as _}），注入时再写 var 会抛
+// 「Identifier '_' has already been declared」。注入必须是赋值式的。
+func TestCatVodInjectBindingsWithoutRedeclaration(t *testing.T) {
+	for _, declaration := range []string{"let", "const", "var"} {
+		lib := declaration + ` _ = function (v) { return 'lib:' + v; };
+` + declaration + ` load = function (html) { return html; };
+export{_ as _, load as load};
+`
+		transformed, err := catVodTransformLib(lib)
+		if err != nil {
+			t.Fatalf("%s: %v", declaration, err)
+		}
+		program, err := goja.Compile("cat-lib.js", transformed, false)
+		if err != nil {
+			t.Fatalf("%s: %v", declaration, drpyCompileError(err))
+		}
+		vm := goja.New()
+		host := &drpyHost{ctx: context.Background(), vm: vm, items: map[string]string{}}
+		installDrpyHost(vm, host)
+		if err := catVodInstallShims(vm); err != nil {
+			t.Fatalf("%s: %v", declaration, err)
+		}
+		if _, err := vm.RunProgram(program); err != nil {
+			t.Fatalf("%s: %v", declaration, drpyWrapError(err))
+		}
+		if err := catVodInjectBindings(vm, []string{"_", "load"}); err != nil {
+			t.Fatalf("%s 声明时注入失败: %v", declaration, drpyWrapError(err))
+		}
+		value, err := vm.RunString(`_('x')`)
+		if err != nil {
+			t.Fatalf("%s: %v", declaration, drpyWrapError(err))
+		}
+		if value.Export() != "lib:x" {
+			t.Fatalf("%s 声明时绑定值错误: %v", declaration, value.Export())
+		}
+	}
+}
+
+// TestCatVodUndeclaredBindings 库没有同名顶层绑定时，注入要落地成全局，
+// 否则蜘蛛里的 `_()` 会 ReferenceError。
+func TestCatVodUndeclaredBindings(t *testing.T) {
+	vm := goja.New()
+	if _, err := vm.RunString(`globalThis.__cat = { _: function (v) { return 'ok:' + v; } };`); err != nil {
+		t.Fatal(err)
+	}
+	if err := catVodInjectBindings(vm, []string{"_", "1bad-name"}); err != nil {
+		t.Fatalf("注入失败: %v", drpyWrapError(err))
+	}
+	value, err := vm.RunString(`_('y')`)
+	if err != nil {
+		t.Fatalf("未落地为全局: %v", drpyWrapError(err))
+	}
+	if value.Export() != "ok:y" {
+		t.Fatalf("绑定值错误: %v", value.Export())
+	}
+}
+
 func TestCatVodImportBrowseAndPlay(t *testing.T) {
 	fixture := newLibreTVFixture(t, func(path string, query map[string]string) (int, string) {
 		switch path {
