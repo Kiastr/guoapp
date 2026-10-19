@@ -244,17 +244,23 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                         '填到服务提供的 WebDAV 目录为止，坚果云要在域名后带上 /dav/，Nextcloud 通常形如 /remote.php/dav/files/用户名/',
                   ),
                 ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _username,
                   enabled: !_busy,
-                  decoration: const InputDecoration(labelText: '账号'),
+                  decoration: const InputDecoration(
+                    labelText: '账号',
+                    isDense: true,
+                  ),
                 ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _password,
                   enabled: !_busy,
                   obscureText: _obscure,
                   decoration: InputDecoration(
                     labelText: '密码',
+                    isDense: true,
                     suffixIcon: IconButton(
                       icon: Icon(
                         _obscure
@@ -266,6 +272,7 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _directory,
                   enabled: !_busy,
