@@ -48,19 +48,36 @@ class LibreTVSite {
   }
 }
 
-/// 导入结果：成功入库的站点、被跳过的条目与探测统计。
+/// 混合订阅里发现的 drpy 脚本候选（type≥3 且 api 是 .js）。
+/// 候选不自动导入——脚本需要用户确认后才加入，这里仅携带名称与地址。
+class DrpyCandidate {
+  const DrpyCandidate({required this.name, required this.api});
+
+  final String name;
+  final String api;
+
+  factory DrpyCandidate.fromJson(Map<String, dynamic> json) => DrpyCandidate(
+    name: json['name'] as String? ?? '',
+    api: json['api'] as String? ?? '',
+  );
+}
+
+/// 导入结果：成功入库的站点、被跳过的条目、drpy 候选与探测统计。
 class LibreTVImportResult {
   const LibreTVImportResult({
     required this.added,
     required this.skipped,
+    required this.drpy,
     required this.verified,
   });
 
   final List<LibreTVSite> added;
   final List<String> skipped;
+  /// type≥3 的 .js 脚本候选，等待用户确认导入。
+  final List<DrpyCandidate> drpy;
   final int verified;
 
-  bool get isEmpty => added.isEmpty;
+  bool get isEmpty => added.isEmpty && drpy.isEmpty;
 
   factory LibreTVImportResult.fromJson(Map<String, dynamic> json) =>
       LibreTVImportResult(
@@ -72,6 +89,11 @@ class LibreTVImportResult {
         skipped:
             (json['skipped'] as List? ?? const [])
                 .whereType<String>()
+                .toList(),
+        drpy:
+            (json['drpy'] as List? ?? const [])
+                .whereType<Map>()
+                .map((row) => DrpyCandidate.fromJson(Map<String, dynamic>.from(row)))
                 .toList(),
         verified: intValue(json['verified']),
       );

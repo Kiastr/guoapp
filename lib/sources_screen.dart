@@ -401,6 +401,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
       ];
       SourceSite.setRuntimeSources([
         for (final site in merged) site.toSourceSite(),
+        // 保留已导入的 drpy 脚本运行时源，避免导入片源时被清掉。
+        for (final script in _drpySites) script.toSourceSite(),
       ]);
       setState(() {
         _libretvSites = merged;
@@ -419,11 +421,24 @@ class _SourcesScreenState extends State<SourcesScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(summary.toString())));
+      // 混合订阅里发现的 drpy 脚本候选：弹框等用户确认后再逐个/一次性导入。
+      if (result.drpy.isNotEmpty) {
+        await showDialog<void>(
+          context: context,
+          builder: (_) => _DrpyCandidatesDialog(
+            candidates: result.drpy,
+            onImport: (candidate) => _importDrpyOrThrow(candidate.api),
+          ),
+        );
+        if (!mounted) return;
+      }
       try {
         final sites = await widget.repository.libretvSites();
         if (!mounted) return;
         SourceSite.setRuntimeSources([
           for (final site in sites) site.toSourceSite(),
+          // 候选对话框可能刚导入 drpy 脚本源，这里不能只剩 libretv。
+          for (final script in _drpySites) script.toSourceSite(),
         ]);
         setState(() => _libretvSites = sites);
       } catch (_) {
@@ -453,7 +468,22 @@ class _SourcesScreenState extends State<SourcesScreen> {
   }
 
   /// 导入 drpy 脚本源：导入成功即刷新列表与运行时注册表。
+  /// 失败时吞掉异常仅弹提示（保持旧行为）。
   Future<void> _importDrpy(String script) async {
+    try {
+      await _importDrpyOrThrow(script);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导入失败：$error')));
+      }
+    }
+  }
+
+  /// drpy 导入核心：成功返回，失败抛出（供候选对话框感知逐条结果）。
+  Future<void> _importDrpyOrThrow(String script) async {
     setState(() => _libretvBusy = true);
     try {
       final result = await widget.repository.drpyImport(script);
@@ -488,12 +518,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
         // 计数校正失败不影响导入结果，下次轮询会补齐。
       }
     } catch (error) {
-      if (mounted) {
-        setState(() => _libretvBusy = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('导入失败：$error')));
-      }
+      if (mounted) setState(() => _libretvBusy = false);
+      rethrow;
     }
   }
 
@@ -871,6 +897,155 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
       ),
     ],
   );
+}
+
+/// 混合订阅里发现的 drpy 脚本候选确认框。
+/// 脚本不会自动导入（需用户确认），这里提供逐个导入与全部导入。
+class _DrpyCandidatesDialog extends StatefulWidget {
+  const _DrpyCandidatesDialog({
+    required this.candidates,
+    required this.onImport,
+  });
+
+  final List<DrpyCandidate> candidates;
+  /// 导入单个候选（由外部复用 drpy 导入链路，含列表刷新与提示）。
+  final Future<void> Function(DrpyCandidate candidate) onImport;
+
+  @override
+  State<_DrpyCandidatesDialog> createState() => _DrpyCandidatesDialogState();
+}
+
+class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
+  /// 已成功导入的候选地址集合（同一订阅内按 api 去重后不会重复）。
+  final _imported = <String>{};
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _importOne(DrpyCandidate candidate) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onImport(candidate);
+      if (!mounted) return;
+      setState(() {
+        _imported.add(candidate.api);
+        _busy = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = '「${candidate.name}」导入失败：$error';
+      });
+    }
+  }
+
+  Future<void> _importAll() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    for (final candidate in widget.candidates) {
+      if (_imported.contains(candidate.api)) continue;
+      try {
+        await widget.onImport(candidate);
+        if (!mounted) return;
+        setState(() => _imported.add(candidate.api));
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = '「${candidate.name}」导入失败：$error';
+        });
+        return;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pending =
+        widget.candidates
+            .where((candidate) => !_imported.contains(candidate.api))
+            .length;
+    return AlertDialog(
+      title: const Text('发现 drpy 脚本候选'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '订阅中包含 ${widget.candidates.length} 个 drpy 脚本'
+              '（type≥3），需要确认后才会导入。',
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: widget.candidates.length,
+                itemBuilder: (context, index) {
+                  final candidate = widget.candidates[index];
+                  final done = _imported.contains(candidate.api);
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      done ? Icons.check_circle : Icons.javascript_outlined,
+                      color: done
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    title: Text(
+                      candidate.name.isEmpty ? '未命名脚本' : candidate.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      candidate.api,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: done
+                        ? const Text('已导入')
+                        : TextButton(
+                            onPressed: _busy
+                                ? null
+                                : () => _importOne(candidate),
+                            child: const Text('导入'),
+                          ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: Text(pending == 0 ? '完成' : '暂不导入'),
+        ),
+        FilledButton(
+          onPressed: _busy || pending == 0 ? null : _importAll,
+          child: Text(_busy ? '导入中…' : '全部导入'),
+        ),
+      ],
+    );
+  }
 }
 
 class SourceDiagnosticsButton extends StatelessWidget {

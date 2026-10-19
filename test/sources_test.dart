@@ -25,6 +25,8 @@ class SourceFixtureRepository extends FixtureRepository {
   final libretvImports = <String>[];
   final libretvRemovals = <String>[];
   bool libretvFail = false;
+  /// 混合订阅里附带的 drpy 脚本候选（type≥3 .js），导入结果透传。
+  List<DrpyCandidate> libretvDrpyCandidates = const [];
 
   @override
   bool get supportsSourceManagement => true;
@@ -82,7 +84,12 @@ class SourceFixtureRepository extends FixtureRepository {
       api: subscription,
     );
     libretvSitesResult = [...libretvSitesResult, site];
-    return LibreTVImportResult(added: [site], skipped: const [], verified: 1);
+    return LibreTVImportResult(
+      added: [site],
+      skipped: const [],
+      drpy: libretvDrpyCandidates,
+      verified: 1,
+    );
   }
 
   @override
@@ -107,7 +114,12 @@ class SourceFixtureRepository extends FixtureRepository {
     if (drpyFail) throw AppFailure('未找到 drpy 脚本（需要包含 var rule 定义的 JS）');
     drpyImports.add(script);
     final site = DrpySite(key: 'rule123', name: '演示脚本源');
-    drpySitesResult = [...drpySitesResult, site];
+    // 与原生 drpy.json 存储一致：按 key upsert，重复导入不累积。
+    drpySitesResult = [
+      for (final existing in drpySitesResult)
+        if (existing.key != site.key) existing,
+      site,
+    ];
     return DrpyImportResult(key: site.key, name: site.name);
   }
 
@@ -520,6 +532,67 @@ void main() {
     );
     // 失败不注册任何运行时源。
     expect(SourceSite.runtimeValues, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.dispose();
+  });
+
+  testWidgets('libretv import surfaces drpy candidates for confirmation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => SourceSite.setRuntimeSources(const []));
+    SharedPreferences.setMockInitialValues({});
+    final store = testStore(await SharedPreferences.getInstance());
+    final repository = SourceFixtureRepository()
+      ..libretvDrpyCandidates = const [
+        DrpyCandidate(name: '脚本一', api: 'https://a.example.com/drpy.js'),
+        DrpyCandidate(name: '脚本二', api: 'https://b.example.com/drpy2.js'),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourcesScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LibreTV / 扩展片源'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('导入片源 / 脚本'));
+    await tester.pumpAndSettle();
+    // JSON 配置（非 drpy 输入）走 LibreTV 导入链路。
+    await tester.enterText(
+      find.byType(TextField),
+      '{"sites":[{"key":"a","name":"A","type":1,'
+      '"api":"https://a.example.com/provide/vod"}]}',
+    );
+    await tester.tap(find.text('导入'));
+    await tester.pumpAndSettle();
+
+    // 混合订阅里的 drpy 脚本候选弹确认框，不自动导入。
+    expect(find.text('发现 drpy 脚本候选'), findsOneWidget);
+    expect(find.text('脚本一'), findsOneWidget);
+    expect(find.text('脚本二'), findsOneWidget);
+    expect(repository.drpyImports, isEmpty);
+
+    // 全部导入：两个候选依次走既有 drpy 导入链路。
+    await tester.tap(find.text('全部导入'));
+    await tester.pumpAndSettle();
+    expect(repository.drpyImports, [
+      'https://a.example.com/drpy.js',
+      'https://b.example.com/drpy2.js',
+    ]);
+    expect(find.text('已导入'), findsNWidgets(2));
+    expect(find.text('完成'), findsOneWidget);
+
+    // 关闭确认框后脚本源出现在列表与运行时注册表
+    // （导入反馈 snackbar 已在 pumpAndSettle 中走完生命周期自动消失）。
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+    expect(find.text('发现 drpy 脚本候选'), findsNothing);
+    expect(find.text('演示脚本源'), findsNWidgets(2));
+    expect(SourceSite.isKnown('drpy:rule123'), isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });

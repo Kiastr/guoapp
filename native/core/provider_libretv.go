@@ -5,7 +5,8 @@ package core
 // 背景：LibreTV / TVBox 生态的「片源链接」分两种形态：
 //  1. 完整订阅配置：JSON，形如 {"sites":[{"key":"xx","name":"某某","type":1,
 //     "api":"https://host/api.php/provide/vod"}]}（type=1 即 MacCMS 采集接口，
-//     type=3 的 drpy/spider 暂不支持）；
+//     type=2 是 XML 采集接口；type≥3 的 drpy/spider 脚本地址会收成 drpy
+//     候选，由用户在站源管理一键导入）；
 //  2. 裸采集接口地址：形如 https://host/api.php/provide/vod，
 //     LibreTV 里即一个 type=1 站点。
 //
@@ -282,22 +283,41 @@ func libretvExtractJSONObject(body string) string {
 	return trimmed[start : end+1]
 }
 
-// parseLibreTVSubscription 解析 LibreTV 订阅配置，返回可导入站点与被跳过原因。
-// type=3/4（drpy spider 等）不支持，会带原因跳过；type=0/1/缺省按 JSON 采集接口导入，
-// type=2 按 XML 采集接口导入（TVBox 的苹果CMS XML 版本）。
-func parseLibreTVSubscription(body string) (sites []libretvSite, skipped []string, err error) {
+// drpyCandidate 混合订阅里发现的 drpy 脚本候选：type≥3 且 api 是 .js
+// 脚本地址。不自动导入（脚本需要单独校验），由用户在站源管理一键导入。
+type drpyCandidate struct {
+	Name string
+	API  string
+}
+
+// looksLikeDrpyScriptURL 判断订阅里的 api 是否像 drpy 脚本地址
+// （http(s) + 路径 .js 结尾，容忍查询串）。
+func looksLikeDrpyScriptURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsed.Path), ".js")
+}
+
+// parseLibreTVSubscription 解析 LibreTV 订阅配置，返回可导入站点、drpy
+// 脚本候选与被跳过原因。type≥3 且 api 是 .js 脚本地址的收成 drpy 候选
+// （用户在站源管理一键导入）；type≥3 的非脚本地址（csp_ 规则等）与历史
+// 行为一致带原因跳过；type=0/1/缺省按 JSON 采集接口导入，type=2 按 XML
+// 采集接口导入（TVBox 的苹果CMS XML 版本）。
+func parseLibreTVSubscription(body string) (sites []libretvSite, drpyCandidates []drpyCandidate, skipped []string, err error) {
 	document := libretvExtractJSONObject(body)
 	if document == "" {
-		return nil, nil, errors.New("未找到有效的 LibreTV 配置（需要包含 sites 的 JSON）")
+		return nil, nil, nil, errors.New("未找到有效的 LibreTV 配置（需要包含 sites 的 JSON）")
 	}
 	var config struct {
 		Sites []libretvConfigSite `json:"sites"`
 	}
 	if json.Unmarshal([]byte(document), &config) != nil {
-		return nil, nil, errors.New("配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON")
+		return nil, nil, nil, errors.New("配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON")
 	}
 	if len(config.Sites) == 0 {
-		return nil, nil, errors.New("配置里没有 sites 条目")
+		return nil, nil, nil, errors.New("配置里没有 sites 条目")
 	}
 	seenAPI := map[string]bool{}
 	usedKey := map[string]bool{}
@@ -308,7 +328,15 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, skipped []strin
 			continue
 		}
 		if entry.Type >= 3 {
-			skipped = append(skipped, fmt.Sprintf("%s：type=%d 类型暂不支持（仅支持 provide/vod 采集接口）", libretvDisplayName(entry), entry.Type))
+			// drpy/spider 脚本：.js 地址收成候选，其余（csp_ 规则等）不支持。
+			if looksLikeDrpyScriptURL(api) && !seenAPI[api] {
+				drpyCandidates = append(drpyCandidates, drpyCandidate{Name: libretvDisplayName(entry), API: api})
+				seenAPI[api] = true
+				continue
+			}
+			if !looksLikeDrpyScriptURL(api) {
+				skipped = append(skipped, fmt.Sprintf("%s：type=%d 类型暂不支持（仅支持 provide/vod 采集接口与 drpy 脚本）", libretvDisplayName(entry), entry.Type))
+			}
 			continue
 		}
 		key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api, entry.Type)
@@ -330,10 +358,11 @@ func parseLibreTVSubscription(body string) (sites []libretvSite, skipped []strin
 			break
 		}
 	}
-	if len(sites) == 0 {
-		return nil, skipped, errors.New("配置里没有可导入的采集接口站点")
+	// 只有 drpy 候选时不算失败：用户可一键导入脚本源。
+	if len(sites) == 0 && len(drpyCandidates) == 0 {
+		return nil, nil, skipped, errors.New("配置里没有可导入的采集接口站点")
 	}
-	return sites, skipped, nil
+	return sites, drpyCandidates, skipped, nil
 }
 
 // looksLikeMacCMSAPI 判断裸地址是否像 MacCMS 采集接口（用于配置解析失败的兜底）。
@@ -366,16 +395,16 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 	} else {
 		body = text
 	}
-	sites, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
 	if err != nil && looksLikeLibreTVBase58(body) {
 		// 社区配置工具（LunaTV-config 等）的 Base58 订阅：format=2 是原始 JSON、
 		// format=3 是带代理前缀的 JSON，解码后复用同一套解析，客户端不需要
 		// 实时解析 type≥3 脚本，也不需要自建后端。
 		if decoded, decodeErr := libretvBase58Decode(body); decodeErr == nil {
-			decodedSites, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded))
+			decodedSites, decodedDrpy, decodedSkipped, decodedErr := parseLibreTVSubscription(string(decoded))
 			// 部分站点不可用时也保留跳过原因（例如配置里混了 drpy 源）。
 			if decodedErr == nil || len(decodedSkipped) > 0 {
-				sites, skipped, err = decodedSites, decodedSkipped, decodedErr
+				sites, drpyCandidates, skipped, err = decodedSites, decodedDrpy, decodedSkipped, decodedErr
 			}
 		}
 	}
@@ -425,11 +454,17 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 		added = append(added, map[string]any{"key": site.Key, "name": site.Name, "api": site.API, "type": site.Type, "verified": ok})
 	}
 	// 订阅变更后 Dart 侧会重新拉取列表，无需额外广播。
+	// drpy 候选不自动导入（脚本需要用户确认后才加入），仅透传给 Dart 侧展示。
+	drpy := make([]map[string]any, 0, len(drpyCandidates))
+	for _, candidate := range drpyCandidates {
+		drpy = append(drpy, map[string]any{"name": candidate.Name, "api": candidate.API})
+	}
 	return map[string]any{
 		"added":    added,
 		"skipped":  skipped,
 		"verified": verified,
 		"total":    len(added),
+		"drpy":     drpy,
 	}, nil
 }
 

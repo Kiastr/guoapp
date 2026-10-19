@@ -11,10 +11,10 @@ import (
 
 // libretvFixture 起一个本地 provide/vod 接口，按路径与查询参数返回预置内容。
 type libretvFixture struct {
-	server     *httptest.Server
-	requests   []string
-	lastPath   string
-	lastQuery  string
+	server    *httptest.Server
+	requests  []string
+	lastPath  string
+	lastQuery string
 }
 
 func newLibreTVFixture(t *testing.T, handler func(path string, query map[string]string) (int, string)) *libretvFixture {
@@ -78,7 +78,7 @@ func TestLibreTVParseSubscriptionConfig(t *testing.T) {
  {"name":"无键站点","type":1,"api":"https://other.example.com/api.php/provide/vod"},
  {"name":"重复站点","type":1,"api":"https://api.dsd.com/provide/vod/"}
  ]}`
-	sites, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -94,20 +94,93 @@ func TestLibreTVParseSubscriptionConfig(t *testing.T) {
 	if sites[1].API != "https://other.example.com/api.php/provide/vod" {
 		t.Fatalf("站点 1 api 归一化错误: %+v", sites[1])
 	}
-	if len(skipped) != 2 || !strings.Contains(skipped[0], "DRPY") || !strings.Contains(skipped[1], "缺接口") {
+	// type=3 的 .js 脚本源收成 drpy 候选（不自动导入），不再计入 skipped。
+	if len(drpyCandidates) != 1 || drpyCandidates[0].Name != "DRPY" || drpyCandidates[0].API != "https://example.com/drpy.js" {
+		t.Fatalf("drpy 候选提取错误: %+v", drpyCandidates)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "缺接口") {
 		t.Fatalf("跳过原因不符合预期: %v", skipped)
 	}
 }
 
 func TestLibreTVParseSubscriptionRejectsGarbage(t *testing.T) {
-	if _, _, err := parseLibreTVSubscription("not a config at all"); err == nil {
+	if _, _, _, err := parseLibreTVSubscription("not a config at all"); err == nil {
 		t.Fatal("非配置内容应当报错")
 	}
-	if _, _, err := parseLibreTVSubscription(`{"sites":[]}`); err == nil {
+	if _, _, _, err := parseLibreTVSubscription(`{"sites":[]}`); err == nil {
 		t.Fatal("空 sites 应当报错")
 	}
-	if _, _, err := parseLibreTVSubscription(`{"sites":[{"key":"x","name":"x","type":3,"api":"https://a.com/x.js"}]}`); err == nil {
-		t.Fatal("仅有不支持的 type=3 时应当报错")
+	// 仅有 type=3 的 .js 脚本源：不算失败，返回 drpy 候选由用户确认导入。
+	_, drpyCandidates, skipped, err := parseLibreTVSubscription(`{"sites":[{"key":"x","name":"x","type":3,"api":"https://a.com/x.js"}]}`)
+	if err != nil {
+		t.Fatalf("仅有 drpy 候选时不应报错: %v", err)
+	}
+	if len(drpyCandidates) != 1 || drpyCandidates[0].API != "https://a.com/x.js" {
+		t.Fatalf("drpy 候选提取错误: %+v", drpyCandidates)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("合法 .js 候选不应出现在跳过列表: %v", skipped)
+	}
+}
+
+func TestLibreTVParseSubscriptionMixedDrpyCandidates(t *testing.T) {
+	body := `var config = {"spider":"https://example.com/spider.jar","sites":[
+ {"key":"a","name":"站点A","type":1,"api":"https://api.a.com/provide/vod"},
+ {"key":"dr1","name":"脚本一","type":3,"api":"https://example.com/drpy.js"},
+ {"key":"dr2","name":"脚本二","type":4,"api":"https://example.com/drpy2.js"},
+ {"key":"dup","name":"重复脚本","type":3,"api":"https://example.com/drpy.js"},
+ {"key":"bad","name":"非脚本","type":3,"api":"https://api.b.com/provide/vod"}
+ ]}`
+	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(sites) != 1 {
+		t.Fatalf("应导入 1 个站点，实际 %d：%+v", len(sites), sites)
+	}
+	// 重复 .js 静默去重，不重复提示。
+	if len(drpyCandidates) != 2 {
+		t.Fatalf("应提取 2 个 drpy 候选，实际 %d：%+v", len(drpyCandidates), drpyCandidates)
+	}
+	if drpyCandidates[0].Name != "脚本一" || drpyCandidates[0].API != "https://example.com/drpy.js" {
+		t.Fatalf("候选 0 错误: %+v", drpyCandidates[0])
+	}
+	if drpyCandidates[1].Name != "脚本二" || drpyCandidates[1].API != "https://example.com/drpy2.js" {
+		t.Fatalf("候选 1 错误: %+v", drpyCandidates[1])
+	}
+	// type≥3 但 api 不是 .js 的带原因跳过。
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "非脚本") || !strings.Contains(skipped[0], "暂不支持") {
+		t.Fatalf("跳过原因不符合预期: %v", skipped)
+	}
+}
+
+func TestLibreTVImportSubscriptionDrpyCandidates(t *testing.T) {
+	body := `var config = {"sites":[
+ {"key":"dr1","name":"脚本一","type":3,"api":"https://example.com/drpy.js"}
+ ]}`
+	// 纯候选订阅不应发起任何 HTTP 请求。
+	engine := sourceFixtureEngine(t, sourceFixtureTransport(func(request *http.Request) (*http.Response, error) {
+		t.Errorf("候选订阅不应发起网络请求: %s", request.URL)
+		return nil, http.ErrHandlerTimeout
+	}))
+	engine.downloader.libretv = loadLibreTVStore(t.TempDir())
+	result, err := engine.importLibreTVSubscription(context.Background(), body)
+	if err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+	payload, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("导入结果类型错误: %T", result)
+	}
+	drpy, ok := payload["drpy"].([]map[string]any)
+	if !ok {
+		t.Fatalf("结果缺少 drpy 候选: %+v", payload)
+	}
+	if len(drpy) != 1 || drpy[0]["name"] != "脚本一" || drpy[0]["api"] != "https://example.com/drpy.js" {
+		t.Fatalf("drpy 候选透传错误: %+v", drpy)
+	}
+	if total, _ := payload["total"].(int); total != 0 {
+		t.Fatalf("drpy 候选不应计入已导入站点: %v", total)
 	}
 }
 

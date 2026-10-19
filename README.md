@@ -2,13 +2,15 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+103**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.73+104**。
 
 早期版本在 0.2.50 基线上新增两个原生站源：**韩小圈**（`hanxiaoquan`，韩剧 / 韩国电影 / 韩国综艺 / 韩国动漫）与**鬼片网**（`guipian`，鬼片 / 电视剧 / 动漫）。默认可见站源顺序为：**红果 → 韩小圈 → 鬼片 → 青空**。
 
-## 最近更新（0.2.73+103）
+## 最近更新（0.2.73+104）
 
 | 版本 | 变更 |
+| --- | --- |
+| +104 | 新增 **drpy 脚本源**：站源管理可导入 TVBox drpy2 脚本（粘贴含 `var rule` 的 JS 或 .js 地址），本机 goja 运行时执行，覆盖浏览 / 搜索 / 详情 / 播放全链路；LibreTV 混合订阅里的 type≥3 脚本收成候选，确认后一键导入 |
 | --- | --- |
 | +103 | LibreTV 片源扩展：支持 **type=2 的苹果 CMS XML 采集接口**（`/at/xml/`），并可直接读取 **LunaTV-config 等社区工具导出的 Base58 订阅**（`format=2` / `format=3`），预先筛好的源无需自建后端即可导入 |
 | --- | --- |
@@ -86,7 +88,7 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **兼容范围**：
   - `type` 为 0 / 1 或缺省：MacCMS provide/vod **JSON** 采集源，覆盖 `?ac=detail` 列表与分页、`?ac=list` 分类、`wd=` 在线搜索、`$$$` 多播放源与 `#` 分集；
   - `type` 为 2：MacCMS **XML** 采集源（`/at/xml/`），响应为 `<rss><list><video>` 结构，分类取同响应的 `<class><ty>`，分集取多个 `<dd flag="源名">`，字段与 JSON 版一致（含评分 / 主演 / 导演 / 简介）；
-  - `type ≥ 3` 的 drpy / spider 类型暂不支持，导入时自动跳过并在结果里说明原因。
+  - `type ≥ 3` 的 drpy / spider 脚本源：`api` 为 `.js` 地址时收成 **drpy 候选**（不自动导入），导入完成后弹出候选框，用户确认后逐个或一次性导入，详见下方「drpy 脚本源」小节；`api` 不是 `.js` 的其他类型在结果里说明原因并跳过。
   - 站点类型未标注（例如裸地址）时按响应内容自动回退：JSON 解析失败会再按 XML 解析，反之亦然，避免因类型标错整站不可用。
 - **社区配置工具（LunaTV-config 等）**：这类工具会预先筛掉失效源、可选地给 `api` 加代理前缀，并输出多种订阅格式——`format=0` 原始 JSON、`format=1` 代理前缀 JSON、`format=2` 原始 JSON 的 Base58、`format=3` 代理前缀 JSON 的 Base58。把 `format=2 / format=3` 的链接或文件内容直接粘进来即可：客户端只做 Base58 解码 + JSON 解析，**不需要实时解析 type≥3 脚本，也不需要自建后端**。编码沿用 bs58 / Bitcoin 字母表，无校验和。
 - **导入探测**：导入即逐站探测（总预算 15 秒、单站 5 秒），探测成功的站点在卡片上直接显示缓存剧集数；探测失败或超出预算的站点同样保留，之后在片源卡片上「更新 / 检测连接与播放」即可重试，不会一次网络抖动整批丢弃。
@@ -94,6 +96,16 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **管理**：导入卡片列出全部已导入站点（名称、采集地址、**采集类型（JSON / XML）**、缓存剧集数）并可单个删除；片源卡片「更多」菜单也有「删除此片源」。删除会同时清除该片源的本机目录缓存，之后需重新导入。
 - **详情信息**：详情页展示采集接口返回的**评分**（`vod_score`）、**主演**（`vod_actor`）与**导演**（`vod_director`）。评分并入标题下的信息行（如 `★ 8.6 · 帝屎迪 · 共 10 集 · 连载中`），`vod_score` 为数字或字符串都能识别，`0` 视为未评分；主演按中英文逗号切分后以顿号连接，过长自动省略。任一字段缺失时对应位置不渲染，不留「主演：」之类的空壳。
 - **播放**：分集播放地址为 m3u8 时自动拉取播放列表（Referer 取采集站主机）；其他地址按源站返回的直链播放，不需要二级解析。
+
+### drpy 脚本源：goja 运行时执行 TVBox drpy2 脚本
+
+站源管理顶部「LibreTV / 扩展片源」卡片（与 LibreTV 片源同卡分两区）支持导入 **drpy 脚本源**：把 TVBox / drpy2 生态的 JS 脚本（含 `var rule = {...}` 定义，或指向 `.js` 的 http(s) 地址）导入后，由本机 goja 虚拟机执行脚本里的 `init / home / category / detail / search / play` 等函数，像内置站源一样浏览、搜索、看详情与播放，脚本只在设备上运行，不依赖自建后端。
+
+- **入口**：「站源管理 → LibreTV / 扩展片源 → 导入片源 / 脚本」。粘贴的文本含 `var/let/const rule` 或是 `.js` 地址时自动识别为 drpy 脚本；LibreTV 混合订阅（JSON / Base58）里 `type ≥ 3` 且 `api` 为 `.js` 的条目则收成候选，导入完成后弹出「发现 drpy 脚本候选」框，可逐个导入或「全部导入」，也可以暂不导入。
+- **脚本约定**：执行环境提供 `req`（同步 HTTP，返回 `{status, headers, content}`，带 UA 伪装与 Referer）、`pdfh / pdfa / pd`（HTML 选择器，支持 `&&` 后代链、`||` 备选与 `[attr]` 取值）、`localStorage`（`getItem / setItem`）等宿主函数；`rule` 需暴露 `init / home / category / detail / search / play`（部分脚本用 `lazy` 惰性取流，两者都兼容）。脚本单次调用有 30 秒看门狗，超时中断并回报，不会卡死界面。
+- **分集与播放**：分集 ID 记录 `$` 后的播放源标识（drpy2 约定），播放时依次尝试 `play` → `lazy`（含全局 `input` 兼容） → 结果里的 `url` 直链；返回 `jx=1 / parse=1` 时按解析页做简单嗅探（正则提取媒体地址），嗅探失败回退原地址。播放地址为 m3u8 时自动拉取播放列表（Referer 取脚本声明的 host）。
+- **上限与去重**：单次最多导入 50 个脚本源；同一脚本重复导入按内容 key 覆盖更新。脚本正文保存在本机 `scripts/<key>.js`，站点记录在 `drpy.json`，删除时连同目录缓存一并清除。
+- **兼容边界**：只实现 drpy2 核心函数约定，不模拟完整 TVBox 环境（如 `js2p` 之外的加解密引擎、WebView 依赖的脚本暂不支持）；导入前会做静态校验，明显不是 drpy 脚本的内容会被拒绝并说明原因。
 
 ### 网络与资源设置
 
@@ -275,6 +287,16 @@ python3 scripts/sync_source.py --check
 注意：Go RE2 正则**不支持 lookahead**。解析多线路播放列表时不能用 `(?=...)` 做分段，否则非捕获组会消耗下一段开头；应改用显式字符串截断（从容器标记之后查找下一段标记）。
 
 例外：**LibreTV 片源**（`native/core/provider_libretv.go`）不走上述编译期内置流程，而是用户在站源管理粘贴订阅配置 / 采集地址后**运行期导入**的动态源：源 ID 为 `libretv:<key>`（站点记录落本机 `libretv.json`），Dart 侧经 `SourceSite.setRuntimeSources` 注册进运行时注册表（`lib/models.dart`），`app_build.go` 的 `nativeSourceAvailable` 对 `libretv:` 前缀直接放行（不受 `--all-sources` 编译开关限制）。新增此类运行期源时需同步：`splitProviderDramaID` 的 ID 切分、`nativeCatalog` / `nativeDetail` / `nativeCategories` 的 default 分支、删除时的缓存清理，以及 `lib/core_bridge.dart` 的 repository 方法与 `lib/sources_screen.dart` 的导入 / 删除 UI。
+
+**drpy 脚本源**（`native/core/provider_drpy*.go`）是第二类运行期源：源 ID 为 `drpy:<key>`，脚本正文落本机 `scripts/<key>.js`、站点记录落 `drpy.json`，`nativeSourceAvailable` 同样放行。解析与执行分层：
+
+- `provider_drpy.go`：导入 / 删除 / 静态校验（`validateDrpyScript` / `drpyExtractMeta`）、片源记录存储，以及 home / category / detail / search 四类浏览函数的调用与结果映射（`drpyDramaFromRow` / `drpyChaptersFromGroups`）；
+- `provider_drpy_goja.go`：goja 桥接层——`req`（同步 HTTP）、`pdfh / pdfa / pd` 选择器宿主函数、`installDrpyCallHelper`（空 program 泵微任务驱动 async 脚本函数）、`vm.Interrupt` + `cancel` 双保险看门狗（30 秒）、Program 按 key 缓存与 Runtime 用后即弃；
+- `provider_drpy_select.go`：drpy 选择器方言的 `x/net/html` 实现（`&&` 后代链、`||` 备选、`[attr]` / `#id` / `.class`）；
+- `provider_drpy_media.go`：播放闭环——`play` / `lazy` 分流、`jx=1 / parse=1` 嗅探、直链兜底与 m3u8 播放列表拉取；
+- `provider_libretv.go` 的 `parseLibreTVSubscription`：混合订阅里 `type ≥ 3` 且 `api` 为 `.js` 的条目收成 `drpyCandidate`，经 `importLibreTVSubscription` 的 `drpy` 字段透传给 Dart 侧候选框。
+
+注意：goja 的 `Export()` 对 JS 整数返回 `int64`，宿主侧取整需同时兼容 int64 / int32 / float32；Go 结构体直接转 JS 对象会暴露 Go 字段名，drpy 脚本按小写约定读取，`req` 的 resolve 必须用 `map[string]any`。
 
 LibreTV 的解析层按采集格式分两个文件，新增格式时按同样方式扩展：
 

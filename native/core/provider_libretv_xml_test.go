@@ -87,7 +87,7 @@ func TestLibreTVParseSubscriptionSupportsXMLType(t *testing.T) {
 	 {"key":"xml","name":"XML站","type":2,"api":"https://b.example.com/api.php/provide/vod/at/xml/"},
 	 {"key":"drpy","name":"脚本站","type":3,"api":"https://c.example.com/api.js"}
 	]}`
-	sites, skipped, err := parseLibreTVSubscription(body)
+	sites, drpyCandidates, skipped, err := parseLibreTVSubscription(body)
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -97,8 +97,12 @@ func TestLibreTVParseSubscriptionSupportsXMLType(t *testing.T) {
 	if sites[0].Type != 1 || sites[1].Type != 2 {
 		t.Fatalf("站点类型错误: %+v", sites)
 	}
-	if len(skipped) != 1 || !strings.Contains(skipped[0], "type=3") {
-		t.Fatalf("type=3 应被跳过: %+v", skipped)
+	// type=3 的 .js 脚本源收成 drpy 候选（M4），不再计入 skipped。
+	if len(drpyCandidates) != 1 || drpyCandidates[0].API != "https://c.example.com/api.js" {
+		t.Fatalf("type=3 .js 应提取为 drpy 候选: %+v", drpyCandidates)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("合法 .js 候选不应被跳过: %+v", skipped)
 	}
 }
 
