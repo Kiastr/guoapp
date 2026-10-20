@@ -85,8 +85,15 @@ func TestHongguoDanmakuCacheAndConcurrentRequests(t *testing.T) {
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 		count := calls.Add(1)
 		if request.URL.Path == "/novel/player/video_detail/v1/" {
-			if request.Header.Get("X-Argus") != "" || request.Header.Get("X-Ladon") != "" || request.Header.Get("Comment-Source") != "" {
+			if request.Header.Get("Comment-Source") != "" {
 				t.Error("comment signatures leaked into the regular player request")
+			}
+			// 普通播放请求必须带齐最小签名集（Gorgon / Khronos / Argus / Ladon），
+			// 缺任一头服务端会返回 200 空 body，表现为取不到播放地址、无法播放。
+			for _, name := range []string{"X-Gorgon", "X-Khronos", "X-Argus", "X-Ladon"} {
+				if request.Header.Get(name) == "" {
+					t.Errorf("regular request missing signature header: %s", name)
+				}
 			}
 			return rankingHTTPResponse(request, 200, `{"code":0}`), nil
 		}
