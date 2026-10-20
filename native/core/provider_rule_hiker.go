@@ -168,17 +168,39 @@ func hikerHeaders(rule hikerRule, search bool) map[string]string {
 	return ruleParseHeaders(spec)
 }
 
-// hikerBuildURL 链接占位符替换 + 相对地址补全。
+// hikerBuildURL 链接占位符替换 + 第一页特例 + 相对地址补全。
+//
+// 海阔约定：`分类链接` 末尾可带 `[firstPg=另一个地址]`，表示第一页与
+// 后续页地址不同（很多站点首页没有页码段，真实规则「低端影视」就是
+// `.../list/{cateId}--------{catePg}---.html[firstPg=.../category/{cateId}.html]`）。
 func hikerBuildURL(template, cateID, keyword string, page int) string {
 	address := strings.TrimSpace(template)
 	if address == "" {
 		return ""
 	}
+	// 抽出第一页地址（方括号里 key=value，可能出现在末尾）。
+	firstPage := ""
+	if open := strings.Index(address, "[firstPg="); open >= 0 {
+		if end := strings.Index(address[open:], "]"); end > 0 {
+			firstPage = strings.TrimSpace(address[open+len("[firstPg=") : open+end])
+			address = strings.TrimSpace(address[:open] + address[open+end+1:])
+		}
+	}
+	if page <= 1 && firstPage != "" {
+		address = firstPage
+	}
 	address = strings.ReplaceAll(address, "{cateId}", cateID)
-	address = strings.ReplaceAll(address, "{catePg}", fmt.Sprintf("%d", page))
 	address = strings.ReplaceAll(address, "{catePg}", fmt.Sprintf("%d", page))
 	address = strings.ReplaceAll(address, "{wd}", url.QueryEscape(keyword))
 	address = strings.ReplaceAll(address, "{pg}", fmt.Sprintf("%d", page))
+	// 筛选占位符（海阔规则常见 {by}/{area}/{class}/{year}/{lang}/{letter}）：
+	// v1 没有筛选面板，按站点「不限」形态填空——排序默认时间，其余留空。
+	address = strings.ReplaceAll(address, "{by}", "time")
+	address = strings.ReplaceAll(address, "{area}", "")
+	address = strings.ReplaceAll(address, "{class}", "")
+	address = strings.ReplaceAll(address, "{year}", "")
+	address = strings.ReplaceAll(address, "{lang}", "")
+	address = strings.ReplaceAll(address, "{letter}", "")
 	return address
 }
 
@@ -246,12 +268,20 @@ func (d *Downloader) fetchHikerCatalogPage(ctx context.Context, site libretvSite
 		err  error
 	)
 	if postBody != "" {
-		body, err = rulePostText(ctx, d, target, postBody, headers, referer)
+		// POST 搜索同样要按规则编码转码（与 GET 路径一致）。
+		var posted string
+		posted, err = rulePostText(ctx, d, target, postBody, headers, referer)
+		body = ruleDecodeGBK(posted, rule.Charset)
 	} else {
 		body, err = d.hikerFetch(ctx, target, headers, referer, rule.Charset)
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("站点请求失败：%w", publicError(err))
+	}
+	if strings.TrimSpace(body) == "" {
+		// 真实站点常见：返回 200 但正文为空（反爬 / 需要 JS 渲染 / 整站挂掉）。
+		// 与「规则失效」区分开，避免用户误以为要更新规则。
+		return nil, false, errors.New("站点返回空内容（可能触发反爬或需要浏览器环境）")
 	}
 	dramas := hikerDramasFromBody(site, body, mode, cut, array, title, link, pic, sub, linkPrefix, linkSuffix, referer)
 	if len(dramas) == 0 {

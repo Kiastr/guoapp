@@ -164,6 +164,11 @@ func xbpqParseRule(rule map[string]any) xbpqRule {
 	}
 }
 
+// xbpqSpecSet 截取字段是否真的配置了（空串 = 未配置，表示「整页」）。
+func xbpqSpecSet(spec string) bool {
+	return strings.TrimSpace(spec) != ""
+}
+
 // xbpqField 一条截取字段：标记段 + 末尾指令。
 type xbpqField struct {
 	markers []string // 前标记 / 后标记（单元素表示「以它切分」）
@@ -285,6 +290,11 @@ func xbpqCut(text string, field xbpqField) string {
 	if len(field.markers) == 0 || text == "" {
 		return ""
 	}
+	// 空规则（字段没配）必须返回空，不能退化成「整段文本」——
+	// 否则图片 / 副标题会变成整块 HTML。
+	if field.markers[0] == "" && len(field.markers) == 1 {
+		return ""
+	}
 	before := field.markers[0]
 	after := ""
 	if len(field.markers) > 1 {
@@ -311,6 +321,9 @@ func xbpqCut(text string, field xbpqField) string {
 //   - 最后按 [不包含] / [包含] 过滤，按 [替换] 逐个替换。
 func xbpqCutAll(text string, field xbpqField) []string {
 	if len(field.markers) == 0 || text == "" {
+		return nil
+	}
+	if field.markers[0] == "" && len(field.markers) == 1 {
 		return nil
 	}
 	before := field.markers[0]
@@ -644,7 +657,7 @@ func (d *Downloader) fetchXBPQCatalogPage(ctx context.Context, site libretvSite,
 		linkPrefix = firstNonEmpty(rule.SearchLinkPrefix, rule.LinkPrefix)
 		linkSuffix = firstNonEmpty(rule.SearchLinkSuffix, rule.LinkSuffix)
 		if postBody != "" {
-			body, err := d.fetchXBPQPost(ctx, target, postBody, headers, referer)
+			body, err := d.fetchXBPQPost(ctx, target, postBody, headers, referer, rule.Charset)
 			if err != nil {
 				return nil, false, fmt.Errorf("搜索失败：%w", publicError(err))
 			}
@@ -668,6 +681,9 @@ func (d *Downloader) fetchXBPQCatalogPage(ctx context.Context, site libretvSite,
 	if err != nil {
 		return nil, false, fmt.Errorf("站点请求失败：%w", publicError(err))
 	}
+	if strings.TrimSpace(body) == "" {
+		return nil, false, errors.New("站点返回空内容（可能触发反爬或需要浏览器环境）")
+	}
 	return xbpqDramasFromPage(site, rule, body, scopeSpec, arraySpec, titleSpec, picSpec, linkSpec, subtitleSpec, linkPrefix, linkSuffix, referer)
 }
 
@@ -677,7 +693,8 @@ func (d *Downloader) fetchXBPQCatalogPage(ctx context.Context, site libretvSite,
 // （&& 是截取语法，出现在数组规则里一定不是 JSON 路径）。
 func xbpqDramasFromPage(site libretvSite, rule xbpqRule, body string, scopeSpec, arraySpec xbpqField, titleSpec, picSpec, linkSpec, subtitleSpec, linkPrefix, linkSuffix, referer string) ([]Drama, bool, error) {
 	scope := body
-	if scopeSpec.markers != nil && len(scopeSpec.markers) > 0 {
+	// 只有真正配置了二次截取才收窄范围（空字段表示整页）。
+	if len(scopeSpec.markers) > 0 && scopeSpec.markers[0] != "" {
 		scope = xbpqCut(body, scopeSpec)
 	}
 	source := libretvSourceID(site.Key)
@@ -851,8 +868,8 @@ func (d *Downloader) xbpqPlayLines(ctx context.Context, rule xbpqRule, site libr
 	// 跳转模式：详情页里有 N 个跳转入口，每个入口是一个播放页。
 	if strings.TrimSpace(rule.JumpArray) != "" && strings.TrimSpace(rule.JumpLink) != "" {
 		jumpScope := body
-		if spec := xbpqParseField(rule.JumpSecondCut); len(spec.markers) > 0 {
-			jumpScope = xbpqCut(body, spec)
+		if xbpqSpecSet(rule.JumpSecondCut) {
+			jumpScope = xbpqCut(body, xbpqParseField(rule.JumpSecondCut))
 		}
 		links := xbpqCutAll(jumpScope, xbpqParseField(rule.JumpArray))
 		var lines []ruleLine
@@ -888,8 +905,8 @@ func (d *Downloader) xbpqPlayLines(ctx context.Context, rule xbpqRule, site libr
 // 线路数组缺省时按「单线路」处理；播放数组缺省时整页当一个块。
 func xbpqPlayLinesFromPage(rule xbpqRule, body, pageURL string) []ruleLine {
 	scope := body
-	if spec := xbpqParseField(firstNonEmpty(rule.PlaySecondCut, rule.LineSecondCut)); len(spec.markers) > 0 {
-		scope = xbpqCut(body, spec)
+	if spec := firstNonEmpty(rule.PlaySecondCut, rule.LineSecondCut); xbpqSpecSet(spec) {
+		scope = xbpqCut(body, xbpqParseField(spec))
 	}
 	if scope == "" {
 		return nil
@@ -941,8 +958,13 @@ func xbpqSplitPost(spec string) (address, body string) {
 }
 
 // fetchXBPQPost 发送 POST 搜索请求（表单体，{wd} 已由调用方替换）。
-func (d *Downloader) fetchXBPQPost(ctx context.Context, target, postBody string, headers map[string]string, referer string) (string, error) {
-	return rulePostText(ctx, d, target, postBody, headers, referer)
+// 与 GET 路径一致地做站点编码转换（gb2312 站点搜索结果是 GBK，不转会乱码）。
+func (d *Downloader) fetchXBPQPost(ctx context.Context, target, postBody string, headers map[string]string, referer, charset string) (string, error) {
+	body, err := rulePostText(ctx, d, target, postBody, headers, referer)
+	if err != nil {
+		return "", err
+	}
+	return ruleDecodeGBK(body, charset), nil
 }
 
 // firstNonNilHeaders 优先用 primary，空时回落 fallback。

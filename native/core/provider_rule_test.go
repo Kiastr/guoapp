@@ -33,10 +33,12 @@ func ruleFixtureBody(t *testing.T, name string) string {
 }
 
 // ruleFixtureRule 读 testdata 里的规则 JSON。
+// 与线上链路一致：先剥 // 注释（海阔规则常带注释）。
 func ruleFixtureRule(t *testing.T, name string) map[string]any {
 	t.Helper()
 	var rule map[string]any
-	if err := json.Unmarshal([]byte(ruleFixtureBody(t, name)), &rule); err != nil {
+	body := ruleStripJSONComments(ruleFixtureBody(t, name))
+	if err := json.Unmarshal([]byte(body), &rule); err != nil {
 		t.Fatalf("规则 JSON 解析失败（%s）：%v", name, err)
 	}
 	return rule
@@ -80,32 +82,39 @@ func TestRuleStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// baseURLForTest 订阅地址（相对规则路径按它补全）。
+func baseURLForTest() string { return "https://sub.example.com/tvbox/XYQTVBox.json" }
+
 // TestRuleCandidateDetection 三种 ext 形态与非法形态的识别。
 func TestRuleCandidateDetection(t *testing.T) {
 	makeEntry := func(api, ext string) libretvConfigSite {
 		return libretvConfigSite{Key: "s1", Name: "站点", API: api, Type: 3, Ext: json.RawMessage(ext)}
 	}
 	// 1) ext 是远程规则地址。
-	candidate, reason := ruleCandidateFromEntry(makeEntry("csp_XBPQ", `"https://example.com/rule.json"`))
+	candidate, reason := ruleCandidateFromEntry(baseURLForTest(), makeEntry("csp_XBPQ", `"https://example.com/rule.json"`))
 	if candidate.Engine != ruleEngineXBPQ || candidate.RuleURL != "https://example.com/rule.json" || reason != "" {
 		t.Fatalf("远程规则识别失败：%+v %s", candidate, reason)
 	}
 	// 2) ext 是 {"json": 地址} 间接形态（Bili 真实写法）。
-	candidate, reason = ruleCandidateFromEntry(makeEntry("csp_Bili", `{"json":"https://example.com/bili.json"}`))
+	candidate, reason = ruleCandidateFromEntry(baseURLForTest(), makeEntry("csp_Bili", `{"json":"https://example.com/bili.json"}`))
 	if candidate.Engine != ruleEngineBili || candidate.RuleURL != "https://example.com/bili.json" || reason != "" {
 		t.Fatalf("间接规则识别失败：%+v %s", candidate, reason)
 	}
 	// 3) ext 是内联规则。
-	candidate, reason = ruleCandidateFromEntry(makeEntry("csp_XYQHiker", `{"分类链接":"https://a.com/list/{cateId}","分类名称":"电影"}`))
+	candidate, reason = ruleCandidateFromEntry(baseURLForTest(), makeEntry("csp_XYQHiker", `{"分类链接":"https://a.com/list/{cateId}","分类名称":"电影"}`))
 	if candidate.Engine != ruleEngineHiker || len(candidate.Rule) == 0 || reason != "" {
 		t.Fatalf("内联规则识别失败：%+v %s", candidate, reason)
 	}
+	// 3b) 相对路径（海阔订阅的真实写法 ./XYQHiker/xxx.json）：按订阅地址补全。
+	if candidate, reason = ruleCandidateFromEntry(baseURLForTest(), makeEntry("csp_XYQHiker", `"./XYQHiker/影搜.json"`)); reason != "" || !strings.HasSuffix(candidate.RuleURL, "/tvbox/XYQHiker/%E5%BD%B1%E6%90%9C.json") {
+		t.Fatalf("相对规则路径未补全：%+v %s", candidate, reason)
+	}
 	// 4) 非规则 Spider：不产生候选也不产生原因（交给后续分支）。
-	if candidate, reason := ruleCandidateFromEntry(makeEntry("csp_AppYsV2", `"https://a.com/api.php/provide/vod"`)); candidate.Engine != "" || reason != "" {
+	if candidate, reason := ruleCandidateFromEntry(baseURLForTest(), makeEntry("csp_AppYsV2", `"https://a.com/api.php/provide/vod"`)); candidate.Engine != "" || reason != "" {
 		t.Fatalf("非规则 Spider 不应被识别：%+v %s", candidate, reason)
 	}
 	// 5) 规则型 Spider 但 ext 无法用。
-	if _, reason := ruleCandidateFromEntry(makeEntry("csp_XBPQ", `"clan://local/rule.json"`)); reason == "" {
+	if _, reason := ruleCandidateFromEntry(baseURLForTest(), makeEntry("csp_XBPQ", `"clan://local/rule.json"`)); reason == "" {
 		t.Fatal("clan:// 本地规则应给出跳过原因")
 	}
 	// 6) 规则形状校验：缺必需字段。

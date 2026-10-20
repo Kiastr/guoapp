@@ -718,7 +718,7 @@ func parseLibreTVSubscription(body, baseURL string) (libretvParseResult, error) 
 			// 纯数据规则，Go 重写解释器，不依赖 JVM / jar 包。
 			// 识别阶段只判形状（ext 形态 + 必需字段），远程规则的下载
 			// 与字段校验在导入期完成（importLibreTVRuleCandidates）。
-			if rule, reason := ruleCandidateFromEntry(entry); rule.Engine != "" || reason != "" {
+			if rule, reason := ruleCandidateFromEntry(baseURL, entry); rule.Engine != "" || reason != "" {
 				if reason != "" {
 					result.Skipped = append(result.Skipped, reason)
 					continue

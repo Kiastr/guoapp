@@ -313,6 +313,70 @@ function home() { return {class: []}; }`
 	}
 }
 
+// TestHikerEnginesLiveSites 海阔引擎真机冒烟（默认跳过）：
+//
+//	RULE_LIVE=1 go test ./core/ -run TestHikerEnginesLiveSites -v
+//
+// 逐个尝试真实海阔站点（规则取自 XYQ 订阅，2026-10 抓取）：
+//   - 能取到片单的站点：断言标题/链接形状，并尝试详情；
+//   - 全部不可用（沙箱网络受限 / 站点已死 / 密码页）：t.Skip 并打印原因，
+//     在真机网络上重跑即可变成有效用例。
+func TestHikerEnginesLiveSites(t *testing.T) {
+	if os.Getenv("RULE_LIVE") == "" {
+		t.Skip("设置 RULE_LIVE=1 才会访问真实站点")
+	}
+	engine, err := newNativeEngine(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.downloads.close)
+	type liveCase struct{ file, key, name, api string }
+	cases := []liveCase{
+		{"hiker_bidi.json", "bidi", "哔嘀影视", "https://v.xlys.ltd.ua/"},
+		{"hiker_ddys.json", "ddys", "低端影视", "https://www.ddys.run/"},
+		{"hiker_hitv.json", "hitv", "好影快看", "https://www.hitv.app/"},
+		{"hiker_aowu.json", "aowu", "嗷呜动漫", "https://www.aowu.tv/"},
+		{"hiker_yinghua.json", "yh", "樱花动漫", "http://www.yinghuadm.cn/"},
+		{"hiker_duanjuwu.json", "djw", "短剧屋", "http://www.metaysw.com/"},
+	}
+	var reasons []string
+	okCount := 0
+	for _, c := range cases {
+		rule := ruleFixtureRule(t, c.file)
+		site := libretvSite{Key: c.key, Name: c.name, API: c.api, Type: 1, Engine: ruleEngineHiker}
+		entry := ruleEntry{Key: c.key, Engine: ruleEngineHiker, Rule: rule}
+		categories, _ := engine.downloader.fetchHikerCategories(site, entry)
+		items, _, err := engine.downloader.fetchHikerCatalogPage(context.Background(), site, entry, 1, "1", "")
+		if err != nil {
+			reasons = append(reasons, c.name+"："+err.Error())
+			continue
+		}
+		if len(items) == 0 {
+			reasons = append(reasons, c.name+"：片单为空")
+			continue
+		}
+		okCount++
+		t.Logf("[%s] 分类 %d / 片单 %d，首条 %q", c.name, len(categories), len(items), items[0].Title)
+		if items[0].Title == "" || items[0].SourceID == "" {
+			t.Fatalf("[%s] 片单字段缺失：%+v", c.name, items[0])
+		}
+		_, chapters, detailErr := engine.downloader.fetchHikerDetail(context.Background(), site, entry, items[0].SourceID)
+		if detailErr != nil {
+			reasons = append(reasons, c.name+" 详情："+detailErr.Error())
+			continue
+		}
+		t.Logf("[%s] 详情分集 %d，首条 %q", c.name, len(chapters), func() string {
+			if len(chapters) > 0 {
+				return chapters[0].VideoURL
+			}
+			return ""
+		}())
+	}
+	if okCount == 0 {
+		t.Skipf("本次运行没有可用海阔站点（%d 个失败）：%v", len(reasons), reasons)
+	}
+}
+
 // TestRuleEnginesLiveNetwork 真实网络冒烟（默认跳过）：
 //
 //	RULE_LIVE=1 go test ./core/ -run TestRuleEnginesLiveNetwork -v
@@ -361,4 +425,34 @@ func TestRuleEnginesLiveNetwork(t *testing.T) {
 		t.Fatalf("线上分集地址都不是可播放地址：%+v", chapters)
 	}
 	t.Logf("线上分集 %d 条，首条 %q", len(chapters), chapters[0].VideoURL)
+	// 播放链路：真实 m3u8 交给 resolveProviderMedia（拉播放列表 / 校验直链），
+	// 等价于 App 里点播放。
+	if strings.Contains(chapters[0].VideoURL, ".m3u8") {
+		task := Task{DramaID: page.Items[0].ID, Chapter: chapters[0], Index: 0}
+		media, mediaErr := engine.downloader.resolveProviderMedia(context.Background(), task)
+		if mediaErr != nil {
+			t.Fatalf("线上播放链路失败：%v", mediaErr)
+		}
+		if !strings.Contains(media.Playlist, "#EXTM3U") {
+			t.Fatalf("播放列表未取到：%q", media.Playlist[:min(80, len(media.Playlist))])
+		}
+		t.Logf("播放链路 OK：url=%s 播放列表 %d 字节", media.URL, len(media.Playlist))
+	}
+	// B 站：分类直出 + wbi 签名搜索 + 详情分 P（匿名可用性冒烟）。
+	biliRule := ruleFixtureRule(t, "bili_bili.json")
+	biliSite := libretvSite{Key: "bili_live", Name: "B站", API: "https://www.bilibili.com/", Type: 1, Engine: ruleEngineBili}
+	biliEntry := ruleEntry{Key: "bili_live", Engine: ruleEngineBili, Rule: biliRule}
+	biliItems, _, err := engine.downloader.fetchBiliCatalogPage(context.Background(), biliSite, biliEntry, 1, "1", "")
+	if err != nil {
+		t.Fatalf("线上 B 站列表失败：%v", err)
+	}
+	if len(biliItems) == 0 {
+		t.Fatal("线上 B 站列表为空")
+	}
+	t.Logf("B 站 %d 条，首条 %q", len(biliItems), biliItems[0].Title)
+	biliDrama, biliChapters, err := engine.downloader.fetchBiliDetail(context.Background(), biliSite, biliEntry, biliItems[0].SourceID)
+	if err != nil || len(biliChapters) == 0 {
+		t.Fatalf("线上 B 站详情失败：%v %+v", err, biliChapters)
+	}
+	t.Logf("B 站详情 %q 分集 %d，首条 %q", biliDrama.Title, len(biliChapters), biliChapters[0].VideoURL)
 }

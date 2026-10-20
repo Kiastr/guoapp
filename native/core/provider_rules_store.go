@@ -359,17 +359,24 @@ func ruleSpiderEngine(api string) string {
 //
 // 三种形态都不做网络请求——远程规则在导入期下载（见
 // importLibreTVRuleCandidates），识别阶段只判形状。
-func ruleCandidateFromEntry(entry libretvConfigSite) (ruleCandidate, string) {
+func ruleCandidateFromEntry(baseURL string, entry libretvConfigSite) (ruleCandidate, string) {
 	engine := ruleSpiderEngine(entry.API)
 	if engine == "" {
 		return ruleCandidate{}, ""
 	}
 	name := libretvDisplayName(entry)
-	// ruleURL 清洗：容忍 ;md5 后缀（TVBox 的地址校验约定）。
+	// cleanRuleURL 清洗地址：容忍 ;md5 后缀；相对路径（海阔订阅大量用
+	// `./XYQHiker/xxx.json`）按订阅地址补全——与 drpy 脚本候选同规则。
 	cleanRuleURL := func(raw string) string {
 		text := strings.TrimSpace(raw)
 		if cut := strings.IndexByte(text, ';'); cut >= 0 {
 			text = strings.TrimSpace(text[:cut])
+		}
+		if text == "" || isProviderHTTPMediaURL(text) {
+			return text
+		}
+		if resolved := catVodResolveURL(baseURL, text); resolved != "" {
+			return resolved
 		}
 		return text
 	}
@@ -530,14 +537,19 @@ func (d *Downloader) fetchRuleDocument(ctx context.Context, rawURL string) (map[
 	if len(body) > ruleBodyMaxBytes {
 		return nil, errors.New("规则内容过大")
 	}
+	document := strings.TrimPrefix(body, "\ufeff")
 	var rule map[string]any
-	if json.Unmarshal([]byte(body), &rule) != nil || len(rule) == 0 {
-		// 部分规则地址是「文件托管页 / 网盘直链」（如 file.html?id=…），
-		// 返回的正文可能带 BOM、注释或前后包裹文本；按 JSON 对象边界
-		// 再抠一次，避免整条规则被误判为无效。
-		document := libretvExtractJSONObject(strings.TrimPrefix(body, "\ufeff"))
-		if document == "" || json.Unmarshal([]byte(document), &rule) != nil || len(rule) == 0 {
-			return nil, errors.New("规则不是有效的 JSON 对象")
+	if json.Unmarshal([]byte(document), &rule) != nil || len(rule) == 0 {
+		// 规则由人工维护，常见两种"不严格 JSON"：
+		//   1. 带 // 注释（真实样本「短剧屋」就有）；
+		//   2. 被文件托管页包裹（file.html?id=… 返回 HTML 包着 JSON）。
+		// 先剥注释，再按 JSON 对象边界抠一次，仍失败才判定无效。
+		cleaned := ruleStripJSONComments(document)
+		if json.Unmarshal([]byte(cleaned), &rule) != nil || len(rule) == 0 {
+			trimmed := libretvExtractJSONObject(cleaned)
+			if trimmed == "" || json.Unmarshal([]byte(trimmed), &rule) != nil || len(rule) == 0 {
+				return nil, errors.New("规则不是有效的 JSON 对象")
+			}
 		}
 	}
 	return rule, nil

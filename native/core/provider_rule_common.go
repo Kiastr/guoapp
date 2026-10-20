@@ -361,3 +361,56 @@ func ruleGetWithHeaders(ctx context.Context, d *Downloader, target string, heade
 	}
 	return resp.StatusCode, string(body), nil
 }
+
+// ruleStripJSONComments 去掉 JSON 文本里的 // 行注释与 /* */ 块注释。
+//
+// 海阔/猫系规则由人工维护，作者常写注释（真实样本「短剧屋」就有），
+// 严格 JSON 解析会直接失败。这里按字符扫描，字符串内部（含 http://）
+// 一律不动，避免把 URL 里的 // 当注释切掉。
+func ruleStripJSONComments(body string) string {
+	var builder strings.Builder
+	builder.Grow(len(body))
+	inString := false
+	escaped := false
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if inString {
+			builder.WriteByte(c)
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			builder.WriteByte(c)
+			continue
+		}
+		if c == '/' && i+1 < len(body) {
+			switch body[i+1] {
+			case '/':
+				for i < len(body) && body[i] != '\n' {
+					i++
+				}
+				if i < len(body) {
+					builder.WriteByte('\n')
+				}
+				continue
+			case '*':
+				i += 2
+				for i+1 < len(body) && !(body[i] == '*' && body[i+1] == '/') {
+					i++
+				}
+				i++
+				continue
+			}
+		}
+		builder.WriteByte(c)
+	}
+	return builder.String()
+}
