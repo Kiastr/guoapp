@@ -186,7 +186,10 @@ class _HomeScreenState extends State<HomeScreen> {
       await _updater.update(_group.sources);
       return;
     }
-    await _loadCategories(force: true);
+    // 分类变化极少（站点自己加分类才会有），刷新时按缓存走，不当成
+    // 必须重拉的网络任务——否则一次刷新要跑两轮「全部站源」的请求，
+    // 几十个源时非常慢。真正想重拉分类可以切分组或重启。
+    await _loadCategories();
     if (mounted) await _load(force: true);
   }
 

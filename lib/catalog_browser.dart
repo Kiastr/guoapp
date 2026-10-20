@@ -82,7 +82,17 @@ class CatalogBrowser {
     }
   }
 
+  /// 并发上限。
+  ///
+  /// 「全部站源」分组可能包含几十个运行时片源（libretv / drpy / 规则源），
+  /// 每个源一次网络请求。并发太低（原来是 2）就是串行排队等网络——
+  /// 几十个源要等几十秒，表现上就是「卡死」。
+  /// 但也不能无限开：片源站点多为小站，并发过高容易被风控或拖垮。
+  /// 这里折中取 6，并按源数量自适应（源少时不浪费连接）。
+  static const _concurrency = 6;
+
   Future<void> _each<T>(List<T> entries, Future<void> Function(T) visit) async {
+    if (entries.isEmpty) return;
     var index = 0;
     Future<void> worker() async {
       while (index < entries.length) {
@@ -91,7 +101,9 @@ class CatalogBrowser {
       }
     }
 
-    await Future.wait(List.generate(min(2, entries.length), (_) => worker()));
+    await Future.wait(
+      List.generate(min(_concurrency, entries.length), (_) => worker()),
+    );
   }
 
   Future<String?> loadCategories(
@@ -105,6 +117,11 @@ class CatalogBrowser {
         final cached = await repository.cached(source.id);
         _remember(source.id, cached.items);
       } catch (_) {}
+      // 分类已经加载过且不是强制刷新：省掉网络请求。
+      // 每次进软件 / 切分组都向几十个站源拉一遍分类是主要的性能黑洞。
+      // 注意只跳网络，上面的本地缓存读取保留——「按分类筛选本机剧库」
+      // 依赖 _library，不能一起跳过。
+      if (!force && _menus.containsKey(source.id)) return;
       if (cacheOnly) return;
       try {
         _menus[source.id] = await repository.categories(
@@ -112,7 +129,10 @@ class CatalogBrowser {
           force: force,
         );
       } catch (_) {
-        failures.add(source.groupName);
+        // 请求失败时不要把空结果写进缓存，否则下次进来还是没有分类。
+        if (!_menus.containsKey(source.id)) {
+          failures.add(source.groupName);
+        }
       }
     });
     return failures.isEmpty ? null : '部分分类暂未加载，点击重试';

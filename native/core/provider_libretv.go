@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,12 @@ const (
 	libretvProbeBudget = 15 * time.Second
 	// libretvProbePerSite 单个站点探测超时上限。
 	libretvProbePerSite = 5 * time.Second
+	// libretvProbeWorkers 导入时并发探测的协程数。
+	//
+	// 一次订阅可能带几十个站点（上限 50），串行逐个探测会把 15 秒预算
+	// 全部用满，表现出来就是「点导入后卡住」。并发 6 个后通常几秒内完成。
+	// 不再往上加：片源站点多为小站，并发过高容易被风控。
+	libretvProbeWorkers = 6
 	// libretvSubscriptionMaxBytes 订阅内容大小上限（512KB）。
 	libretvSubscriptionMaxBytes = 512 << 10
 )
@@ -1012,34 +1019,66 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 		sites = append(sites, ruleSites...)
 		skipped = append(skipped, ruleSkipped...)
 	}
-	added := make([]map[string]any, 0, len(sites))
-	verified := 0
-	budget := libretvProbeBudget
+	// 先串行入库（保证 key 冲突处理与顺序稳定），再并发探测。
+	pending := sites[:0:0]
 	for _, site := range sites {
 		if _, err := store.put(site); err != nil {
 			skipped = append(skipped, fmt.Sprintf("%s：保存失败（%s）", site.Name, publicError(err)))
 			continue
 		}
-		ok := false
-		if budget > 0 {
-			per := libretvProbePerSite
-			if per > budget {
-				per = budget
-			}
-			started := time.Now()
-			probeCtx, cancel := context.WithTimeout(ctx, per)
-			// 直接走目录链路：既验证接口，又把首页写进缓存，
-			// 导入完成后站源管理里立刻能看到剧集数。
-			page, probeErr := engine.nativeCatalog(probeCtx, nativeInput{Source: libretvSourceID(site.Key), Page: 1, Force: true})
-			cancel()
-			budget -= time.Since(started)
-			ok = probeErr == nil && len(page.Items) > 0 && page.Warning == ""
-			if ok {
-				verified++
-			}
-		}
-		added = append(added, map[string]any{"key": site.Key, "name": site.Name, "api": site.API, "type": site.Type, "engine": site.Engine, "verified": ok})
+		pending = append(pending, site)
 	}
+	added := make([]map[string]any, len(pending))
+	verified := 0
+	// 并发探测：一次订阅几十个站点时串行会把总预算跑满，表现为导入卡住。
+	// budget 是所有协程共享的剩余预算，取用与扣减都在锁内。
+	var probeMu sync.Mutex
+	budget := libretvProbeBudget
+	var probeGroup sync.WaitGroup
+	semaphore := make(chan struct{}, libretvProbeWorkers)
+	for index, site := range pending {
+		probeGroup.Add(1)
+		semaphore <- struct{}{}
+		go func(index int, site libretvSite) {
+			defer probeGroup.Done()
+			defer func() { <-semaphore }()
+			ok := false
+			probeMu.Lock()
+			remaining := budget
+			probeMu.Unlock()
+			if remaining > 0 && ctx.Err() == nil {
+				per := libretvProbePerSite
+				if per > remaining {
+					per = remaining
+				}
+				started := time.Now()
+				probeCtx, cancel := context.WithTimeout(ctx, per)
+				// 直接走目录链路：既验证接口，又把首页写进缓存，
+				// 导入完成后站源管理里立刻能看到剧集数。
+				page, probeErr := engine.nativeCatalog(probeCtx, nativeInput{Source: libretvSourceID(site.Key), Page: 1, Force: true})
+				cancel()
+				elapsed := time.Since(started)
+				ok = probeErr == nil && len(page.Items) > 0 && page.Warning == ""
+				probeMu.Lock()
+				budget -= elapsed
+				if ok {
+					verified++
+				}
+				probeMu.Unlock()
+			}
+			probeMu.Lock()
+			added[index] = map[string]any{
+				"key":      site.Key,
+				"name":     site.Name,
+				"api":      site.API,
+				"type":     site.Type,
+				"engine":   site.Engine,
+				"verified": ok,
+			}
+			probeMu.Unlock()
+		}(index, site)
+	}
+	probeGroup.Wait()
 	// 订阅变更后 Dart 侧会重新拉取列表，无需额外广播。
 	// drpy 候选不自动导入（脚本需要用户确认后才加入），仅透传给 Dart 侧展示。
 	drpy := make([]map[string]any, 0, len(drpyCandidates))
