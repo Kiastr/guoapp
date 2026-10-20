@@ -745,6 +745,14 @@ func escapeRawJSONControlChars(body string) string {
 type drpyCandidate struct {
 	Name string
 	API  string
+	// Relative 脚本地址原本是相对路径（`./js/xx.js`），上面的 API 是按
+	// 订阅地址补全出来的。
+	//
+	// 补全只在「订阅就是脚本所在站点」时成立；多源聚合订阅（如影视仓
+	// 聚合 518 站）把各家的配置合并成一个文件却**没改写相对路径**，补全
+	// 出来的是聚合文件所在目录下的地址，必然 404。标记出来是为了在候选
+	// 列表里提示，避免用户一个个点了才发现全失败。
+	Relative bool
 }
 
 // looksLikeDrpyScriptURL 判断订阅里的 api 是否像 drpy 脚本地址
@@ -842,13 +850,18 @@ func parseLibreTVSubscription(body, baseURL string) (libretvParseResult, error) 
 			// api 是 drpy 运行时库）；不是脚本的条目继续往下判规则源。
 			candidate := libretvConfigScriptCandidate(entry)
 			// 相对路径（CatVod 蜘蛛的 ./cat/xxx.js）：按订阅地址补全。
-			if !isProviderHTTPMediaURL(candidate) {
+			relative := !isProviderHTTPMediaURL(candidate)
+			if relative {
 				if resolved := catVodResolveURL(baseURL, candidate); resolved != "" {
 					candidate = resolved
 				}
 			}
 			if looksLikeDrpyScriptURL(candidate) && !seenAPI[candidate] {
-				result.DrpyCandidates = append(result.DrpyCandidates, drpyCandidate{Name: libretvDisplayName(entry), API: candidate})
+				result.DrpyCandidates = append(result.DrpyCandidates, drpyCandidate{
+					Name:     libretvDisplayName(entry),
+					API:      candidate,
+					Relative: relative,
+				})
 				seenAPI[candidate] = true
 				continue
 			}
@@ -1031,7 +1044,14 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 	// drpy 候选不自动导入（脚本需要用户确认后才加入），仅透传给 Dart 侧展示。
 	drpy := make([]map[string]any, 0, len(drpyCandidates))
 	for _, candidate := range drpyCandidates {
-		drpy = append(drpy, map[string]any{"name": candidate.Name, "api": candidate.API})
+		// relative 标记脚本地址原本是相对路径（按订阅地址补全而来）。
+		// 多源聚合订阅往往没改写相对路径，补全出来必然 404——标出来让
+		// UI 提前提示，别让用户一个个点了才发现全失败。
+		drpy = append(drpy, map[string]any{
+			"name":     candidate.Name,
+			"api":      candidate.API,
+			"relative": candidate.Relative,
+		})
 	}
 	// 解析规则已入库；这里同样回传一份，导入结果对话框可直接展示。
 	importedParses := make([]map[string]any, 0, len(parses))

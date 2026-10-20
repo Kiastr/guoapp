@@ -1252,16 +1252,26 @@ class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = '「${candidate.name}」导入失败：$error';
+        _error = candidate.relative
+            ? '「${candidate.name}」导入失败：$error\n'
+                '该脚本地址是相对路径，按订阅地址补全后仍取不到——'
+                '聚合订阅常丢失原始路径，请改用该源的原始订阅地址导入。'
+            : '「${candidate.name}」导入失败：$error';
       });
     }
   }
 
+  /// 脚本地址原本是相对路径（按订阅地址补全而来）的候选数量。
+  int get relativeCount =>
+      widget.candidates.where((candidate) => candidate.relative).length;
+
+  /// 全部导入：**失败的不中断**，跳过去继续下一个，最后汇总失败项。
   Future<void> _importAll() async {
     setState(() {
       _busy = true;
       _error = null;
     });
+    final failed = <String>[];
     for (final candidate in widget.candidates) {
       if (_imported.contains(candidate.api)) continue;
       try {
@@ -1270,15 +1280,23 @@ class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
         setState(() => _imported.add(candidate.api));
       } catch (error) {
         if (!mounted) return;
-        setState(() {
-          _busy = false;
-          _error = '「${candidate.name}」导入失败：$error';
-        });
-        return;
+        // 失败不中断：聚合订阅里常混着一批取不到的脚本（相对路径补全后
+        // 404），一头撞上就停的话，后面能用的脚本永远轮不到。
+        failed.add(
+          candidate.relative
+              ? '${candidate.name}：$error（相对路径，聚合订阅丢失原始路径）'
+              : '${candidate.name}：$error',
+        );
+        setState(() {});
       }
     }
     if (!mounted) return;
-    setState(() => _busy = false);
+    setState(() {
+      _busy = false;
+      if (failed.isNotEmpty) {
+        _error = '${failed.length} 个导入失败：\n${failed.join('\n')}';
+      }
+    });
   }
 
   @override
@@ -1298,6 +1316,21 @@ class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
               '订阅中包含 ${widget.candidates.length} 个 drpy 脚本'
               '（type≥3），需要确认后才会导入。',
             ),
+            // 相对路径补全的候选：多源聚合订阅常见，导入必然 404。
+            // 提前说清楚，免得用户点一圈才发现全失败。
+            if (relativeCount > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                '其中 $relativeCount 个脚本地址是相对路径（已按订阅地址补全）。'
+                '多源聚合订阅常把各家的配置合并却不改写相对路径，'
+                '这类脚本大概率取不到（原版 TVBox 同样如此），'
+                '建议改用该源的原始订阅地址导入。',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -1326,11 +1359,29 @@ class _DrpyCandidatesDialogState extends State<_DrpyCandidatesDialog> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: Text(
-                      candidate.api,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    subtitle: candidate.relative
+                        ? Row(
+                            children: [
+                              Icon(
+                                Icons.warning_amber_rounded,
+                                size: 14,
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  '${candidate.api}（相对路径补全，可能取不到）',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Text(
+                            candidate.api,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                     trailing: done
                         ? const Text('已导入')
                         : TextButton(

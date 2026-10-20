@@ -185,14 +185,27 @@ class LibreTVParseConfig {
 /// 混合订阅里发现的 drpy 脚本候选（type≥3 且 api 是 .js）。
 /// 候选不自动导入——脚本需要用户确认后才加入，这里仅携带名称与地址。
 class DrpyCandidate {
-  const DrpyCandidate({required this.name, required this.api});
+  const DrpyCandidate({
+    required this.name,
+    required this.api,
+    this.relative = false,
+  });
 
   final String name;
   final String api;
 
+  /// 脚本地址原本是相对路径（`./js/xx.js`），[api] 是按订阅地址补全出来的。
+  ///
+  /// 补全只在「订阅就是脚本所在站点」时成立。多源聚合订阅（如影视仓聚合
+  /// 518 站）把各家配置合并成一个文件却没改写相对路径，补全出来的是聚合
+  /// 文件目录下的地址，必然 404——这类站点在原版 TVBox 里同样导入不了。
+  /// 标记出来是为了在候选列表里提前提示，而不是等用户点了才报错。
+  final bool relative;
+
   factory DrpyCandidate.fromJson(Map<String, dynamic> json) => DrpyCandidate(
     name: json['name'] as String? ?? '',
     api: json['api'] as String? ?? '',
+    relative: json['relative'] as bool? ?? false,
   );
 }
 

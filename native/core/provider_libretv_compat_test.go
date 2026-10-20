@@ -104,6 +104,12 @@ func TestLibreTVSubscriptionRelativeScriptPaths(t *testing.T) {
 			t.Fatalf("缺少候选：%s", address)
 		}
 	}
+	// 相对路径补全出来的候选要打标记：UI 据此提示「聚合订阅常丢原始路径」。
+	for _, candidate := range parsed.DrpyCandidates {
+		if !candidate.Relative {
+			t.Fatalf("由相对路径补全的候选应标记 Relative：%+v", candidate)
+		}
+	}
 	// csp_Douban 不是脚本，应带原因跳过而不是静默丢失。
 	if len(parsed.Skipped) == 0 || !strings.Contains(parsed.Skipped[0], "Douban") {
 		t.Fatalf("csp_ 源应给出跳过原因：%v", parsed.Skipped)
@@ -206,5 +212,24 @@ func TestLibretvFlexInt(t *testing.T) {
 		if int(v) != c.want {
 			t.Errorf("Unmarshal(%s)=%d，期望 %d", c.in, int(v), c.want)
 		}
+	}
+}
+
+// TestLibreTVSubscriptionAbsoluteScriptNotFlagged 绝对地址的脚本候选不打
+// Relative 标记——只有「由相对路径补全而来」的才需要提示。
+func TestLibreTVSubscriptionAbsoluteScriptNotFlagged(t *testing.T) {
+	body := `{"sites":[{"key":"a","name":"脚本源","type":3,"api":"https://cdn.example.com/lib/drpy2.min.js","ext":"https://cdn.example.com/js/site.js"}]}`
+	parsed, err := parseLibreTVSubscription(body, "https://sub.example.com/tv.json")
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if len(parsed.DrpyCandidates) != 1 {
+		t.Fatalf("应有 1 个候选，实际 %d", len(parsed.DrpyCandidates))
+	}
+	if parsed.DrpyCandidates[0].Relative {
+		t.Fatal("绝对地址的候选不应标记 Relative")
+	}
+	if parsed.DrpyCandidates[0].API != "https://cdn.example.com/js/site.js" {
+		t.Fatalf("候选地址不对：%q", parsed.DrpyCandidates[0].API)
 	}
 }
