@@ -153,6 +153,16 @@ abstract class AppRepository {
   Future<DrpyImportResult> drpyImport(String script) async =>
       throw AppFailure('当前环境不支持导入 drpy 脚本源');
 
+  /// 导入 drpy 脚本源并记录来源链接。
+  ///
+  /// 粘贴脚本文本时没有地址，跨设备同步（WebDAV）无法在对端重建；
+  /// 记下来源链接后，对端按该地址重新拉取即可——源站脚本更新也会一并
+  /// 同步过去。默认实现退化为不记录（老实现 / 测试替身无需改动）。
+  Future<DrpyImportResult> drpyImportWithSource(
+    String script,
+    String sourceUrl,
+  ) async => drpyImport(script);
+
   /// 删除已导入的 drpy 脚本源（连同其目录缓存）。
   Future<void> drpyRemove(String key) async {}
   Future<List<String>> suggestions(String query) async => const [];
@@ -543,10 +553,21 @@ class NativeRepository extends AppRepository {
   }
 
   @override
-  Future<DrpyImportResult> drpyImport(String script) async {
+  Future<DrpyImportResult> drpyImport(String script) async =>
+      drpyImportWithSource(script, '');
+
+  @override
+  Future<DrpyImportResult> drpyImportWithSource(
+    String script,
+    String sourceUrl,
+  ) async {
     _adminPermission('仅管理员可导入 drpy 脚本源');
     return DrpyImportResult.fromJson(
-      await _call({'action': 'drpyImport', 'subscription': script}),
+      await _call({
+        'action': 'drpyImport',
+        'subscription': script,
+        if (sourceUrl.trim().isNotEmpty) 'scriptUrl': sourceUrl.trim(),
+      }),
     );
   }
 

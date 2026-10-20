@@ -22,7 +22,14 @@ func TestLibreTVParseRulesExtraction(t *testing.T) {
 	 {"name":"重复","type":1,"url":"https://parse.a.com/api"},
 	 {"type":2,"url":"https://parse.b.com/parse.js"}
 	]}`
-	sites, _, parses, skipped, err := parseLibreTVSubscription(body, "")
+	parsed, err := parseLibreTVSubscription(body, "")
+	var sites []libretvSite
+	var _ []drpyCandidate
+	var parses []libretvParse
+	var skipped []string
+	if err == nil {
+		sites, _, parses, skipped = parsed.Sites, parsed.DrpyCandidates, parsed.Parses, parsed.Skipped
+	}
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -301,7 +308,14 @@ func TestLibreTVParseType4AndAppYsV2(t *testing.T) {
 	 {"key":"vod1","name":"vod 路径","type":3,"api":"csp_AppYsV2","ext":"https://vod.example.com/api"},
 	 {"key":"home","name":"只有首页","type":3,"api":"csp_Jpys","ext":"https://www.czzyvideo.com/"}
 	]}`
-	sites, candidates, _, skipped, err := parseLibreTVSubscription(body, "")
+	parsed, err := parseLibreTVSubscription(body, "")
+	var sites []libretvSite
+	var candidates []drpyCandidate
+	var _ []libretvParse
+	var skipped []string
+	if err == nil {
+		sites, candidates, _, skipped = parsed.Sites, parsed.DrpyCandidates, parsed.Parses, parsed.Skipped
+	}
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -342,7 +356,14 @@ func TestLibreTVParseDrpyCandidatesPreferExt(t *testing.T) {
 	  "api":"https://cdn.example.com/drpy.min.js",
 	  "ext":"https://cdn.example.com/ext.json"}
 	]}`
-	_, candidates, _, skipped, err := parseLibreTVSubscription(body, "")
+	parsed, err := parseLibreTVSubscription(body, "")
+	var _ []libretvSite
+	var candidates []drpyCandidate
+	var _ []libretvParse
+	var skipped []string
+	if err == nil {
+		_, candidates, _, skipped = parsed.Sites, parsed.DrpyCandidates, parsed.Parses, parsed.Skipped
+	}
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}

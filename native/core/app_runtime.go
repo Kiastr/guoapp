@@ -77,6 +77,10 @@ type Downloader struct {
 	// drpy 运行时导入的 drpy 脚本源表（goja 执行），
 	// 由 newNativeEngine 从引擎目录 drpy.json + scripts/ 载入。
 	drpy *drpyStore
+	// rules 规则型 Spider（XBPQ / 海阔 / Bili）的规则快照表，
+	// 由 newNativeEngine 从引擎目录 rules.json + rules/ 载入。
+	// 规则源仍是 libretv 站点（带 Engine 标签），这里只存规则正文。
+	rules *ruleStore
 }
 
 func defaultConfig() Config { return Config{MaxPagesPerSort: 50, PageSize: 30, Retries: 2} }
@@ -123,17 +127,20 @@ type nativeInput struct {
 	Chapter          Chapter                 `json:"chapter"`
 	Index            int                     `json:"index"`
 	Quality          int                     `json:"quality"`
-	Subscription string `json:"subscription"`
-	LibreTVKey   string `json:"libretvKey"`
+	Subscription     string                  `json:"subscription"`
+	LibreTVKey       string                  `json:"libretvKey"`
 	// ParseURL 选择 LibreTV 解析方式（parses 里的 url）；空 = 直链/嗅探。
 	ParseURL string `json:"parseUrl"`
 	// drpy 脚本源：subscription 复用为 JS 文本或脚本 URL；drpyKey 为删除时的 key。
 	DrpyKey string `json:"drpyKey"`
+	// ScriptURL drpy 粘贴导入时记录的来源链接（脚本正文没有地址，
+	// 记下来源后 WebDAV 同步才能在对端重建该源）。
+	ScriptURL string `json:"scriptUrl"`
 	// Route 期望的起始线路（线路记忆用；越界或不存在时回落到 0）。
 	Route    int    `json:"route"`
-	Session          string                  `json:"session"`
-	Sequence         int64                   `json:"sequence"`
-	Force            bool                    `json:"force"`
+	Session  string `json:"session"`
+	Sequence int64  `json:"sequence"`
+	Force    bool   `json:"force"`
 }
 
 type nativeCatalogResult struct {
@@ -299,6 +306,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	engine.loadResourceSettings()
 	d.libretv = loadLibreTVStore(directory)
 	d.drpy = loadDrpyStore(directory)
+	d.rules = loadRuleStore(directory)
 	d.loadRankingCache()
 	engine.loadCatalogCache()
 	engine.loadSourceRecords()
@@ -491,7 +499,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 	case "drpySites":
 		return map[string]any{"sites": engine.drpySiteList()}, nil
 	case "drpyImport":
-		return engine.importDrpyScript(ctx, input.Subscription)
+		return engine.importDrpyScript(ctx, input.Subscription, input.ScriptURL)
 	case "drpyRemove":
 		if err := engine.removeDrpySite(input.DrpyKey); err != nil {
 			return nil, err
@@ -757,6 +765,14 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	// switch 没有匹配分支时 items/err 保持原值，不会被覆盖。
 	if site, ok := engine.downloader.libretvSite(source); ok {
 		items, result.HasMore, err = d.fetchLibreTVCatalogPage(ctx, site, page, category, query)
+		// 规则源（XBPQ / 海阔 / Bili）显式刷新失败时，按来源地址重拉一次
+		// 规则快照再试：站点改版后新版规则通常已在原地址更新，重拉即可
+		// 自愈；重拉失败保留旧快照，错误提示不变（不掩盖真实故障）。
+		if err != nil && input.Force && site.Engine != "" {
+			if d.refreshRuleSnapshot(ctx, site) {
+				items, result.HasMore, err = d.fetchLibreTVCatalogPage(ctx, site, page, category, query)
+			}
+		}
 	} else if site, ok := engine.downloader.drpySite(source); ok {
 		items, result.HasMore, err = d.fetchDrpyCatalogPage(ctx, site, page, category, query)
 	} else if libretvKeyFromSource(source) != "" {

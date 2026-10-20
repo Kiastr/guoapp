@@ -373,7 +373,12 @@ class WebDavSynchronizer {
     try {
       for (final LibreTVSite site in await repository.libretvSites()) {
         if (site.key.isEmpty || site.api.trim().isEmpty) continue;
-        subs[site.sourceId] = LanSourceSub(name: site.name, api: site.api, at: 0);
+        // 规则源（XBPQ / 海阔 / Bili）：对端没有规则快照，要用规则地址
+        // 重建订阅条目（与原始订阅等价的单站点配置）；内联规则没有
+        // 规则地址，同步侧跳过（见 _autoImportSubs 的提示）。
+        final payload = site.isRule ? site.ruleSubscriptionJson : site.api;
+        if (payload.isEmpty) continue;
+        subs[site.sourceId] = LanSourceSub(name: site.name, api: payload, at: 0);
       }
     } catch (_) {}
     try {
@@ -403,10 +408,16 @@ class WebDavSynchronizer {
     }
     final warnings = <String>[];
     var imported = 0;
+    // 本机指纹：对端条目与本机不一致（地址 / 规则地址变了）时才重新导入，
+    // 避免每次同步都整批重导（重导会触发探测，代价高）。
+    final localFingerprints = await _localSubFingerprints();
     for (final entry in subs.entries) {
       final id = entry.key;
-      if (SourceSite.isKnown(id)) continue;
       final sub = entry.value;
+      if (SourceSite.isKnown(id)) {
+        final local = localFingerprints[id];
+        if (local == null || local == _incomingFingerprint(id, sub)) continue;
+      }
       final label = sub.name.trim().isEmpty ? id : sub.name.trim();
       try {
         if (id.startsWith('libretv:')) {
@@ -414,6 +425,7 @@ class WebDavSynchronizer {
             warnings.add('片源「$label」缺少采集地址，已跳过');
             continue;
           }
+          // 规则源同步过来的是单站点订阅 JSON（含规则地址），走同一导入链路。
           await repository.libretvImport(sub.api);
         } else if (id.startsWith('drpy:')) {
           if (sub.api.trim().isEmpty) {
@@ -446,6 +458,48 @@ class WebDavSynchronizer {
       store.notifySourceRegistryChanged();
     }
     return (imported: imported, warnings: warnings);
+  }
+
+  /// 本机片源的身份指纹：`api:<地址>` / `rule:<规则地址>` / `script:<脚本地址>`。
+  /// 与 [_incomingFingerprint] 同构，用于判断对端条目是否带来了改动。
+  Future<Map<String, String>> _localSubFingerprints() async {
+    final repository = this.repository;
+    final out = <String, String>{};
+    if (repository == null) return out;
+    try {
+      for (final site in await repository.libretvSites()) {
+        out[site.sourceId] = site.isRule
+            ? 'rule:${site.ruleUrl}'
+            : 'api:${site.api}';
+      }
+    } catch (_) {}
+    try {
+      for (final script in await repository.drpySites()) {
+        out[script.sourceId] = 'script:${script.scriptUrl}';
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  /// 对端条目的指纹。规则源同步的是单站点订阅 JSON，需要从 `ext` 里取
+  /// 规则地址；普通采集站与脚本源直接用地址。
+  String _incomingFingerprint(String id, LanSourceSub sub) {
+    final api = sub.api.trim();
+    if (id.startsWith('drpy:')) return 'script:$api';
+    if (api.startsWith('{')) {
+      try {
+        final doc = jsonDecode(api);
+        final sites = doc is Map ? doc['sites'] : null;
+        if (sites is List && sites.isNotEmpty) {
+          final row = sites.first;
+          final ext = row is Map ? row['ext'] : null;
+          if (ext is String && ext.trim().isNotEmpty) {
+            return 'rule:${ext.trim()}';
+          }
+        }
+      } catch (_) {}
+    }
+    return 'api:$api';
   }
 
   void _record({required DateTime savedAt, String? error}) {
