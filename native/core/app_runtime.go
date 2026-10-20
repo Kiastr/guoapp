@@ -285,7 +285,14 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	cfg.dataDir = directory
 	router := &proxyRouter{}
 	d := &Downloader{cfg: cfg, providerHosts: map[string]string{}, proxyRouter: router,
-		limiter: newRequestLimiter(3, 250*time.Millisecond), diagnostics: newDiagnosticLog(directory)}
+		// 并发上限 8（原为 3）。
+		//
+		// 限流器是「全局同时放行几个请求」，而每个 host 另有 gate.busy +
+		// 250ms 间隔兜底——单个站点永远只有一个在飞、且两次请求间隔 250ms，
+		// 不会被打爆。所以全局上限收紧到 3 只对「同一站点连续翻页」有意义，
+		// 对「全部站源」那种几十个不同站点各请求一次的场景纯属排队：
+		// 50 个源按 3 并发要转圈半分钟，表现出来就是「卡死」。
+		limiter: newRequestLimiter(8, 250*time.Millisecond), diagnostics: newDiagnosticLog(directory)}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.MaxIdleConnsPerHost = 8

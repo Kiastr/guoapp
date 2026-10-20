@@ -82,14 +82,14 @@ class CatalogBrowser {
     }
   }
 
-  /// 并发上限。
+  /// 并发上限：与 Go 侧请求限流器的全局上限保持一致（app_runtime.go）。
   ///
   /// 「全部站源」分组可能包含几十个运行时片源（libretv / drpy / 规则源），
-  /// 每个源一次网络请求。并发太低（原来是 2）就是串行排队等网络——
-  /// 几十个源要等几十秒，表现上就是「卡死」。
-  /// 但也不能无限开：片源站点多为小站，并发过高容易被风控或拖垮。
-  /// 这里折中取 6，并按源数量自适应（源少时不浪费连接）。
-  static const _concurrency = 6;
+  /// 每个源一次网络请求。原来这里是 2、Go 侧全局只放行 3，几十个源就是
+  /// 排一队等网络——表现出来就是长时间转圈（反馈里的「卡死」）。
+  /// 单个站点不会被打爆：Go 侧的限流器按 host 分桶，同一站点仍然串行且
+  /// 两次请求之间有最小间隔，这里提高的是「不同站点之间」的并行度。
+  static const _concurrency = 8;
 
   Future<void> _each<T>(List<T> entries, Future<void> Function(T) visit) async {
     if (entries.isEmpty) return;
