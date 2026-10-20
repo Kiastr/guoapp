@@ -197,10 +197,15 @@ class CatalogBrowser {
   }) async {
     final failures = <String>[];
     await _each(group.sources, (source) async {
-      try {
-        final cached = await repository.cached(source.id);
-        _remember(source.id, cached.items);
-      } catch (_) {}
+      // 本机剧库已经读过这个源（目录加载先读的缓存）就不再回读一遍：
+      // 启动时 `_load` 与 `_loadCategories` 是并行的，两边都按源读整份缓存，
+      // 「全部站源」就是几十份全量 JSON 的重复传输。
+      if (_library[source.id]?.isNotEmpty != true) {
+        try {
+          final cached = await repository.cached(source.id);
+          _remember(source.id, cached.items);
+        } catch (_) {}
+      }
       // 分类已经加载过且不是强制刷新：省掉网络请求。
       // 每次进软件 / 切分组都向几十个站源拉一遍分类是主要的性能黑洞。
       // 注意只跳网络，上面的本地缓存读取保留——「按分类筛选本机剧库」

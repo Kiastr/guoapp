@@ -18,6 +18,7 @@ import 'app_build.dart';
 import 'source_status.dart';
 import 'ranking_models.dart';
 import 'cover_decoder.dart';
+import 'cover_request_gate.dart';
 import 'catalog_updates.dart';
 import 'download_collections.dart';
 import 'resource_settings.dart';
@@ -806,8 +807,26 @@ class NativeRepository extends AppRepository {
           'category': category,
         }),
       );
+  /// 封面请求闸门：并发上限 4（与 Go 侧下载槽位一致），同图合流。
+  final _coverGate = CoverRequestGate();
+
+  int _coverForceSequence = 0;
+
   @override
-  Future<String> cover(Drama drama, {bool force = false}) async {
+  Future<String> cover(Drama drama, {bool force = false}) {
+    final key = '${drama.source}\u0000${drama.id}\u0000${drama.cover}';
+    // 强制刷新（用户点重试、元数据更新）不合流，避免拿到旧结果；
+    // 但仍受并发上限约束，防止一次点几十个重试把 FFI 打满。
+    if (force) {
+      return _coverGate.load(
+        '$key\u0000force-${_coverForceSequence++}',
+        () => _loadCover(drama, force: true),
+      );
+    }
+    return _coverGate.load(key, () => _loadCover(drama));
+  }
+
+  Future<String> _loadCover(Drama drama, {bool force = false}) async {
     final epoch = access?.profileEpoch;
     final result = await _call({
       'action': 'cover',
