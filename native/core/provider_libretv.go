@@ -82,12 +82,44 @@ func libretvNormalizeSiteType(siteType int) int {
 // 本项目扩展：Type == 2 且 URL 以 .js 结尾 = 本地脚本解析，
 // 由 goja 执行脚本里的 parse(url)，**不是 TVBox 标准语义**，
 // 标准配置里的 type=2 聚合解析不会被当成脚本。
+// libretvParse 解析方式（订阅的 parses 段）。
+//
+// 字段类型刻意做成「宽松」：真实订阅里 type 有写成字符串的情况
+// （影视仓聚合订阅就有 `"type": "1"`），用 int 会让**整份订阅**解析失败——
+// 518 个站点因为一条解析规则报废。这里统一按 libretvFlexibleInt 取值。
 type libretvParse struct {
-	Name string `json:"name"`
-	Type int    `json:"type"`
-	URL  string `json:"url"`
+	Name string         `json:"name"`
+	Type libretvFlexInt `json:"type"`
+	URL  string         `json:"url"`
 	// Ext 原样保留订阅里的 ext（对象/数组），仅存档展示，不参与执行。
 	Ext json.RawMessage `json:"ext,omitempty"`
+}
+
+// libretvFlexInt 容忍「数字或数字字符串」的整数字段。
+// TVBox 订阅由人工维护，同一字段在不同仓里可能是 1 也可能是 "1"。
+type libretvFlexInt int
+
+func (v *libretvFlexInt) UnmarshalJSON(data []byte) error {
+	text := strings.TrimSpace(string(data))
+	if text == "" || text == "null" {
+		*v = 0
+		return nil
+	}
+	// 去掉字符串引号后按整数解析；解析不了就当 0，不阻断整份订阅。
+	if strings.HasPrefix(text, `"`) {
+		if unquoted, err := strconv.Unquote(text); err == nil {
+			text = unquoted
+		} else {
+			text = strings.Trim(text, `"`)
+		}
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil {
+		*v = 0
+		return nil
+	}
+	*v = libretvFlexInt(value)
+	return nil
 }
 
 // libretvParseKind 返回解析方式的中文类型名（UI 展示用）。
@@ -466,7 +498,8 @@ type libretvConfigSite struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
 	API  string `json:"api"`
-	Type int    `json:"type"`
+	// Type 同样是宽松整数：社区订阅里 type 有写成 "3" 的。
+	Type libretvFlexInt `json:"type"`
 	// Ext TVBox type≥3 的扩展字段：drpy 站点里 api 是运行时库
 	// （drpy2.min.js），ext 才是真正的站点脚本地址。也可能是对象或
 	// JSON 规则文件（csp_ 规则），此时不参与脚本候选。
@@ -491,10 +524,40 @@ func libretvConfigExtText(raw json.RawMessage) string {
 // 的 .js」才算脚本。
 func libretvConfigExtScriptURL(raw json.RawMessage) string {
 	text := libretvConfigExtText(raw)
-	if !looksLikeDrpyScriptURL(text) {
+	if text == "" {
 		return ""
 	}
-	return text
+	if looksLikeDrpyScriptURL(text) {
+		return text
+	}
+	// 相对脚本路径（`./js/xxx.js`、`../lib/xxx.js`）：高天流云等大仓普遍
+	// 这么写（api 是运行时库，ext 才是站点脚本）。这里原样返回，由调用方
+	// 按订阅地址补全——修这个之前，298 站的大仓只能识别出 6 个运行时库。
+	if libretvLooksLikeScriptPath(text) {
+		return text
+	}
+	return ""
+}
+
+// libretvLooksLikeScriptPath 判断是否是相对脚本路径（待补全）。
+// 形态：`./js/xx.js`、`../lib/xx.js`、`js/xx.js`、`/lib/xx.js`。
+// 排除 csp_ / http(s) 等明显不是路径的写法。
+func libretvLooksLikeScriptPath(raw string) bool {
+	text := strings.TrimSpace(raw)
+	if text == "" || strings.ContainsAny(text, " \t\n\r") {
+		return false
+	}
+	if strings.HasPrefix(text, "csp_") || strings.HasPrefix(text, "py_") {
+		return false
+	}
+	if strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://") {
+		return false
+	}
+	path := text
+	if cut := strings.IndexAny(path, "?#;"); cut >= 0 {
+		path = path[:cut]
+	}
+	return strings.HasSuffix(strings.ToLower(path), ".js")
 }
 
 // libretvConfigScriptCandidate 决定 type≥3 条目的脚本候选地址。
@@ -604,6 +667,11 @@ func libretvDisplayName(entry libretvConfigSite) string {
 
 // libretvExtractJSONObject 从订阅内容里截取 JSON 对象：
 // 兼容纯 JSON、var config = {...}; 之类的 JS 包裹、以及带前后缀杂文本的情况。
+// libretvExtractJSONObject 从任意文本里抠出 JSON 对象（订阅正文可能带
+// 前后包裹文本或 HTML）。
+//
+// 注意：这里**不做**注释剥离，保持「原始切片」语义——调用方可自行决定。
+// 订阅配置的注释剥离统一走 libretvCleanConfigText。
 func libretvExtractJSONObject(body string) string {
 	trimmed := strings.TrimSpace(body)
 	start := strings.Index(trimmed, "{")
@@ -612,6 +680,64 @@ func libretvExtractJSONObject(body string) string {
 		return ""
 	}
 	return trimmed[start : end+1]
+}
+
+// libretvCleanConfigText 清洗订阅/配置文本，让「人工维护的不严格 JSON」
+// 也能解析。做三件事：
+//
+//  1. 去 BOM；
+//  2. 去 // 与 /* */ 注释——真实订阅普遍带注释（maoystv 的 001.json
+//     第 2 行就是 `//数据接口`），不处理会整份解析失败；
+//  3. 转义字符串字面量里的裸换行 / 制表符——真实订阅里作者手滑断行很常见
+//     （小盒子 4K 的 `"优\n酷"` 中间就是真换行），标准 JSON 不允许，
+//     Go 的 encoding/json 会直接报错。
+//
+// 不做的事：不去尾随逗号、不修中文引号——那些属于「文件损坏」，宁可报错
+// 让用户换源，也不要猜出一份可能张冠李戴的配置。
+func libretvCleanConfigText(body string) string {
+	return escapeRawJSONControlChars(ruleStripJSONComments(strings.TrimPrefix(body, "\ufeff")))
+}
+
+// escapeRawJSONControlChars 把 JSON 字符串字面量内部的裸控制字符转义。
+// 扫描时区分「字符串内 / 字符串外」，只在字符串内替换，避免影响结构空白。
+func escapeRawJSONControlChars(body string) string {
+	if !strings.ContainsAny(body, "\n\r\t") {
+		return body
+	}
+	var builder strings.Builder
+	builder.Grow(len(body))
+	inString := false
+	escaped := false
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if inString {
+			switch {
+			case escaped:
+				builder.WriteByte(c)
+				escaped = false
+			case c == '\\':
+				builder.WriteByte(c)
+				escaped = true
+			case c == '"':
+				builder.WriteByte(c)
+				inString = false
+			case c == '\n':
+				builder.WriteString(`\n`)
+			case c == '\r':
+				builder.WriteString(`\r`)
+			case c == '\t':
+				builder.WriteString(`\t`)
+			default:
+				builder.WriteByte(c)
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+		}
+		builder.WriteByte(c)
+	}
+	return builder.String()
 }
 
 // drpyCandidate 混合订阅里发现的 drpy 脚本候选：type≥3 且 api 是 .js
@@ -644,6 +770,9 @@ type libretvParseResult struct {
 	RuleCandidates []ruleCandidate
 	// Parses 订阅里的解析规则。
 	Parses []libretvParse
+	// ParseBroken parses 段解析失败（字段类型不合规等）：站点仍可导入，
+	// 只是没有解析方式，导入结果里会提示。
+	ParseBroken bool
 	// Skipped 被跳过的条目与原因。
 	Skipped []string
 }
@@ -656,22 +785,35 @@ type libretvParseResult struct {
 // 版本）。baseURL 为订阅自身地址，用于把 CatVod 蜘蛛常见的相对写法
 // （./cat/xxx_open.js）补全成完整地址后再判定候选。
 func parseLibreTVSubscription(body, baseURL string) (libretvParseResult, error) {
-	document := libretvExtractJSONObject(body)
+	// 先清洗（去 BOM / // 注释），再抠 JSON 对象：真实订阅普遍带注释，
+	// 不清洗会整份解析失败。
+	cleaned := libretvCleanConfigText(body)
+	document := libretvExtractJSONObject(cleaned)
 	if document == "" {
 		return libretvParseResult{}, errors.New("未找到有效的 LibreTV 配置（需要包含 sites 的 JSON）")
 	}
-	var config struct {
-		Sites  []libretvConfigSite `json:"sites"`
-		Parses []libretvParse      `json:"parses"`
+	// sites 与 parses **分开解析**：两者在订阅里是并列字段，其中一段写坏
+	// 不该拖垮另一段。真实订阅「影视仓聚合」的 parses 里有一条
+	// `"type": "1"`（字符串），合在一起解析会让 518 个站点全部报废。
+	var siteDoc struct {
+		Sites []libretvConfigSite `json:"sites"`
 	}
-	if json.Unmarshal([]byte(document), &config) != nil {
+	if json.Unmarshal([]byte(document), &siteDoc) != nil {
 		return libretvParseResult{}, errors.New("配置解析失败，请确认是 LibreTV/TVBox 格式的 JSON")
 	}
+	var parseDoc struct {
+		Parses []libretvParse `json:"parses"`
+	}
+	// parses 解析失败只记跳过原因——解析方式缺失不阻断片源导入。
+	if json.Unmarshal([]byte(document), &parseDoc) != nil {
+		parseDoc.Parses = nil
+	}
 	var result libretvParseResult
+	result.ParseBroken = json.Unmarshal([]byte(document), &parseDoc) != nil
 	// parses 与 sites 相互独立：只带解析规则的订阅也可以导入（解析方式本身
 	// 对已导入的站点同样生效）。
 	seenParse := map[string]bool{}
-	for _, raw := range config.Parses {
+	for _, raw := range parseDoc.Parses {
 		parse, ok := normalizeLibreTVParse(raw)
 		if !ok {
 			// TVBox 内置 WebView 嗅探（url 是 "Web" 之类的标记）在纯 Go 端
@@ -684,12 +826,12 @@ func parseLibreTVSubscription(body, baseURL string) (libretvParseResult, error) 
 		seenParse[parse.URL] = true
 		result.Parses = append(result.Parses, parse)
 	}
-	if len(config.Sites) == 0 && len(result.Parses) == 0 {
+	if len(siteDoc.Sites) == 0 && len(result.Parses) == 0 {
 		return libretvParseResult{}, errors.New("配置里没有 sites 条目")
 	}
 	seenAPI := map[string]bool{}
 	usedKey := map[string]bool{}
-	for _, entry := range config.Sites {
+	for _, entry := range siteDoc.Sites {
 		api := strings.TrimSpace(entry.API)
 		if api == "" {
 			result.Skipped = append(result.Skipped, fmt.Sprintf("%s：缺少 api 地址", libretvDisplayName(entry)))
@@ -749,7 +891,7 @@ func parseLibreTVSubscription(body, baseURL string) (libretvParseResult, error) 
 			)
 			continue
 		}
-		key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api, entry.Type)
+		key, name, normalized, ok := normalizeLibreTVSite(entry.Key, entry.Name, api, int(entry.Type))
 		if !ok {
 			result.Skipped = append(result.Skipped, fmt.Sprintf("%s：接口地址无效", libretvDisplayName(entry)))
 			continue
@@ -762,7 +904,7 @@ func parseLibreTVSubscription(body, baseURL string) (libretvParseResult, error) 
 		}
 		seenAPI[normalized] = true
 		usedKey[key] = true
-		result.Sites = append(result.Sites, libretvSite{Key: key, Name: name, API: normalized, Type: libretvNormalizeSiteType(entry.Type)})
+		result.Sites = append(result.Sites, libretvSite{Key: key, Name: name, API: normalized, Type: libretvNormalizeSiteType(int(entry.Type))})
 		if len(result.Sites) >= libretvImportMaxSites {
 			result.Skipped = append(result.Skipped, fmt.Sprintf("站点数量超过 %d 个，仅导入前 %d 个", libretvImportMaxSites, libretvImportMaxSites))
 			break
@@ -823,6 +965,11 @@ func (engine *nativeEngine) importLibreTVSubscription(ctx context.Context, raw s
 		}
 	}
 	sites, drpyCandidates, ruleCandidates, parses, skipped := parsed.Sites, parsed.DrpyCandidates, parsed.RuleCandidates, parsed.Parses, parsed.Skipped
+	// 解析段写坏（字段类型不合规等）：站点已照常导入，但要让用户知道
+	// 「解析方式没进来」——否则会出现「片源在但点开播不了」的困惑。
+	if parsed.ParseBroken {
+		skipped = append(skipped, "订阅的解析规则（parses）格式不合规已跳过，片源照常导入；部分需要解析的片源可能无法播放")
+	}
 	if err != nil {
 		// 兜底：输入本身就是裸采集接口地址时，按单站点导入。
 		// 地址形如 /at/xml 的按 XML 采集站处理，其余按 JSON 采集站处理。

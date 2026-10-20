@@ -437,7 +437,7 @@ func TestLibreTVResolveWebViewParseNeedsDart(t *testing.T) {
 	// type=0 / 4：Go 不实现浏览器，必须由 Dart 侧 WebView 嗅探后替换直链。
 	for _, parseType := range []int{0, 4} {
 		parseURL := fmt.Sprintf("%s/parse-%d", fixture.server.URL, parseType)
-		if err := downloader.libretv.putParses([]libretvParse{{Name: "Web", Type: parseType, URL: parseURL}}); err != nil {
+		if err := downloader.libretv.putParses([]libretvParse{{Name: "Web", Type: libretvFlexInt(parseType), URL: parseURL}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := downloader.libretv.setSelectedParse(parseURL); err != nil {
