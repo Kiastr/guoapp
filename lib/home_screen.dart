@@ -602,6 +602,22 @@ class _HomeScreenState extends State<HomeScreen> {
         force: force,
         cacheOnly: cacheOnly,
         onCached: (result) => accept(result, cached: true),
+        onPartial: (result) {
+          // 流式刷新：某个源先回来了就先把它渲染出来，其余源陆续补齐。
+          //
+          // 这里**只更新列表、不写库**——accept() 里的 refreshDramas 会做
+          // 一次全量序列化（实测百毫秒级），每批数据都调一次会让 UI 再次卡住。
+          // 最终结果仍由下面的 accept() 统一写库。
+          if (!mounted || generation != _generation) return;
+          if (result.items.isEmpty) return;
+          setState(() {
+            _items = result.items;
+            _itemsRevision++;
+            _hasMore = result.hasMore;
+            _loading = true;
+            _loadingMore = false;
+          });
+        },
       );
       accept(result);
     } catch (error) {

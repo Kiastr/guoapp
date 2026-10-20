@@ -91,13 +91,29 @@ class CatalogBrowser {
   /// 两次请求之间有最小间隔，这里提高的是「不同站点之间」的并行度。
   static const _concurrency = 8;
 
-  Future<void> _each<T>(List<T> entries, Future<void> Function(T) visit) async {
+  /// 流式渲染的合并间隔。首个源立即回调，之后至少隔这么久才再推一次，
+  /// 避免几十个源各触发一次 setState（每次都要重建列表）。
+  static const _partialInterval = Duration(milliseconds: 90);
+
+  /// 逐个处理 [entries]，每个完成后回调 [onProgress]（用于流式渲染）。
+  ///
+  /// [onProgress] 在 visit 结束后**无论成功失败**都会调用：一个源挂了不该
+  /// 拖住其他源的结果展示。
+  Future<void> _each<T>(
+    List<T> entries,
+    Future<void> Function(T) visit, {
+    void Function()? onProgress,
+  }) async {
     if (entries.isEmpty) return;
     var index = 0;
     Future<void> worker() async {
       while (index < entries.length) {
         final entry = entries[index++];
-        await visit(entry);
+        try {
+          await visit(entry);
+        } finally {
+          onProgress?.call();
+        }
       }
     }
 
@@ -183,6 +199,10 @@ class CatalogBrowser {
     bool useCache = false,
     bool cacheOnly = false,
     void Function(CatalogPage)? onCached,
+    // 流式渲染：**每有一个源返回就回调一次**，让「全部站源」这种几十个源的
+    // 场景先出内容、再逐步补齐，而不是等所有源都回来才显示。
+    // 内部按 [_partialInterval] 节流，但第一个源永远立即回调。
+    void Function(CatalogPage)? onPartial,
   }) async {
     if (cacheOnly && (more || force || query.trim().isNotEmpty)) {
       throw AppFailure('缓存读取不能同时请求搜索或续页');
@@ -241,8 +261,22 @@ class CatalogBrowser {
       );
     }
 
+    // 流式发射器：首个源完成立即发，之后按间隔合并，避免几十次 setState。
+    var lastEmit = 0;
+    var emitted = false;
+    void emitPartial() {
+      final callback = onPartial;
+      if (callback == null) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (emitted && now - lastEmit < _partialInterval.inMilliseconds) return;
+      emitted = true;
+      lastEmit = now;
+      if (generation != session.generation) return;
+      callback(snapshot());
+    }
+
     if ((useCache || cacheOnly) && !force && !more && query.isEmpty) {
-      await _each(sourceOrder, (source) async {
+      await _each(sourceOrder, onProgress: emitPartial, (source) async {
         try {
           final cached = await repository.cached(
             source,
@@ -268,7 +302,7 @@ class CatalogBrowser {
       if (cached.fresh && cached.items.isNotEmpty) return cached;
     }
 
-    await _each(sourceOrder, (source) async {
+    await _each(sourceOrder, onProgress: emitPartial, (source) async {
       if (generation != session.generation) return;
       final entry = session.entries[source]!;
       if (more && !entry.hasMore) return;
