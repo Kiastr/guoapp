@@ -33,6 +33,15 @@ class _CatalogEntry {
 
 class _CatalogSession {
   final entries = <String, _CatalogEntry>{};
+
+  /// 实际「先拿到内容」的源顺序。
+  ///
+  /// 展示顺序按它排，而不是按请求顺序：请求顺序由健康度决定（快的先发），
+  /// 但如果按请求顺序拼列表，一个排在前面的慢源晚到时会把已经显示出来的
+  /// 内容整体往下挤——每来一批源就重排一次，列表看起来一直在跳。按到达
+  /// 顺序拼则可以保证「已经显示的条目位置不动，新内容只往后追加」。
+  final arrival = <String>[];
+
   int generation = 0;
 }
 
@@ -77,6 +86,12 @@ class CatalogBrowser {
   void _recordHealth(String source, {required bool ok, required int elapsedMs}) {
     health.record(source, ok: ok, elapsedMs: elapsedMs);
     onHealth?.call(source, ok, elapsedMs);
+  }
+
+  /// 记下这个源「第一次在本轮会话里出内容」的位置（只记一次）。
+  void _arrive(_CatalogSession session, String source) {
+    if (session.entries[source]!.items.isEmpty) return;
+    if (!session.arrival.contains(source)) session.arrival.add(source);
   }
 
   void _remember(String source, Iterable<Drama> items) {
@@ -308,14 +323,18 @@ class CatalogBrowser {
     }
 
     CatalogPage snapshot() {
-      final rows = displayOrder
-          .map((source) => session.entries[source]!.items)
-          .toList();
+      // 到达顺序优先；从没出过内容的源（含被跳过的旧条目）排在后面。
+      // 这里不做「按行轮流取一条」的交错：交错在流式阶段会让每批新内容
+      // 插进已有条目中间，整屏往下窜。追加式排列对「只在加载中看」最友好。
+      final order = <String>[
+        ...session.arrival,
+        for (final source in displayOrder)
+          if (!session.arrival.contains(source)) source,
+      ];
       final items = <String, Drama>{};
-      final count = rows.fold<int>(0, (count, row) => max(count, row.length));
-      for (var index = 0; index < count; index++) {
-        for (final row in rows) {
-          if (index < row.length) items[row[index].id] = row[index];
+      for (final source in order) {
+        for (final item in session.entries[source]!.items) {
+          items[item.id] = item;
         }
       }
       if (choice != null) {
@@ -372,6 +391,7 @@ class CatalogBrowser {
           if (generation != session.generation || cached.items.isEmpty) return;
           final entry = session.entries[source]!;
           entry.items = cached.items;
+          _arrive(session, source);
           entry.page = cached.page;
           entry.nextPage = cached.page + 1;
           entry.hasMore = cached.hasMore || cached.warning.isNotEmpty;
@@ -416,6 +436,7 @@ class CatalogBrowser {
           for (final item in result.items) item.id: item,
         };
         entry.items = items.values.toList();
+        _arrive(session, source);
         entry.page = result.page;
         entry.nextPage = result.warning.isEmpty ? result.page + 1 : page;
         entry.hasMore =

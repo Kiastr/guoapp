@@ -171,4 +171,46 @@ void main() {
     expect(partials, isNotEmpty, reason: '缓存命中时也应先渲染，不等网络');
     expect(partials.first, 1);
   });
+
+
+  test('先出的内容位置不动：新源只往后追加，不把已有条目挤下去', () async {
+    // 请求顺序故意和到达顺序相反：慢源排在前面。若按请求顺序拼列表，
+    // 慢源晚到会把已经显示的 fast / mid 整体往下挤（每批一次重排）。
+    final repository = _DelayRepository({
+      'libretv:slow': 260,
+      'libretv:mid': 130,
+      'libretv:fast': 10,
+    });
+    final browser = CatalogBrowser(repository);
+    final partialIds = <List<String>>[];
+    final watch = Stopwatch()..start();
+
+    final result = await browser.load(
+      _groupOf(['slow', 'mid', 'fast']),
+      force: true,
+      onPartial: (page) {
+        partialIds.add([for (final item in page.items) item.id]);
+      },
+    );
+    watch.stop();
+
+    expect(partialIds.length, greaterThanOrEqualTo(2), reason: '应有多次流式推送');
+    // 每次推送都必须以上一次的内容为前缀（只追加、不重排）。
+    for (var index = 1; index < partialIds.length; index++) {
+      final previous = partialIds[index - 1];
+      final current = partialIds[index];
+      expect(
+        current.take(previous.length).toList(),
+        previous,
+        reason: '第 $index 次推送把已有条目挪了位置：$previous -> $current',
+      );
+    }
+    // 先加载的源排在前面（按到达顺序，而不是请求顺序）。
+    expect(result.items.map((item) => item.source).toList(), [
+      'libretv:fast',
+      'libretv:mid',
+      'libretv:slow',
+    ]);
+    expect(partialIds.first.first, 'libretv:fast:item-1');
+  });
 }
