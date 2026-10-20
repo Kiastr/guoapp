@@ -27,7 +27,7 @@ func newTestRequest() *http.Request {
 // TestRequestLimiterAllowsConcurrentHosts 不同 host 可以并发到上限。
 func TestRequestLimiterAllowsConcurrentHosts(t *testing.T) {
 	const want = 8
-	limiter := newRequestLimiter(want, time.Millisecond)
+	limiter := newRequestLimiterWithExternal(3, want, time.Millisecond)
 	// 用 8 个不同的 host，每个都应当能立刻拿到令牌。
 	hosts := []string{
 		"a.example.com", "b.example.com", "c.example.com", "d.example.com",
@@ -70,7 +70,7 @@ func TestRequestLimiterAllowsConcurrentHosts(t *testing.T) {
 
 // TestRequestLimiterSerializesSameHost 同一 host 仍然串行（保护小站）。
 func TestRequestLimiterSerializesSameHost(t *testing.T) {
-	limiter := newRequestLimiter(8, time.Millisecond)
+	limiter := newRequestLimiterWithExternal(3, 8, time.Millisecond)
 	var mu sync.Mutex
 	inFlight := 0
 	peak := 0
@@ -107,7 +107,7 @@ func TestRequestLimiterSerializesSameHost(t *testing.T) {
 // TestRequestLimiterSpacesSameHost 同一 host 的两次请求之间有最小间隔。
 func TestRequestLimiterSpacesSameHost(t *testing.T) {
 	const interval = 80 * time.Millisecond
-	limiter := newRequestLimiter(8, interval)
+	limiter := newRequestLimiterWithExternal(3, 8, interval)
 	request, _ := http.NewRequest(http.MethodGet, "https://spaced.example.com/x", nil)
 	first, err := limiter.acquire(context.Background(), request)
 	if err != nil {
@@ -123,5 +123,55 @@ func TestRequestLimiterSpacesSameHost(t *testing.T) {
 	second()
 	if elapsed < interval/2 {
 		t.Fatalf("同一 host 两次请求间隔 %v，应至少约 %v", elapsed, interval)
+	}
+}
+
+// TestRequestLimiterBuiltinSourcesKeepConservativeLimit 内置源（红果等）必须
+// 沿用原作者的并发上限，不能被第三方源的放宽影响。
+//
+// 红果 / 黄果 / 野果这些站点有账号与反爬风控，并发一旦放大就可能被限流或
+// 封号；用户导入的第三方向才需要更高并行度。两者必须是两套计数。
+func TestRequestLimiterBuiltinSourcesKeepConservativeLimit(t *testing.T) {
+	const builtinLimit = 3
+	limiter := newRequestLimiterWithExternal(builtinLimit, 8, time.Millisecond)
+	// 用多个不同 host，但都映射到内置源（hongguoduanju.com 及其变体）。
+	hosts := []string{
+		"hongguoduanju.com",
+		"www.hongguoduanju.com",
+		"huangguoai.com",
+		"huangguo.video",
+		"tideember.cc",
+		"huangju.net",
+	}
+	var mu sync.Mutex
+	inFlight := 0
+	peak := 0
+	var wg sync.WaitGroup
+	for _, host := range hosts {
+		wg.Add(1)
+		go func(host string) {
+			defer wg.Done()
+			request, _ := http.NewRequest(http.MethodGet, "https://"+host+"/x", nil)
+			release, err := limiter.acquire(context.Background(), request)
+			if err != nil {
+				t.Errorf("%s acquire 失败：%v", host, err)
+				return
+			}
+			mu.Lock()
+			inFlight++
+			if inFlight > peak {
+				peak = inFlight
+			}
+			mu.Unlock()
+			time.Sleep(50 * time.Millisecond)
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			release()
+		}(host)
+	}
+	wg.Wait()
+	if peak > builtinLimit {
+		t.Fatalf("内置源并发峰值 %d 超过上限 %d——红果等源可能被风控", peak, builtinLimit)
 	}
 }
