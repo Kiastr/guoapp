@@ -191,17 +191,25 @@ type nativeEngine struct {
 	hongguoCatalog   *hongguoCatalogState
 	recommendations  map[string]nativeRecommendationState
 	catalogSaveError error
-	sourceSaveError  error
-	covers           *nativeCoverCache
-	stream           *nativeStreamServer
-	playbacks        map[string]nativePlaybackChoice
-	playbackMu       sync.Mutex
-	playbackSequence int64
-	playbackCancel   context.CancelFunc
-	sourceTasks      map[string]*nativeSourceTask
-	sourceRecords    map[string]nativeSourceRecord
-	sourceCatalogMu  sync.Mutex
-	sourceCatalogs   map[string]chan struct{}
+	// catalogWriteDelay > 0 时，剧库落盘改为「合并写」：一次刷新几十个源，
+	// 每个源都把整份 catalogs.json 重新序列化并 fsync 一遍，而且全程握着
+	// engine.mu（原作者只考虑单源，没料到几十个源同时刷新）。延迟期间内存
+	// 数据始终是最新的，读取不依赖磁盘；进程被杀最多丢最后一批缓存。
+	catalogWriteDelay time.Duration
+	catalogFlush      *time.Timer
+	catalogDirty      bool
+	catalogWrites     int
+	sourceSaveError   error
+	covers            *nativeCoverCache
+	stream            *nativeStreamServer
+	playbacks         map[string]nativePlaybackChoice
+	playbackMu        sync.Mutex
+	playbackSequence  int64
+	playbackCancel    context.CancelFunc
+	sourceTasks       map[string]*nativeSourceTask
+	sourceRecords     map[string]nativeSourceRecord
+	sourceCatalogMu   sync.Mutex
+	sourceCatalogs    map[string]chan struct{}
 }
 
 var nativeState struct {
@@ -384,6 +392,9 @@ func nativeDispatch(input nativeInput) (any, error) {
 				return nil, err
 			}
 			nativeState.engine = engine
+			// 正式运行时开启剧库合并写；测试里直接 newNativeEngine 的路径保持
+			// 同步写盘（0），断言「调用后立刻落盘」的既有用例不受影响。
+			engine.catalogWriteDelay = 1500 * time.Millisecond
 		}
 		nativeState.Unlock()
 		return map[string]any{"version": "0.2.17", "standalone": true, "allSources": buildAllSources == "true"}, nil

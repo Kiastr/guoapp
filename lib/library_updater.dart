@@ -21,6 +21,12 @@ class LibraryUpdater extends ChangeNotifier {
   final _stopRequested = <String>{};
   final _revisions = <String, int>{};
   final _delivered = <String, String>{};
+
+  /// 已记入健康度账本的「任务完成」修订号。
+  ///
+  /// 状态是轮询出来的，同一个完成状态会被反复读到；没有这个去重，
+  /// 一次失败会被记成几十次连续失败，源就永远处于跳过冷却里。
+  final _healthDelivered = <String, String>{};
   Timer? _timer;
   bool _polling = false;
   bool _disposed = false;
@@ -82,6 +88,19 @@ class LibraryUpdater extends ChangeNotifier {
         '${status.operation}|${status.startedAt}|${status.finishedAt}|'
         '${status.updatedAt}|${status.count}|${status.storageError}';
     if (!status.running &&
+        status.operation == 'update' &&
+        _healthDelivered[status.source] != revision) {
+      _healthDelivered[status.source] = revision;
+      final started = status.startedAt, finished = status.finishedAt;
+      store.noteSourceHealth(
+        status.source,
+        ok: status.error.isEmpty,
+        elapsedMs: started != null && finished != null
+            ? finished.difference(started).inMilliseconds
+            : 0,
+      );
+    }
+    if (!status.running &&
         (status.finishedAt != null || submitted) &&
         {
           'update',
@@ -122,11 +141,12 @@ class LibraryUpdater extends ChangeNotifier {
 
   Future<void> update(Iterable<SourceSite> sources) async {
     if (!_valid || !repository.supportsSourceManagement) return;
-    final selected = sources
-        .map((source) => source.id)
-        .toSet()
-        .where((source) => store.allowsSource(source) && !busy(source))
-        .toList();
+    final selected = store.sourceHealth.order(
+      sources
+          .map((source) => source.id)
+          .toSet()
+          .where((source) => store.allowsSource(source) && !busy(source)),
+    );
     for (final source in selected) {
       _stopRequested.remove(source);
       _pending.add(source);

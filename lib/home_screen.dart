@@ -270,6 +270,9 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         if (!mounted || epoch != widget.store.profileEpoch) return;
         _browser.updateDramas(updates.values);
+        // 站源任务已经改写了磁盘缓存，内存里的旧条目必须作废，否则下面
+        // 的 cacheOnly 重载会跳过回读、继续展示更新前的列表。
+        _browser.invalidateCached(sources);
         setState(() {
           _items = [
             for (final item in _items)
@@ -476,7 +479,15 @@ class _HomeScreenState extends State<HomeScreen> {
     _source = SourceSite.byId(widget.store.source);
     _allSources = widget.store.catalogView.allSources;
     _sourceSignature = widget.store.sources.map((site) => site.id).join(',');
-    _browser = CatalogBrowser(widget.repository);
+    _browser = CatalogBrowser(
+      widget.repository,
+      health: widget.store.sourceHealth,
+      onHealth: (source, ok, elapsedMs) => widget.store.noteSourceHealth(
+        source,
+        ok: ok,
+        elapsedMs: elapsedMs,
+      ),
+    );
     _updater = LibraryUpdater(
       widget.repository,
       widget.store,

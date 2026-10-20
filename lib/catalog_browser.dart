@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'core_bridge.dart';
 import 'models.dart';
+import 'source_health.dart';
 
 String categoryName(String name) {
   final compact = name.trim().replaceAll(RegExp(r'\s+'), '');
@@ -36,12 +37,34 @@ class _CatalogSession {
 }
 
 class CatalogBrowser {
-  CatalogBrowser(this.repository);
+  CatalogBrowser(
+    this.repository, {
+    SourceHealthBook? health,
+    this.onHealth,
+  }) : health = health ?? SourceHealthBook();
+
   final AppRepository repository;
+
+  /// 源级健康度账本：排序 + 冷却跳过（详见 source_health.dart）。
+  final SourceHealthBook health;
+
+  /// 一次请求结束后回调（source, ok, elapsedMs），由 LocalStore 负责合并落盘。
+  final void Function(String source, bool ok, int elapsedMs)? onHealth;
   final _menus = <String, List<CatalogCategory>>{};
   final _library = <String, Map<String, Drama>>{};
   final _sessions = <String, _CatalogSession>{};
   int _generation = 0;
+
+  // 分类聚合的缓存。
+  //
+  // `categories()` 在首页 build 里被访问（分类标签栏），而 `_choices()` 要扫
+  // 一遍「所有源的分类 + 本机剧库的全部条目」。单源时代这很便宜；「全部站源」
+  // 有几十个源、上千条剧时，每帧重算就直接吃掉一帧的预算。用版本号兜住：
+  // 只有菜单 / 剧库真的变了才重算。
+  int _menuRevision = 0;
+  int _libraryRevision = 0;
+  String _choicesKey = '';
+  List<_CatalogChoice>? _choicesCache;
 
   Future<void> cancel() {
     _generation++;
@@ -51,17 +74,47 @@ class CatalogBrowser {
     return repository.cancelCatalog();
   }
 
+  void _recordHealth(String source, {required bool ok, required int elapsedMs}) {
+    health.record(source, ok: ok, elapsedMs: elapsedMs);
+    onHealth?.call(source, ok, elapsedMs);
+  }
+
   void _remember(String source, Iterable<Drama> items) {
     final library = _library.putIfAbsent(source, () => {});
+    var changed = false;
     for (final drama in items) {
       if (drama.source == source) {
         library[drama.id] = library[drama.id]?.merge(drama) ?? drama;
+        changed = true;
       }
     }
+    if (changed) _libraryRevision++;
   }
 
   void updateDrama(Drama drama) {
     updateDramas([drama]);
+  }
+
+  /// 站源任务把磁盘缓存换新之后调用：丢掉这些源在内存里的旧条目，
+  /// 下一次 [load]（cacheOnly / useCache）才会重新回读磁盘。
+  ///
+  /// 为什么需要它：`load` 的缓存阶段现在会跳过「内存里已有条目」的源
+  /// （省掉几十份全量 JSON 的跨 FFI 传输），而站源更新恰恰是**外部**
+  /// 改写了磁盘缓存——不显式失效就会一直显示更新前的旧列表。
+  void invalidateCached(Iterable<String> sources) {
+    final targets = sources.toSet();
+    if (targets.isEmpty) return;
+    for (final session in _sessions.values) {
+      for (final source in targets) {
+        final entry = session.entries[source];
+        if (entry == null) continue;
+        entry.items = [];
+        entry.page = 0;
+        entry.nextPage = 1;
+        entry.hasMore = true;
+        entry.fresh = false;
+      }
+    }
   }
 
   void updateDramas(Iterable<Drama> dramas) {
@@ -144,6 +197,7 @@ class CatalogBrowser {
           source.id,
           force: force,
         );
+        _menuRevision++;
       } catch (_) {
         // 请求失败时不要把空结果写进缓存，否则下次进来还是没有分类。
         if (!_menus.containsKey(source.id)) {
@@ -155,6 +209,11 @@ class CatalogBrowser {
   }
 
   List<_CatalogChoice> _choices(SourceGroup group) {
+    final key =
+        '${group.id}|${group.sources.map((s) => s.id).join(',')}|'
+        '$_menuRevision|$_libraryRevision';
+    final cached = _choicesCache;
+    if (cached != null && key == _choicesKey) return cached;
     final choices = <String, _CatalogChoice>{};
     for (final source in group.sources) {
       for (final category in _menus[source.id] ?? const <CatalogCategory>[]) {
@@ -178,7 +237,10 @@ class CatalogBrowser {
         () => _CatalogChoice(CatalogCategory('local:$name', name, local: true)),
       );
     }
-    return choices.values.toList();
+    final result = choices.values.toList();
+    _choicesCache = result;
+    _choicesKey = key;
+    return result;
   }
 
   List<CatalogCategory> categories(SourceGroup group) => [
@@ -223,13 +285,30 @@ class CatalogBrowser {
     final session = _sessions.putIfAbsent(key, _CatalogSession.new);
     final generation = ++session.generation;
     final failures = <String, String>{};
-    final sourceOrder = requests.keys.toList();
-    for (final source in sourceOrder) {
+    final requested = requests.keys.toList();
+    // 按健康度排序：健康的先发、死源排最后（并发槽位先给能出结果的源）。
+    // 只有「被动加载」（进首页 / 切分类 / 搜索）才允许跳过冷却中的死源：
+    //   - force（下拉刷新、手动重试）→ 全部重试；
+    //   - more（续页）→ 保持原顺序，别把正在翻的源换掉；
+    //   - 单源分组 → 用户就是冲着这个源来的，永远不跳过。
+    final healthPlan = health.plan(
+      requested,
+      force: force || more || cacheOnly,
+      allowSkip: !more && !cacheOnly && requested.length > 1,
+    );
+    final sourceOrder = healthPlan.order;
+    // 被跳过的源仍保留上次的条目继续展示（只是不再等它），排到队尾。
+    final displayOrder = [...sourceOrder, ...healthPlan.skipped];
+    if (healthPlan.skipped.isNotEmpty) {
+      failures['#health'] =
+          '${healthPlan.skipped.length} 个源连续失败，已暂时跳过（下拉刷新可重试）';
+    }
+    for (final source in displayOrder) {
       session.entries.putIfAbsent(source, _CatalogEntry.new);
     }
 
     CatalogPage snapshot() {
-      final rows = sourceOrder
+      final rows = displayOrder
           .map((source) => session.entries[source]!.items)
           .toList();
       final items = <String, Drama>{};
@@ -251,6 +330,7 @@ class CatalogBrowser {
       }
       return CatalogPage(
         items.values.toList(),
+        // 新鲜度 / 续页只看真正请求过的源：被跳过的源不应让「还有更多」永远为真。
         hasMore: sourceOrder.any((source) => session.entries[source]!.hasMore),
         page: sourceOrder.fold<int>(
           1,
@@ -276,7 +356,14 @@ class CatalogBrowser {
     }
 
     if ((useCache || cacheOnly) && !force && !more && query.isEmpty) {
-      await _each(sourceOrder, onProgress: emitPartial, (source) async {
+      // 已经在本轮会话里有条目的源不再回读磁盘缓存：`cached` 是按源返回
+      // **整份**列表的一次跨 FFI/JSON 调用，几十个源就是几十份全量数据。
+      // 内存里有就直接用内存，没有才读。
+      final pending = [
+        for (final source in sourceOrder)
+          if (session.entries[source]!.items.isEmpty) source,
+      ];
+      await _each(pending, onProgress: emitPartial, (source) async {
         try {
           final cached = await repository.cached(
             source,
@@ -308,6 +395,7 @@ class CatalogBrowser {
       if (more && !entry.hasMore) return;
       if (useCache && !force && !more && entry.fresh) return;
       final page = more ? entry.nextPage : 1;
+      final started = DateTime.now();
       try {
         final result = await repository.catalog(
           source,
@@ -315,6 +403,11 @@ class CatalogBrowser {
           query: query,
           page: page,
           force: force,
+        );
+        _recordHealth(
+          source,
+          ok: result.warning.isEmpty,
+          elapsedMs: DateTime.now().difference(started).inMilliseconds,
         );
         if (generation != session.generation) return;
         final items = <String, Drama>{
@@ -336,6 +429,11 @@ class CatalogBrowser {
           failures.remove(source);
         }
       } catch (error) {
+        _recordHealth(
+          source,
+          ok: false,
+          elapsedMs: DateTime.now().difference(started).inMilliseconds,
+        );
         if (generation != session.generation) return;
         entry.nextPage = page;
         entry.hasMore = query.isEmpty || SourceSite.byId(source).pagedSearch;

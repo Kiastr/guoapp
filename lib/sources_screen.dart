@@ -178,6 +178,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
       }
     });
     try {
+      // 手动操作就是「我现在就要试这个源」——先清掉健康度里的连续失败记录，
+      // 否则首页的「冷却跳过」会让刚修好的源继续被忽略。
+      if (operation != 'cancel') widget.store.forgetSourceHealth(source.id);
       final status = operation == 'cancel'
           ? await widget.repository.cancelSourceJob(source.id)
           : await widget.repository.startSourceJob(
