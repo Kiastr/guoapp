@@ -43,10 +43,11 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **卡顿修复**：轮询状态签名去重 + 首页分组缓存，消除周期性整页重建
 - **错误提示人话化**：接口返回网页、缺少函数、jar 包源等分别给出具体原因，不再统一显示「类型暂不支持」
 
-## 最近更新（0.2.73+138）
+## 最近更新（0.2.73+139）
 
 | 版本 | 变更 |
 | --- | --- |
+| +139 | **修复启动日志版本号永远显示 +80**。根因：`lib/app_build.dart` 的 `duanjuBuildNumber` 靠 `--dart-define=BUILD_NUMBER` 编译期注入，但 android / ios / windows 三个构建脚本和 CI 都只传了 `ALL_SOURCES`，谁都没传 `BUILD_NUMBER`，Dart 侧一路回落 `defaultValue: 80`——包早已 +138，日志仍显示 0.2.73+80，排障时会按错误版本号误判代码新旧（本轮红果问题初判就因此跑偏）。修复：`scripts/app_build.py` 新增 `build_number_from_pubspec()`，从唯一权威源 `pubspec.yaml` 的 `version: x.y.z+N` 提取 N，经共用的 `flutter_arguments` 注入三个平台的全部构建入口（含 CI，其 android job 直接调 `build_android.py`）；`defaultValue` 同步更新并注释说明勿手动维护；新增回归测试钉死「flutter build 命令必带与 pubspec 一致的 BUILD_NUMBER」，防止再丢。|
 | +138 | **加载期卡顿真因 + 启动链路梳理**。① 主线程最大热点：`SourceSite.isAvailable/isPrimary` 每次调用都重建站源列表（含运行时源排序）再线性查找，而首页 `_visible` 对**每一条**剧都会调用；3000 条 × 40 个导入源实测 **32.9ms/次**（真机约 100ms），流式刷新每 90ms 重算一次 → 加载期间持续掉帧。改为缓存 ID 集合（导入/删除运行时源才失效），同场景 **2.4ms**。② 站源状态轮询改为一次 RPC （`sourceStatuses`）：原来每 10 秒按源逐个查，几十个源就是几十次 FFI + isolate。③ 展示顺序改为**条目级追加**：A 批 → B 批 → A 的下一页……已有卡片永不移动（此前是「按源分块」，翻页时会把该源的新条目插回它自己的位置）。④ 启动时 libretv / drpy 注册表并行拉取；目录与分类的缓存回读合流，同一份缓存只跨一次 FFI。⑤ 附带实测：Go 剧库 581KB 加载 6ms（在 FFI 隔离区执行，不占 UI 线程）。仍保留：加载中使用名称/季号排序时，每批会按该排序重排一次。|
 | +137 | **搜索报「正在处理的请求较多」+ 加载期卡顿**。① 真因是 Go 侧读请求**取消后不归还并发槽位**：名额只有 16 个，上一轮搜索/翻页被顶掉的请求还要等网络超时才释放，连点两次就打满 → 直接报错。现在取消 / 新一代请求顶掉旧请求都**立即归还**，上限 16→**48**、会话记录上限→256；重复 finish 不会重复扣减（有回归钉死）。② **封面请求加闸门**：并发上限 4 + 同图合流，流式追加新卡片时不再同时压几十个 FFI 请求（每个都是一次 isolate + Go 调用），失败的 key 会释放以便重试。③ **分类加载与目录加载共用本机剧库**：同一源不再重复回读整份缓存，启动时少一半 RPC。附：默认顺序下 3000 条的过滤+排序实测 0.3ms（名称 6.3ms / 季号 13.5ms，桌面 VM），所以「默认顺序」的卡顿不来自排序；若使用名称/季号排序，加载中每批会重排一次，可按需改为「加载中按到达顺序、结束后排一次」。|
 | +136 | **流式刷新的顺序稳定**：展示顺序改为「按源**到达**顺序、新内容只往后追加」，不再按请求顺序逐行交替。原实现每来一个新源，就把它的条目插进已有内容中间（第 0 条不动、第 1 条被挤走、后面整体下移），几十个源就是几十次整屏位移——这就是「刷得碎、列表老在跳」。现在先显示的内容位置**不动**，慢源晚到只追加在末尾；被健康度跳过的源沿用上次位置。副作用：「全部站源」完整加载后是**按源分块**排列（先到的源在前），不再逐条交错。附「前缀稳定」回归：每次流式推送都必须以上一次的内容为前缀。|
@@ -343,6 +344,8 @@ flutter run
 ~~~
 
 调试全站源版：先给 `build_native.py` 加 `--all-sources`，再 `flutter run --dart-define=ALL_SOURCES=true`；iOS 对应 `build_ios.py --core-only --all-sources`。脚本会同步设置 Dart 常量和 Go 编译参数，应用启动时校验二者一致，避免混装原生库。
+
+版本号唯一权威源是 `pubspec.yaml` 的 `version: x.y.z+N`：构建脚本（`scripts/app_build.py`）自动提取 `N` 并注入 `--dart-define=BUILD_NUMBER=N`，三个平台的 `flutter build` 均走此路径；手动 `flutter run/build` 不传时，`lib/app_build.dart` 的 `duanjuBuildNumber` 回落 defaultValue，启动日志与关于页会显示旧值——发版后核对日志版本号应与 pubspec 一致，不一致说明构建没走脚本。
 
 播放器使用 [media_kit](https://github.com/media-kit/media-kit) / libmpv，合并和导出使用 [FFmpegKit min-gpl](https://github.com/sk3llo/ffmpeg_kit_flutter)（含 GPL 媒体组件）。FFmpegKit 不参与正常播放或下载的转码。
 
