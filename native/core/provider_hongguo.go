@@ -198,6 +198,15 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 	if !hongguoNumericID.MatchString(videoID) || !hongguoNumericID.MatchString(seriesID) {
 		return providerMedia{}, fmt.Errorf("红果章节 ID 无效，请重新获取章节")
 	}
+	// 优先 drpys 两段式（multi_video_model + fallback_api，实测可用链路）；
+	// 失败回退既有 video_model 单段 / 网页 / djapi 备用链路。
+	media, drpyErr := d.resolveHongguoDrpyMedia(ctx, videoID, "auto")
+	if drpyErr == nil {
+		return media, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return providerMedia{}, err
+	}
 	media, nativeErr := d.resolveHongguoAppMedia(ctx, videoID)
 	if nativeErr == nil {
 		return media, nil
