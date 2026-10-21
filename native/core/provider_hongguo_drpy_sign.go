@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// drpys 6 神签名的请求组装（路线一）——红果 App 播放取址专用。
+// drpys 6 神签名的请求组装——红果 App 播放取址专用。
 //
-// 与私有库路线二的 signHongguoRequest 并存：本文件只服务
+// 与既有的 signHongguoRequest 并存：本文件只服务
 // multi_video_model/v1/ 播放取址链路（provider_hongguo_drpy_media.go），
 // 不改动 catalog/detail 等既有链路使用的 signHongguoRequest。
 
@@ -138,7 +138,15 @@ func hgDrpyMd5Hex(value []byte) string {
 // 返回完整 URL（含 query）与 10 个请求头。query 内 iid/device_id 每次请求
 // 重新合成（与 URL、签名保持一致）；branch 1 变体会通过抖动 _rticket
 // （最多 32 秒偏移）避开。
+// 等价于 hgDrpySignedVideoRequestAt(payload, now, hgDrpyVideoAPI)。
 func hgDrpySignedVideoRequest(payload []byte, now time.Time) (string, map[string]string) {
+	return hgDrpySignedVideoRequestAt(payload, now, hgDrpyVideoAPI)
+}
+
+// hgDrpySignedVideoRequestAt 与 hgDrpySignedVideoRequest 相同，但端点由 api 指定。
+// x-medusa 与 hgDrpyBranchOf 都以 fullURL（含 host）为输入，换端点会自动重算
+// 签名、_rticket 抖动循环自动适配分支，无需额外处理。
+func hgDrpySignedVideoRequestAt(payload []byte, now time.Time, api string) (string, map[string]string) {
 	iid := hgDrpyLocalID()
 	deviceID := hgDrpyLocalID()
 	khronos := uint32(now.Unix())
@@ -156,7 +164,7 @@ func hgDrpySignedVideoRequest(payload []byte, now time.Time) (string, map[string
 			[2]string{"_rticket", strconv.FormatInt(requestTicket, 10)},
 		)
 		query = hgDrpyPythonURLEncode(values)
-		fullURL = hgDrpyVideoAPI + "?" + query
+		fullURL = api + "?" + query
 		if hgDrpyBranchOf(fullURL, payload, khronos) != 1 {
 			break
 		}

@@ -6,15 +6,14 @@ import "math/bits"
 //
 // 来源：woshishiq1/drpys 的 spider/js/红果果[短].js（commit 22261adf），
 // 经 N3urda/hongguoTV 移植为 Node 实现，本文件群将其逐函数移植到 Go。
-// 与私有库路线二（v1.2.2 二进制逆向的 RC4 Gorgon / heliosWith / BuildMedusaFor）
+// 与另一套本地实现（RC4 Gorgon / heliosWith / BuildMedusaFor）
 // 是同一套字节算法的两个独立载体：常量表已逐值比对一致（hashF13 的
 // T64A/TBL5/TBL6/K8 与 drpys 的 tt02/ivV1List/init/n1 表完全相同），
 // 仅 Gorgon/Helios 的封装形式不同（drpys 用 md5SumV3+hashF13，
-// 路线二用 RC4 变体 + heliosWith，服务端两者均接受）。
+// 另一套实现用 RC4 变体 + heliosWith，服务端两者均接受）。
 //
-// 命名约定：本文件群所有标识符带 hgDrpy 前缀，与私有库路线二的
-// hongguoGorgon*/hongguoHelios*/hongguoMedusa* 系列并存不冲突；
-// 若需合并到含路线二的私有库，可直接共存。
+// 命名约定：本文件群所有标识符带 hgDrpy 前缀，与既有的 hongguo* 系列
+// 并存不冲突，两者可直接共存。
 
 // hgDrpySM3 计算 SM3（GB/T 32905）摘要。
 //

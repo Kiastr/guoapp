@@ -67,8 +67,7 @@ func (downloader *Downloader) resolveHongguoDrpyMedia(ctx context.Context, video
 	if err != nil {
 		return providerMedia{}, err
 	}
-	signedURL, headers := hgDrpySignedVideoRequest(payload, time.Now())
-	firstBody, err := hgDrpyRequestJSON(ctx, http.MethodPost, signedURL, headers, payload)
+	firstBody, err := downloader.hgDrpyVideoModelAt(ctx, payload)
 	if err != nil {
 		return providerMedia{}, err
 	}
@@ -86,6 +85,37 @@ func (downloader *Downloader) resolveHongguoDrpyMedia(ctx context.Context, video
 		return providerMedia{}, err
 	}
 	return hgDrpySelectMedia(info, videoID, requestedQuality)
+}
+
+// hgDrpyVideoModelAt 第一段：按端点池依次尝试 multi_video_model。
+//
+// 默认池内只有一个端点，行为与改造前完全一致；池内有多端点时，
+// 某个端点失败会换下一个继续，并对该 (线路, 端点) 组合记账
+// （连续失败达阈值后冷却期内跳过，详见 provider_hongguo_health.go）。
+// 记账只消费真实取流请求的结果，不额外发起探测。
+func (downloader *Downloader) hgDrpyVideoModelAt(ctx context.Context, payload []byte) (map[string]any, error) {
+	var lastErr error
+	for _, api := range hongguoDrpyHosts {
+		key := hongguoHostKey(hongguoRouteDrpy, api)
+		if hongguoRoutesHealth.skip(key, time.Now()) {
+			continue
+		}
+		signedURL, headers := hgDrpySignedVideoRequestAt(payload, time.Now(), api)
+		body, err := hgDrpyRequestJSON(ctx, http.MethodPost, signedURL, headers, payload)
+		if err == nil {
+			hongguoRoutesHealth.noteOK(key)
+			return body, nil
+		}
+		hongguoRoutesHealth.noteFail(key, time.Now(), hongguoClassifyFailure(err))
+		lastErr = err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("红果取址端点均不可用")
+	}
+	return nil, lastErr
 }
 
 // hgDrpyVideoModelPayload 构造第一段请求体（drpys fetchAppPlayUrl 的 payload 字面量）。
@@ -599,6 +629,11 @@ func hgDrpyRequestJSON(ctx context.Context, method, rawURL string, headers map[s
 			}
 			switch response.StatusCode {
 			case http.StatusOK:
+				// 设备级风控：HTTP 200 但内容为空。不判的话会掉进 JSON 解析失败，
+				// 被归成 parse（"不会自愈"，30 分钟冷却）而非 risk（1 分钟）。
+				if err := hongguoMediaBodyOrRisk(payload); err != nil {
+					return nil, err
+				}
 				var parsed map[string]any
 				decoder := json.NewDecoder(bytes.NewReader(payload))
 				decoder.UseNumber()

@@ -94,7 +94,7 @@ func hgDrpyMd5SumV3(message []byte, countV2 uint32, orders []byte, countV1 uint3
 	var out [20]byte
 	var sv [64]uint32
 	for index := 0; index < 64; index++ {
-		// drpys 用 ror32（右旋），勿误写左旋——私有库路线二反汇编注释同为 ror32。
+		// drpys 用 ror32（右旋），勿误写左旋——方向写反会得到完全不同的常量表。
 		sv[index] = hgDrpyRor32(hgDrpyBranch2SV[index], countV1)
 	}
 	start := [4]uint32{

@@ -6,9 +6,8 @@ import (
 	"sync"
 )
 
-// drpys 6 神签名用常量表（路线一）。
-// 来源与私有库路线二的 provider_hongguo_medusa_tables.go 同源同值，
-// 但为避免合并私有库时的文件名冲突，此处独立一份。
+// drpys 6 神签名用常量表。
+// 与既有的 medusa 常量表同源同值，为避免文件名冲突，此处独立一份。
 
 // hgDrpyBranch2SV 是 branch2F13 的 64 个轮常量（原始值，使用时按 countV1 右旋）。
 var hgDrpyBranch2SV = [64]uint32{
