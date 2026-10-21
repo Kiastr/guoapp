@@ -122,6 +122,12 @@ abstract class AppRepository {
   bool get supportsSourceManagement => false;
   Future<SourceStatus> sourceStatus(String source) async =>
       SourceStatus.fromJson({'source': source});
+
+  /// 批量站源状态（一次 RPC 取全部）。默认返回空表，调用方逐源回退。
+  ///
+  /// 首页每 10 秒轮询一次站源状态，几十个源逐个发 RPC 就是几十次
+  /// FFI + isolate 启动；原生实现合并成一次调用。
+  Future<Map<String, SourceStatus>> sourceStatuses() async => const {};
   Future<SourceStatus> startSourceJob(
     String source,
     String operation, {
@@ -453,6 +459,18 @@ class NativeRepository extends AppRepository {
       SourceStatus.fromJson(
         await _call({'action': 'sourceStatus', 'source': source}),
       );
+
+  @override
+  Future<Map<String, SourceStatus>> sourceStatuses() async {
+    final result = await _call({'action': 'sourceStatuses'});
+    return {
+      for (final row in result['items'] as List? ?? const [])
+        if (row is Map)
+          (row['source'] as String? ?? ''): SourceStatus.fromJson(
+            Map<String, dynamic>.from(row),
+          ),
+    }..remove('');
+  }
 
   @override
   Future<SourceStatus> startSourceJob(

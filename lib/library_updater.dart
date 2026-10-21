@@ -119,11 +119,19 @@ class LibraryUpdater extends ChangeNotifier {
     if (_polling || !_valid || !repository.supportsSourceManagement) return;
     _polling = true;
     try {
+      // 一次拿全部状态（原生实现）。几十个源逐个 RPC 会在启动/轮询时
+      // 连续启动几十个 isolate；拿不到批量结果时退回逐源查询。
+      var batch = const <String, SourceStatus>{};
+      try {
+        batch = await repository.sourceStatuses();
+      } catch (_) {}
       for (final source in store.sources) {
         if (!_valid) return;
         final revision = _revisions[source.id] ?? 0;
         try {
-          final status = await repository.sourceStatus(source.id);
+          final status = batch.isNotEmpty
+              ? batch[source.id] ?? SourceStatus.fromJson({'source': source.id})
+              : await repository.sourceStatus(source.id);
           if (_valid && revision == (_revisions[source.id] ?? 0)) {
             _accept(status);
           }

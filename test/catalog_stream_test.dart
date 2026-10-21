@@ -213,4 +213,51 @@ void main() {
     ]);
     expect(partialIds.first.first, 'libretv:fast:item-1');
   });
+
+
+  test('翻页的新条目追加在末尾，不会插回该源前面', () async {
+    final repository = _PagedRepository();
+    final browser = CatalogBrowser(repository);
+    final group = _groupOf(['a', 'b']);
+
+    final first = await browser.load(group, force: true);
+    expect(first.items.map((item) => item.id).toList(), [
+      'libretv:a:1:0',
+      'libretv:a:1:1',
+      'libretv:b:1:0',
+    ]);
+
+    final more = await browser.load(group, more: true);
+    // 第一页的顺序原样保留，第二页整体接在后面（含先返回的源）。
+    expect(more.items.map((item) => item.id).toList(), [
+      'libretv:a:1:0',
+      'libretv:a:1:1',
+      'libretv:b:1:0',
+      'libretv:a:2:0',
+      'libretv:a:2:1',
+      'libretv:b:2:0',
+    ]);
+  });
+}
+
+class _PagedRepository extends FixtureRepository {
+  @override
+  Future<CatalogPage> catalog(
+    String source, {
+    int page = 1,
+    String query = '',
+    String category = '',
+    bool force = false,
+  }) async => CatalogPage(
+    [
+      for (var index = 0; index < (source.endsWith(':a') ? 2 : 1); index++)
+        Drama(
+          id: '$source:$page:$index',
+          source: 'libretv:$source',
+          title: '$source-$page-$index',
+        ),
+    ],
+    page: page,
+    hasMore: page < 2,
+  );
 }

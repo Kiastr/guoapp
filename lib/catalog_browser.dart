@@ -42,6 +42,12 @@ class _CatalogSession {
   /// 顺序拼则可以保证「已经显示的条目位置不动，新内容只往后追加」。
   final arrival = <String>[];
 
+  /// 已经展示过的条目 ID 顺序（严格「先到先排」）。
+  ///
+  /// 只随新条目追加、从不重排：翻页 / 迟到的源都在末尾接上，已有卡片的
+  /// 位置不动。条目从源里消失（刷新后换了一批）时顺带清理。
+  List<String> order = <String>[];
+
   int generation = 0;
 }
 
@@ -75,12 +81,30 @@ class CatalogBrowser {
   String _choicesKey = '';
   List<_CatalogChoice>? _choicesCache;
 
+  /// 正在读取的本机缓存（source|category → Future）。
+  ///
+  /// 启动时首页的目录加载与分类加载是并行的，两边都会按源回读整份缓存；
+  /// 合流后同一份数据只跨一次 FFI，几十个源能省掉一半传输。
+  final Map<String, Future<CatalogPage>> _cacheFlights = {};
+
   Future<void> cancel() {
     _generation++;
     for (final session in _sessions.values) {
       session.generation++;
     }
     return repository.cancelCatalog();
+  }
+
+  Future<CatalogPage> _readCache(String source, String category) {
+    final key = '$source\u0000$category';
+    final existing = _cacheFlights[key];
+    if (existing != null) return existing;
+    final future = repository.cached(source, category: category);
+    _cacheFlights[key] = future;
+    future.whenComplete(() {
+      if (identical(_cacheFlights[key], future)) _cacheFlights.remove(key);
+    }).ignore();
+    return future;
   }
 
   void _recordHealth(String source, {required bool ok, required int elapsedMs}) {
@@ -202,7 +226,7 @@ class CatalogBrowser {
       // 「全部站源」就是几十份全量 JSON 的重复传输。
       if (_library[source.id]?.isNotEmpty != true) {
         try {
-          final cached = await repository.cached(source.id);
+          final cached = await _readCache(source.id, '');
           _remember(source.id, cached.items);
         } catch (_) {}
       }
@@ -336,24 +360,38 @@ class CatalogBrowser {
         for (final source in displayOrder)
           if (!session.arrival.contains(source)) source,
       ];
-      final items = <String, Drama>{};
+      final current = <String, Drama>{};
       for (final source in order) {
         for (final item in session.entries[source]!.items) {
-          items[item.id] = item;
+          current[item.id] = item;
+        }
+      }
+      // 沿用上次展示顺序（只保留还在的条目），新条目按来源顺序追加到末尾。
+      final items = <Drama>[];
+      final seen = <String>{};
+      for (final id in session.order) {
+        final item = current[id];
+        if (item != null && seen.add(id)) items.add(item);
+      }
+      for (final source in order) {
+        for (final item in session.entries[source]!.items) {
+          if (seen.add(item.id)) items.add(item);
         }
       }
       if (choice != null) {
         for (final source in group.sources) {
           for (final item in _library[source.id]?.values ?? const <Drama>[]) {
-            if (choice.category.local ||
-                categoryName(item.category) == choice.category.name) {
-              items.putIfAbsent(item.id, () => item);
+            if ((choice.category.local ||
+                    categoryName(item.category) == choice.category.name) &&
+                seen.add(item.id)) {
+              items.add(item);
             }
           }
         }
       }
+      session.order = [for (final item in items) item.id];
       return CatalogPage(
-        items.values.toList(),
+        items,
         // 新鲜度 / 续页只看真正请求过的源：被跳过的源不应让「还有更多」永远为真。
         hasMore: sourceOrder.any((source) => session.entries[source]!.hasMore),
         page: sourceOrder.fold<int>(
@@ -389,10 +427,7 @@ class CatalogBrowser {
       ];
       await _each(pending, onProgress: emitPartial, (source) async {
         try {
-          final cached = await repository.cached(
-            source,
-            category: requests[source]!,
-          );
+          final cached = await _readCache(source, requests[source]!);
           if (generation != session.generation || cached.items.isEmpty) return;
           final entry = session.entries[source]!;
           entry.items = cached.items;
