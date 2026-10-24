@@ -69,7 +69,26 @@ class VideoEnhancementController extends ChangeNotifier {
   static const _device = MethodChannel('duanju/device');
   static const _filterLabel = 'duanju_vsr';
   final Player player;
-  final Size? fixedSurface;
+
+  /// [guoguo fork] 固定输出表面策略（安卓端真超分的开关，null = 上游行为）。
+  ///
+  /// 由 player_screen 在满足全部条件时下发（见 PlayerScreen._fixedSurfacePolicy）。
+  /// fork（packages/media_kit_video）会在**首次** videoParams 事件上按该策略把
+  /// 渲染表面一次性放大到「源尺寸 × 倍率」并锁定，本类据此读取实际表面尺寸
+  /// （见 [_fixedSurfaceSize]）参与决策——表面对不上时 _monitor 的 sizeMatches
+  /// 会连续不成立，5 次即 _failBackend 把后端拉黑。
+  final VideoFixedSurface? fixedSurface;
+
+  /// 固定表面模式下 fork **实际应用**的表面尺寸（未启用/尚未应用时为 null）。
+  ///
+  /// 为什么不自己按公式算：片源分辨率变化（切清晰度、自适应码率）后，公式
+  /// 算出的期望尺寸会与 fork 已锁定的表面对不上，sizeMatches 连续不成立会把
+  /// 后端误拉黑。rect 是 fork 应用表面后回传的唯一事实来源，锁定后永不变化，
+  /// 天然与 sizeMatches 一致；表面对不上当前源时（新源更大）expectsUpscale 也
+  /// 会正确地不为真，与 mpv 跳过 Upscale 的实际行为对齐。
+  Size? get _fixedSurfaceSize =>
+      fixedSurface == null ? null : _output?.actualSize;
+
   late final bool supported;
   final bool _animationHint;
   VideoEnhancementPreferences _preferences;
@@ -149,14 +168,15 @@ class VideoEnhancementController extends ChangeNotifier {
   String get status => _status;
   String get contentLabel => animation ? '当前按动漫增强' : '当前按通用画面增强';
   String get detail {
-    // [文案·2026-10] 安卓端表面恒为源尺寸（+82 决策），dimensions 恒为
-    // 「同 → 同」，叠加「安卓端按源尺寸呈现，超分在渲染链内部完成」的内部
-    // 渲染说明反而容易被误读为未生效。按产品要求：安卓端神经增强（cost≥3）
+    // [文案·2026-10] 安卓端默认表面恒为源尺寸（+82 决策），启用固定表面后
+    // 表面可大于源，但「源 × → 表面 ×」的尺寸对比 + 「超分在渲染链内部完成」
+    // 的说明叠加仍容易被误读为未生效。按产品要求：安卓端神经增强（cost≥3）
     // 只呈现一句结果文案，不再展示尺寸对比与内部渲染说明；其余平台/后端
     // （桌面端放大、ravu 缩放等）维持原 dimensions 展示。
     if (Platform.isAndroid && (_applied?.backend.cost ?? 0) >= 3) {
       return [
-        // 三档在安卓端都是同分辨率重建/降噪，文案按 +88 的产品要求统一。
+        // 三档在安卓端默认都是同分辨率重建/降噪；固定大表面启用后 Upscale
+        // 链参与渲染，但文案按 +88 的产品要求仍统一为这一句。
         '已执行超分降噪',
         if (_downgradeReason.isNotEmpty) _downgradeReason,
         // [诊断·2026-10] 最近一次增强失败的技术细节（阶段/尺寸比对/渲染链
@@ -330,7 +350,7 @@ class VideoEnhancementController extends ChangeNotifier {
       rate: player.state.rate,
       costLimit: _costLimit,
       rejected: _rejected,
-      fixedSurface: fixedSurface,
+      fixedSurface: _fixedSurfaceSize,
       opaque8Bit: _opaque8Bit,
     );
     final selected = _comparing && canCompare
@@ -740,6 +760,11 @@ class VideoEnhancementController extends ChangeNotifier {
         _schedule();
         return;
       }
+      // 固定表面模式下，策略层认定的 output 必须与 fork 实际应用的表面一致，
+      // 因此这里与 _apply 共用同一个取值（_fixedSurfaceSize = fork 已应用的
+      // 表面尺寸），否则 reassessed 与 selected 会无限互斥、sizeMatches 也会
+      // 连续不成立把后端误拉黑。
+      final fixed = _fixedSurfaceSize;
       final reassessed = chooseVideoEnhancement(
         preferences: _preferences,
         parameters: player.state.videoParams,
@@ -755,7 +780,7 @@ class VideoEnhancementController extends ChangeNotifier {
         rate: player.state.rate,
         costLimit: _costLimit,
         rejected: _rejected,
-        fixedSurface: fixedSurface,
+        fixedSurface: fixed,
         opaque8Bit: _opaque8Bit,
       );
       if (!_comparing && reassessed != selected) {
@@ -798,7 +823,7 @@ class VideoEnhancementController extends ChangeNotifier {
           (surfaceHeight - selected.output!.height).abs() <= 2;
       final sourceSize = videoDisplaySize(player.state.videoParams);
       final expectsUpscale =
-          fixedSurface != null &&
+          fixed != null &&
           selected.output != null &&
           sourceSize != null &&
           (selected.output!.width > sourceSize.width + 2 ||

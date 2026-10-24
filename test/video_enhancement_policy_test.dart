@@ -13,6 +13,7 @@ import 'package:media_kit/media_kit.dart';
 ///   - 安卓：是否上神经超分只看 targetScale（视口/源），与表面放大倍率解耦；
 ///   - 安卓：显存预算只跟源分辨率相关，半屏/全屏决策一致（进全屏不重新 apply）；
 ///   - 桌面：行为与上游一致，output 仍为放大后的尺寸。
+///   - 固定表面启用后：安卓 output 恒为固定表面（与视口/平台无关），见文末 group。
 VideoParams params({required int width, required int height, int rotate = 0}) =>
     VideoParams(
       pixelformat: 'yuv420p',
@@ -42,6 +43,7 @@ VideoEnhancementDecision decide({
   double rate = 1.0,
   Set<VideoEnhancementBackend> rejected = const {},
   int costLimit = 4,
+  Size? fixedSurface,
 }) => chooseVideoEnhancement(
   preferences: preferences,
   parameters: parameters,
@@ -57,6 +59,7 @@ VideoEnhancementDecision decide({
   rate: rate,
   costLimit: costLimit,
   rejected: rejected,
+  fixedSurface: fixedSurface,
   opaque8Bit: false,
 );
 
@@ -382,6 +385,85 @@ void main() {
       expect(switched.content, VideoEnhancementContent.animation);
       expect(switched.tier, VideoEnhancementTier.quality);
       expect(switched, isNot(preferences));
+    });
+  });
+
+  /// 固定输出表面（VideoFixedSurface，2026-10 落地）后的策略语义。
+  ///
+  /// 背景：安卓端默认表面恒为源尺寸，Anime4K 的 Upscale pass 因 WHEN 条件被
+  /// mpv 跳过。启用固定表面后，fork 在首次 videoParams 事件上把表面一次性放大
+  /// 到「源 × 倍率」并锁定，策略层拿到的 surfaceOutput 即该实际表面——
+  /// 这里固定「output 恒为传入的 fixedSurface、与视口/平台无关」的契约，
+  /// 它是 video_enhancement.dart _monitor 的 sizeMatches / expectsUpscale
+  /// 不误拉黑后端的前提。
+  group('固定表面（fixedSurface）语义', () {
+    final source = params(width: 544, height: 960);
+
+    test('安卓：output 恒为固定表面，半屏/全屏一致', () {
+      const surface = Size(1088, 1920); // 544×960 × 2
+      for (final viewport in const [Size(1080, 1344), Size(1080, 2400)]) {
+        final decision = decide(
+          parameters: source,
+          viewport: viewport,
+          android: true,
+          fixedSurface: surface,
+        );
+        expect(decision.backend, VideoEnhancementBackend.anime);
+        expect(decision.output, surface);
+      }
+    });
+
+    test('固定表面=源尺寸时退回默认语义（同分辨率重建）', () {
+      const surface = Size(544, 960);
+      final decision = decide(
+        parameters: source,
+        viewport: const Size(1080, 1344),
+        android: true,
+        fixedSurface: surface,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.output, surface);
+    });
+
+    test('固定表面过大撑爆显存预算时回落 scaling（预算含表面项）', () {
+      // 890×1600 源 + 2560×1440 表面：神经项 ~280MB、ravu 项 ~193MB，
+      // 均超安卓 128MB 预算，与视口无关地回落到高质量缩放。
+      const surface = Size(2560, 1440);
+      final decision = decide(
+        parameters: params(width: 890, height: 1600),
+        viewport: const Size(1080, 2400),
+        android: true,
+        fixedSurface: surface,
+      );
+      expect(decision.backend, VideoEnhancementBackend.scaling);
+      expect(decision.output, surface);
+    });
+
+    test('桌面端同样以 fixedSurface 为 output（策略与平台无关）', () {
+      const surface = Size(1088, 1920);
+      final decision = decide(
+        parameters: source,
+        viewport: const Size(1080, 1344),
+        android: false,
+        fixedSurface: surface,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.output, surface);
+    });
+
+    test('增强关闭时固定表面不生效', () {
+      const surface = Size(1088, 1920);
+      final decision = decide(
+        parameters: source,
+        viewport: const Size(1080, 1344),
+        android: true,
+        preferences: const VideoEnhancementPreferences(
+          mode: VideoEnhancementMode.off,
+        ),
+        fixedSurface: surface,
+      );
+      expect(decision.backend, VideoEnhancementBackend.original);
+      expect(decision.output, null);
     });
   });
 }

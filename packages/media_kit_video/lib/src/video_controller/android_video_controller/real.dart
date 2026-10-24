@@ -12,6 +12,7 @@ import 'package:synchronized/synchronized.dart';
 
 import 'package:media_kit/media_kit.dart';
 
+import 'package:media_kit_video/src/utils/fixed_surface.dart';
 import 'package:media_kit_video/src/utils/query_decoders.dart';
 import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
 
@@ -80,8 +81,8 @@ class AndroidVideoController extends PlatformVideoController {
 
   bool _fixedSurfaceApplied = false;
 
-  bool get _hasFixedSurface =>
-      (configuration.width ?? 0) > 0 && (configuration.height ?? 0) > 0;
+  /// [guoguo fork] 宿主在创建时下发的固定表面策略（null = 上游行为）。
+  VideoFixedSurface? get _fixedSurface => configuration.fixedSurface;
 
   /// {@macro android_video_controller}
   AndroidVideoController._(
@@ -107,14 +108,28 @@ class AndroidVideoController extends PlatformVideoController {
           return;
         }
 
-        final fixed = _hasFixedSurface;
-        if (fixed && _fixedSurfaceApplied) {
+        // [guoguo fork] 固定表面：沿用上游首次 resize 的时机一次性应用，
+        // 之后本监听对所有后续事件提前返回——既杜绝与 media_kit 自身
+        // videoParams 监听的乒乓，也避免播放中二次 SetSurfaceSize 引发
+        // VO 重建 + seek 转圈。策略按源尺寸计算（保持视频宽高比），
+        // 详见 VideoFixedSurface 的文档。
+        final fixed = _fixedSurface;
+        if (fixed != null && _fixedSurfaceApplied) {
           return;
         }
-        final targetWidth = fixed ? configuration.width! : width;
-        final targetHeight = fixed ? configuration.height! : height;
+        final resolved = fixed?.resolve(
+          Size(width.toDouble(), height.toDouble()),
+        );
+        // resolve 只在输入非法时返回 Size.zero，此处 width/height 已过
+        // isZero 校验，正常不会走到；仍兜底回退动态尺寸，避免 0 尺寸表面。
+        final useFixed =
+            resolved != null && resolved.width > 0 && resolved.height > 0;
+        final targetWidth =
+            (useFixed ? resolved.width : width.toDouble()).toInt();
+        final targetHeight =
+            (useFixed ? resolved.height : height.toDouble()).toInt();
 
-        final isSame = !fixed &&
+        final isSame = !useFixed &&
             width == rect.value?.width.toInt() &&
             height == rect.value?.height.toInt();
         if (isSame) {
@@ -132,7 +147,7 @@ class AndroidVideoController extends PlatformVideoController {
           },
         );
 
-        if (fixed) {
+        if (useFixed) {
           _fixedSurfaceApplied = true;
         }
 

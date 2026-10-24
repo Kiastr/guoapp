@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 
 import 'package:media_kit/media_kit.dart';
 
+import 'package:media_kit_video/src/utils/fixed_surface.dart';
 import 'package:media_kit_video/src/video_controller/video_controller.dart';
 
 /// {@template platform_video_controller}
@@ -121,6 +122,15 @@ class VideoControllerConfiguration {
   /// * [vo] != gpu : `false`
   final bool? androidAttachSurfaceAfterVideoParameters;
 
+  /// [guoguo fork] 固定输出表面策略（仅安卓端生效）。
+  ///
+  /// 非 null 时，安卓控制器在**首次** videoParams 事件上把渲染表面一次性
+  /// 放大到「源尺寸 × 倍率」并锁定（详见 [VideoFixedSurface]），使 Anime4K 的
+  /// Upscale pass 真正参与渲染；桌面 / iOS / Web 忽略该字段，行为与上游一致。
+  ///
+  /// Default: `null`（表面恒等于视频显示尺寸，与上游默认行为一致）
+  final VideoFixedSurface? fixedSurface;
+
   /// {@macro video_controller_configuration}
   const VideoControllerConfiguration({
     this.vo,
@@ -130,6 +140,7 @@ class VideoControllerConfiguration {
     this.scale = 1.0,
     this.enableHardwareAcceleration = true,
     this.androidAttachSurfaceAfterVideoParameters,
+    this.fixedSurface,
   });
 
   /// Returns a copy of this class with the given fields replaced by the new values.
@@ -141,6 +152,7 @@ class VideoControllerConfiguration {
     int? height,
     bool? enableHardwareAcceleration,
     bool? androidAttachSurfaceAfterVideoParameters,
+    VideoFixedSurface? fixedSurface,
   }) =>
       VideoControllerConfiguration(
         vo: vo ?? this.vo,
@@ -153,5 +165,6 @@ class VideoControllerConfiguration {
         androidAttachSurfaceAfterVideoParameters:
             androidAttachSurfaceAfterVideoParameters ??
                 this.androidAttachSurfaceAfterVideoParameters,
+        fixedSurface: fixedSurface ?? this.fixedSurface,
       );
 }

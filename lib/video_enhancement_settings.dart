@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import 'remote_widgets.dart';
@@ -134,10 +136,24 @@ class VideoEnhancementSettings extends StatelessWidget {
                   '极简档：只留高光钳制 + S 档重建（轻量档的瘦身版），去掉 M 档与超分链；'
                       '每帧 7 个 pass、卷积量约为轻量档的 30%，骁龙 865 一类设备也能跑，仍保留重建带来的清晰感。',
                 VideoEnhancementTier.lite =>
-                  '轻量档：M+S 重建，流畅优先；安卓端为同分辨率重建/降噪，桌面端含 2× 超分。',
+                  '轻量档：M+S 重建，流畅优先；安卓端默认为同分辨率重建/降噪，桌面端含 2× 超分。',
               },
               style: helperStyle,
             ),
+            // [固定输出表面·2026-10] 安卓端唯一的真超分路径：播放器创建时
+            // 按片源一次性放大渲染目标（1080p 最高 2560×1440）并锁定，
+            // Anime4K 的 Upscale 链才不会被 mpv 的 WHEN 条件跳过。桌面端
+            // 走 setSize 动态放大，无需此说明。
+            if (Platform.isAndroid) ...[
+              const SizedBox(height: 8),
+              Text(
+                '安卓端固定输出表面：进入播放器时按片源分辨率一次性放大渲染目标'
+                '（1080p 最高 2560×1440），超分链随之真正生效；表面锁定后不再'
+                '变化，竖屏进入再旋转横屏不会重新放大，需要退出重进播放器。'
+                '显存不足的设备仍会自动回退高质量缩放。',
+                style: helperStyle,
+              ),
+            ],
           ],
           if (autoFamily) ...[
             const SizedBox(height: 16),
@@ -224,6 +240,6 @@ class VideoEnhancementSettings extends StatelessWidget {
     VideoEnhancementMode.economy || VideoEnhancementMode.quality =>
       '实验性：自动按画面和设备选择增强，命中与效果可能变化；省电使用轻量缩放，清晰优先允许更高负载。追求稳定效果请用高级档。建议先选择源站高清画质。',
     VideoEnhancementMode.advanced =>
-      '高级模式直接强制 Anime4K 神经增强链（安卓端为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选轻量/质量档位。',
+      '高级模式直接强制 Anime4K 神经增强链（安卓端默认为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选轻量/质量档位。',
   };
 }
