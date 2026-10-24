@@ -92,12 +92,11 @@ class VideoFixedSurface {
     double? maxScale,
     double? maxPixels,
     double? maxDimension,
-  }) =>
-      VideoFixedSurface(
-        maxScale: maxScale ?? this.maxScale,
-        maxPixels: maxPixels ?? this.maxPixels,
-        maxDimension: maxDimension ?? this.maxDimension,
-      );
+  }) => VideoFixedSurface(
+    maxScale: maxScale ?? this.maxScale,
+    maxPixels: maxPixels ?? this.maxPixels,
+    maxDimension: maxDimension ?? this.maxDimension,
+  );
 
   @override
   bool operator ==(Object other) =>
