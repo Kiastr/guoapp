@@ -131,13 +131,30 @@ class VideoEnhancementSettings extends StatelessWidget {
             Text(
               switch (preferences.tier) {
                 VideoEnhancementTier.quality =>
-                  '质量档：VL 重建 + VL 超分，效果最好，但负载显著更高；低端设备可能自动降级，卡顿时请回轻量档。',
-                VideoEnhancementTier.minimal =>
-                  '极简档：只留高光钳制 + S 档重建（轻量档的瘦身版），去掉 M 档与超分链；'
-                      '每帧 7 个 pass、卷积量约为轻量档的 30%，骁龙 865 一类设备也能跑，仍保留重建带来的清晰感。',
+                  '质量档：VL 重建 + VL 超分，效果最好，但负载约为轻量档 3.7 倍；'
+                      '1080p 源在中端 GPU 上基本跑不动，卡顿时会自动逐级降档。',
                 VideoEnhancementTier.lite =>
-                  '轻量档：M+S 重建，流畅优先；安卓端默认为同分辨率重建/降噪，桌面端含 2× 超分。',
+                  '轻量档：M+S 重建 + M 超分，负载约为均衡档 2.7 倍；'
+                      '画质优先，1080p 源请留意帧率。',
+                VideoEnhancementTier.standard =>
+                  '标准档：M 重建 + S 超分，负载约为均衡档 1.5 倍；'
+                      '比均衡档重建更稳（低码率片源收益明显），比轻量档省 45% 算力。',
+                VideoEnhancementTier.balanced =>
+                  '均衡档：S 重建 + S 超分，最便宜的真超分档；'
+                      '720p 源开固定表面恰好 2× 无损耗，1080p 源在骁龙 865 一类设备上也能跑。',
+                VideoEnhancementTier.minimal =>
+                  '极简档：只留高光钳制 + S 档重建，无超分链；'
+                      '每帧 7 个 pass、负载最低，骁龙 865 一类设备也能跑，但给不了真超分。',
               },
+              style: helperStyle,
+            ),
+            // [阶梯降档·+142] 五档算力递增，看门狗按实际掉帧判定过载后
+            // 逐级降档（质量→轻量→标准→均衡→极简），本集内自动执行、
+            // 不改动用户选择；切档或换集后恢复。
+            const SizedBox(height: 4),
+            Text(
+              '播放中若出现明显掉帧，增强会自动逐级降档（仅本集生效），'
+              '降到极简仍卡才会回退高质量缩放。',
               style: helperStyle,
             ),
             // [固定输出表面·2026-10] 安卓端唯一的真超分路径：播放器创建时
@@ -240,6 +257,6 @@ class VideoEnhancementSettings extends StatelessWidget {
     VideoEnhancementMode.economy || VideoEnhancementMode.quality =>
       '实验性：自动按画面和设备选择增强，命中与效果可能变化；省电使用轻量缩放，清晰优先允许更高负载。追求稳定效果请用高级档。建议先选择源站高清画质。',
     VideoEnhancementMode.advanced =>
-      '高级模式直接强制 Anime4K 神经增强链（安卓端固定输出表面启用时为真超分、未启用为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选轻量/质量档位；极简档不含超分链，给不了真超分。',
+      '高级模式直接强制 Anime4K 神经增强链（安卓端固定输出表面启用时为真超分、未启用为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选五档，算力依次递增：极简 / 均衡 / 标准 / 轻量 / 质量，追求性价比选均衡或标准；极简档不含超分链，给不了真超分。',
   };
 }

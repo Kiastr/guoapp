@@ -122,6 +122,15 @@ class VideoEnhancementController extends ChangeNotifier {
   /// `selected == _applied` 仍成立，需靠本字段识别「同后端不同链」
   /// 从而触发重注；非 anime 后端无所谓档位。
   VideoEnhancementTier _appliedTier = VideoEnhancementTier.lite;
+
+  /// [阶梯降档·2026-10 +142] 本播放会话的档位覆盖，仅由 _watchPerformance
+  /// 过载降档写入，null 表示按用户偏好。刻意不做持久化：降档是「这一集跑
+  /// 不动」的临时让让，不该悄悄改掉用户保存的偏好；用户在设置页动过任何
+  /// 选项（setPreferences）或换集（beforeMedia）即清除，回到用户的选择。
+  VideoEnhancementTier? _tierOverride;
+
+  /// 实际应注入的档位：会话级降档覆盖优先，否则用户偏好。
+  VideoEnhancementTier get _effectiveTier => _tierOverride ?? _preferences.tier;
   VideoEnhancementBackend? _applyingBackend;
   bool _ready = false;
   bool _initialized = false;
@@ -216,6 +225,8 @@ class VideoEnhancementController extends ChangeNotifier {
     _preferences = value;
     _comparing = false;
     _costLimit = 4;
+    // 用户主动改设置 = 新的一次尝试：本集的自动降档覆盖作废，回到用户所选。
+    _tierOverride = null;
     _rejected.clear();
     _downgradeReason = '';
     _lastFailure = '';
@@ -259,6 +270,8 @@ class VideoEnhancementController extends ChangeNotifier {
     _revision++;
     _debounce?.cancel();
     _costLimit = 4;
+    // 换集 = 全新会话，上一集的阶梯降档不带过来。
+    _tierOverride = null;
     _downgradeReason = '';
     _lastFailure = '';
     // [诊断·2026-10] 换集 = 全新播放会话，上一集的失败现场不带过来。
@@ -364,7 +377,7 @@ class VideoEnhancementController extends ChangeNotifier {
     // 必须重注；其他后端切 tier 无意义，保持提前返回避免无谓重注入。
     final tierMatters = selected.backend == VideoEnhancementBackend.anime;
     if (selected == _applied &&
-        (!tierMatters || _appliedTier == _preferences.tier)) {
+        (!tierMatters || _appliedTier == _effectiveTier)) {
       _publishStatus();
       return;
     }
@@ -379,12 +392,20 @@ class VideoEnhancementController extends ChangeNotifier {
         VideoEnhancementBackend.fsrcnnx => <String>[
           VideoEnhancementAssets.fsrcnnx,
         ],
-        // [档位·2026-10] 高级档按 tier 选链：质量档=VL 链，
-        // 轻量档=M/S 链（+87 默认）。两链 WHEN 均保留，平台筛选由 mpv 完成。
-        VideoEnhancementBackend.anime => switch (_preferences.tier) {
-          VideoEnhancementTier.quality => VideoEnhancementAssets.animeChainQuality,
-          VideoEnhancementTier.minimal => VideoEnhancementAssets.animeChainMinimal,
+        // [档位·2026-10] 按 tier 选链：质量档=VL 链，轻量档=M/S 链
+        // （+87 默认）。两链 WHEN 均保留，平台筛选由 mpv 完成。
+        // [阶梯降档·+142] 用 _effectiveTier 而非 _preferences.tier：看门狗
+        // 降档只改会话级覆盖，用户保存的偏好不变（见 _tierOverride 注释）。
+        VideoEnhancementBackend.anime => switch (_effectiveTier) {
+          VideoEnhancementTier.quality =>
+            VideoEnhancementAssets.animeChainQuality,
           VideoEnhancementTier.lite => VideoEnhancementAssets.animeChainLite,
+          VideoEnhancementTier.standard =>
+            VideoEnhancementAssets.animeChainStandard,
+          VideoEnhancementTier.balanced =>
+            VideoEnhancementAssets.animeChainBalanced,
+          VideoEnhancementTier.minimal =>
+            VideoEnhancementAssets.animeChainMinimal,
         },
         _ => null,
       };
@@ -422,7 +443,7 @@ class VideoEnhancementController extends ChangeNotifier {
         }
       }
       _applied = selected;
-      _appliedTier = _preferences.tier;
+      _appliedTier = _effectiveTier;
       _confirmationMisses = 0;
       _confirmed = selected.backend == VideoEnhancementBackend.original;
       ignorePerformance();
@@ -971,7 +992,15 @@ class VideoEnhancementController extends ChangeNotifier {
     final p95 = samples.isEmpty
         ? 0.0
         : samples[((samples.length - 1) * .95).ceil()];
-    var overloaded = samples.length >= 5 && p95 > 1000 / fps / state.rate * .25;
+    // [阈值修正·+142] 旧判据是 `p95 > 帧间隔 × 25%` 单独即可触发过载：
+    // 骁龙 865 上 7 个 pass 的极简档就会越过 8.3ms（30fps），即便渲染只占
+    // 帧间隔 60%、稳跑满帧率也被判超载，10 秒后增强整个消失——实测过
+    // 「明明不卡却莫名回退」。改为只看两种真实卡顿信号：
+    //   ① 渲染时间已超过整个帧间隔（必然掉帧，只是还没反映到计数）；
+    //   ② frame-drop-count 增速 > 1%/秒（mpv 自己报的掉帧）。
+    // 「渲染占 30% 但帧率正常」不再触发，交由用户的主观流畅度决定。
+    final frameBudgetMs = 1000 / fps / state.rate;
+    var overloaded = samples.length >= 5 && p95 > frameBudgetMs;
     final rawDrops = _mpv!.read('frame-drop-count');
     if (rawDrops is num) {
       final drops = rawDrops.toInt();
@@ -992,13 +1021,25 @@ class VideoEnhancementController extends ChangeNotifier {
     }
     _overloadedSince ??= now;
     if (now.difference(_overloadedSince!) < const Duration(seconds: 10)) return;
-    _costLimit = math.min(
-      _costLimit,
-      selected.backend == VideoEnhancementBackend.hardware
-          ? 2
-          : selected.backend.cost - 1,
-    );
-    _downgradeReason = '本集已为保持流畅降低增强';
+    // [阶梯降档·+142] 过载确认后先降一档 Anime4K（质量→轻量→标准→均衡→
+    // 极简），到极简仍过载才走原来的 costLimit 降级（放弃 anime 回缩放）。
+    // 用户偏好不被写入：_tierOverride 是会话级，动设置或换集即清除。
+    final cheaper =
+        selected.backend == VideoEnhancementBackend.anime
+            ? nextCheaperTier(_effectiveTier)
+            : null;
+    if (cheaper != null) {
+      _tierOverride = cheaper;
+      _downgradeReason = '本集已为保持流畅降档到${cheaper.label}';
+    } else {
+      _costLimit = math.min(
+        _costLimit,
+        selected.backend == VideoEnhancementBackend.hardware
+            ? 2
+            : selected.backend.cost - 1,
+      );
+      _downgradeReason = '本集已为保持流畅降低增强';
+    }
     ignorePerformance();
     _schedule(immediate: true);
   }

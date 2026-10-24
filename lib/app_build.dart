@@ -7,6 +7,6 @@ const appSlug = allSourcesEnabled ? 'zhenguojian' : 'hongguojian';
 // 场景，发新版本时若误触该路径，日志/关于页会显示这里的旧值。
 const duanjuBuildNumber = int.fromEnvironment(
   'BUILD_NUMBER',
-  defaultValue: 141,
+  defaultValue: 142,
 );
 const appPackageId = 'com.duanju.duanju_app';

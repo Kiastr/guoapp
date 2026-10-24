@@ -333,6 +333,85 @@ void main() {
       );
     });
 
+    // [档位扩展·+142] 均衡/标准两档的链内容：均衡 = Clamp + S 重建 + S 超分
+    // （最便宜的真超分链），标准 = Clamp + M 重建 + S 超分。两者都必须带
+    // Upscale_S——否则固定表面下会重蹈 +141 的覆辙（期望 Depth-to-Space 却
+    // 拿不到，_monitor 误报 render-pass 拉黑后端）。
+    test('均衡档是 Clamp + S 重建 + S 超分，且成本低于标准档', () {
+      expect(VideoEnhancementAssets.animeChainBalanced, [
+        'Anime4K_Clamp_Highlights.glsl',
+        'Anime4K_Restore_CNN_S.glsl',
+        'Anime4K_Upscale_CNN_x2_S.glsl',
+      ]);
+      expect(VideoEnhancementAssets.animeChainStandard, [
+        'Anime4K_Clamp_Highlights.glsl',
+        'Anime4K_Restore_CNN_M.glsl',
+        'Anime4K_Upscale_CNN_x2_S.glsl',
+      ]);
+      // 均衡只多一个 S 重建文件；标准比均衡多一组 M 重建（6 层）。
+      expect(
+        VideoEnhancementAssets.animeChainStandard.length,
+        VideoEnhancementAssets.animeChainBalanced.length,
+      );
+      expect(
+        VideoEnhancementAssets.animeChainBalanced,
+        isNot(contains('Anime4K_Restore_CNN_M.glsl')),
+      );
+      // 两档都少于轻量档（轻量 = 7 个文件，含两个 AutoDownscalePre）。
+      expect(
+        VideoEnhancementAssets.animeChainBalanced.length,
+        lessThan(VideoEnhancementAssets.animeChainLite.length),
+      );
+    });
+
+    test('均衡/标准档往返序列化保持', () {
+      for (final tier in const [
+        VideoEnhancementTier.balanced,
+        VideoEnhancementTier.standard,
+      ]) {
+        final preferences = VideoEnhancementPreferences(
+          mode: VideoEnhancementMode.advanced,
+          tier: tier,
+        );
+        expect(
+          VideoEnhancementPreferences.fromJson(preferences.toJson()).tier,
+          tier,
+        );
+      }
+    });
+
+    test('档位声明顺序即成本升序：质量 > 轻量 > 标准 > 均衡 > 极简', () {
+      expect(VideoEnhancementTier.values, [
+        VideoEnhancementTier.minimal,
+        VideoEnhancementTier.balanced,
+        VideoEnhancementTier.standard,
+        VideoEnhancementTier.lite,
+        VideoEnhancementTier.quality,
+      ]);
+    });
+
+    // [阶梯降档·+142] nextCheaperTier 是看门狗降档的唯一依据，其正确性
+    // 直接决定「过载先降档而非直接放弃增强」是否按预期逐级下移。
+    test('nextCheaperTier 逐级下移，极简返回 null', () {
+      expect(
+        nextCheaperTier(VideoEnhancementTier.quality),
+        VideoEnhancementTier.lite,
+      );
+      expect(
+        nextCheaperTier(VideoEnhancementTier.lite),
+        VideoEnhancementTier.standard,
+      );
+      expect(
+        nextCheaperTier(VideoEnhancementTier.standard),
+        VideoEnhancementTier.balanced,
+      );
+      expect(
+        nextCheaperTier(VideoEnhancementTier.balanced),
+        VideoEnhancementTier.minimal,
+      );
+      expect(nextCheaperTier(VideoEnhancementTier.minimal), isNull);
+    });
+
     test('极简档往返序列化保持，且不影响 mode/content', () {
       const preferences = VideoEnhancementPreferences(
         mode: VideoEnhancementMode.advanced,

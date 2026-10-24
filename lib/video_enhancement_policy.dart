@@ -120,6 +120,19 @@ class VideoEnhancementDecision {
   int get hashCode => Object.hash(backend, output, reason);
 }
 
+/// 性能看门狗阶梯降档用的「下一个更便宜档位」（+142）。
+///
+/// 依赖 [VideoEnhancementTier] 的声明顺序即算力升序（见该枚举的文档约定）：
+/// 极简 → 均衡 → 标准 → 轻量 → 质量。看门狗确认过载后逐级下移，到极简仍
+/// 过载才由调用方放弃 anime 后端（降 costLimit 回落高质量缩放），避免
+/// 「一卡顿就整个失去增强」的断崖式体验。
+///
+/// 返回 null 表示已在最低档（极简），没有更便宜的档可降。
+VideoEnhancementTier? nextCheaperTier(VideoEnhancementTier tier) {
+  final index = VideoEnhancementTier.values.indexOf(tier);
+  return index > 0 ? VideoEnhancementTier.values[index - 1] : null;
+}
+
 bool videoHasAnimationTags(String category, List<String> tags) => RegExp(
   r'漫剧|动漫|动画|二次元|\banime\b|\banimation\b|comic_series',
   caseSensitive: false,

@@ -22,6 +22,29 @@ class VideoEnhancementAssets {
     'Anime4K_Restore_CNN_S.glsl',
   ];
 
+  /// Anime4K 均衡档链（+142：最便宜的真超分组合，Clamp + Restore_S + Upscale_S）。
+  /// 固定表面下 1080p → 2560×1440 属 1.333× 场景：Upscale 的卷积 pass 跑在
+  /// 源分辨率（3 层 684 MAC/px），末尾 Depth-to-Space 按 2× 输出后再由 mpv
+  /// 降回表面——M 档超分多出的容量大半在这一步降采样里丢掉，S 档以 39% 的
+  /// 卷积量拿到接近观感。720p → 1440p 恰好 2×，无降采样损耗，是本档甜点。
+  /// 12 个 pass（极简 7 / 轻量 24），单像素 MAC 约为轻量档的 36%。
+  static const animeChainBalanced = <String>[
+    'Anime4K_Clamp_Highlights.glsl',
+    'Anime4K_Restore_CNN_S.glsl',
+    'Anime4K_Upscale_CNN_x2_S.glsl',
+  ];
+
+  /// Anime4K 标准档链（+142：M 档重建 + S 档超分）。
+  /// 与均衡档的差别在重建网络（M 1716 vs S 900 MAC/px）：对低码率/重压缩
+  /// 片源，M 的 6 层 8 特征网络去伪影和线条重建明显更稳，代价是单像素 MAC
+  /// 从 1604 涨到 2420（约为轻量档 55%）。无 Restore_S 第二段重建——
+  /// 轻量档里那一段（900 MAC/px）在超分链前属可选增益，先砍它保帧率。
+  static const animeChainStandard = <String>[
+    'Anime4K_Clamp_Highlights.glsl',
+    'Anime4K_Restore_CNN_M.glsl',
+    'Anime4K_Upscale_CNN_x2_S.glsl',
+  ];
+
   /// Anime4K 轻量档链（+87，顺序即注入顺序）。
   /// Clamp_Highlights + Restore_CNN_M + Restore_CNN_S + Upscale_CNN_x2_M
   /// + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_S。

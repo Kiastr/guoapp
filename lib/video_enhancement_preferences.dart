@@ -18,13 +18,30 @@ enum VideoEnhancementContent {
 }
 
 /// 高级模式（advanced）下的 Anime4K 链档位。
-/// [minimal] = 极简档（Clamp + Restore_CNN_S，即轻量档去掉 M 档重建与超分链，
-/// 每帧 7 个 pass、卷积量约为轻量档的 30%，骁龙 865 一类设备也能跑，+95）；
-/// [lite] = 轻量档（Restore M+S，流畅优先，+87 默认）；
-/// [quality] = 质量档（Restore VL + Upscale VL，效果优先，
-/// 负载显著更高，可能触发性能看门狗自动降级）。
+///
+/// 各档链定义见 video_enhancement_assets.dart；成本量级按 //!DESC 层规格折算
+/// （Cout×Cin×k² 单像素 MAC，Clamp 约 20 忽略不计）：
+///   minimal  ≈ 920   Clamp + Restore_S
+///   balanced ≈ 1604  Clamp + Restore_S + Upscale_S（+142）
+///   standard ≈ 2420  Clamp + Restore_M + Upscale_S（+142）
+///   lite     ≈ 4408  Clamp + Restore_M + Restore_S + Upscale_M（+87 起默认）
+///   quality  ≈ 16316 Clamp + Restore_VL + Upscale_VL
+/// [minimal] 极简档：只留高光钳制 + S 档重建，无超分链（+95）；
+/// [balanced] 均衡档：S 重建 + S 超分，最便宜的真超分档——固定表面 1.333×
+/// 场景下 Upscale 恒按 2× 渲染再降回目标，M 的额外容量大半被降采样丢掉，
+/// S 以 39% 的卷积量拿到接近观感；720p→1440p 恰好 2× 无损耗，是本档甜点（+142）；
+/// [standard] 标准档：M 重建 + S 超分，重建质量优先但仍控算力（+142）；
+/// [lite] 轻量档：M+S 重建 + M 超分，负载约为均衡档 2.7 倍；
+/// [quality] 质量档：VL 重建 + VL 超分，效果优先，1080p 源在中端 GPU 上
+/// 基本跑不动，仅建议 ≤720p 源或桌面端使用。
+///
+/// 声明顺序即算力升序——这同时是性能看门狗的阶梯降档顺序
+/// （video_enhancement.dart 的 _watchPerformance 经 nextCheaperTier 逐级下移，
+/// 到极简仍过载才放弃 anime 后端）。新增档位必须按成本插队，不能追加到末尾。
 enum VideoEnhancementTier {
   minimal('极简档'),
+  balanced('均衡档'),
+  standard('标准档'),
   lite('轻量档'),
   quality('质量档');
 
