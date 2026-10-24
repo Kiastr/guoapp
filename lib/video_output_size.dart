@@ -71,7 +71,7 @@ const androidFixedSurfacePolicy = VideoFixedSurface(
 ///
 /// ## 为什么不放大会表面也有超分效果
 ///
-/// Anime4K 链（+87 起为轻量档 7 文件链，见
+/// Anime4K 链（+87 起为精细档 7 文件链，+144 前名轻量档，见
 /// lib/video_enhancement_assets.dart 的 animeChain）按 WHEN 指令分平台生效：
 /// 默认形态下安卓端表面恒为视频显示尺寸（OUTPUT≡MAIN），mpv 自动跳过全部
 /// Upscale / AutoDownscalePre pass，仅 Clamp_Highlights + Restore_CNN 生效——

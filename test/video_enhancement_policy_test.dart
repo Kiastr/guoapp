@@ -310,22 +310,22 @@ void main() {
   });
 
   group('增强档位（2026-10 tier 新增）', () {
-    test('默认 lite，与 +87 起的默认链一致', () {
+    test('默认 balanced，+144 起默认档由 lite 改为 balanced', () {
       expect(
         const VideoEnhancementPreferences().tier,
-        VideoEnhancementTier.lite,
+        VideoEnhancementTier.balanced,
       );
     });
 
-    test('极简档是 Clamp + S 档重建，pass 数明显少于轻量档', () {
+    test('极简档是 Clamp + S 档重建，pass 数明显少于精细档', () {
       expect(VideoEnhancementAssets.animeChainMinimal, [
         'Anime4K_Clamp_Highlights.glsl',
         'Anime4K_Restore_CNN_S.glsl',
       ]);
-      // 轻量档在安卓端真正执行的是 Clamp + M + S，极简档只保留 S。
+      // 精细档在安卓端真正执行的是 Clamp + M + S，极简档只保留 S。
       expect(
         VideoEnhancementAssets.animeChainMinimal.length,
-        lessThan(VideoEnhancementAssets.animeChainLite.length),
+        lessThan(VideoEnhancementAssets.animeChainFine.length),
       );
       expect(
         VideoEnhancementAssets.animeChainMinimal,
@@ -357,10 +357,10 @@ void main() {
         VideoEnhancementAssets.animeChainBalanced,
         isNot(contains('Anime4K_Restore_CNN_M.glsl')),
       );
-      // 两档都少于轻量档（轻量 = 7 个文件，含两个 AutoDownscalePre）。
+      // 两档都少于精细档（精细 = 7 个文件，含两个 AutoDownscalePre）。
       expect(
         VideoEnhancementAssets.animeChainBalanced.length,
-        lessThan(VideoEnhancementAssets.animeChainLite.length),
+        lessThan(VideoEnhancementAssets.animeChainFine.length),
       );
     });
 
@@ -417,7 +417,7 @@ void main() {
         VideoEnhancementTier.minimalUpscale,
         VideoEnhancementTier.balanced,
         VideoEnhancementTier.standard,
-        VideoEnhancementTier.lite,
+        VideoEnhancementTier.fine,
         VideoEnhancementTier.quality,
       ]);
     });
@@ -429,10 +429,10 @@ void main() {
     test('nextCheaperTier 逐级下移，极简返回 null', () {
       expect(
         nextCheaperTier(VideoEnhancementTier.quality),
-        VideoEnhancementTier.lite,
+        VideoEnhancementTier.fine,
       );
       expect(
-        nextCheaperTier(VideoEnhancementTier.lite),
+        nextCheaperTier(VideoEnhancementTier.fine),
         VideoEnhancementTier.standard,
       );
       expect(
@@ -460,7 +460,7 @@ void main() {
         VideoEnhancementPreferences.fromJson(preferences.toJson()),
         preferences,
       );
-      final switched = preferences.copyWith(tier: VideoEnhancementTier.lite);
+      final switched = preferences.copyWith(tier: VideoEnhancementTier.fine);
       expect(switched.mode, VideoEnhancementMode.advanced);
       expect(switched.content, VideoEnhancementContent.animation);
     });
@@ -476,17 +476,29 @@ void main() {
       );
     });
 
-    test('旧 JSON 无 tier 键回落 lite，非法值同样回落', () {
+    test('旧 JSON 无 tier 键回落 balanced，非法值同样回落', () {
       expect(
         VideoEnhancementPreferences.fromJson({'mode': 'advanced'}).tier,
-        VideoEnhancementTier.lite,
+        VideoEnhancementTier.balanced,
       );
       expect(
         VideoEnhancementPreferences.fromJson({
           'mode': 'advanced',
           'tier': 'garbage',
         }).tier,
-        VideoEnhancementTier.lite,
+        VideoEnhancementTier.balanced,
+      );
+    });
+
+    // [+144 更名迁移] lite 更名为 fine：显式存过 'lite' 的老用户必须继续
+    // 映射到精细档，而不是掉回落 Default（balanced）。
+    test("旧 JSON 的 'lite' 经别名迁移到 fine", () {
+      expect(
+        VideoEnhancementPreferences.fromJson({
+          'mode': 'advanced',
+          'tier': 'lite',
+        }).tier,
+        VideoEnhancementTier.fine,
       );
     });
 

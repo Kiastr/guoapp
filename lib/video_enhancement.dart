@@ -121,7 +121,7 @@ class VideoEnhancementController extends ChangeNotifier {
   /// decision 不含 tier（档位只换链、不换后端/尺寸），播放中切档位时
   /// `selected == _applied` 仍成立，需靠本字段识别「同后端不同链」
   /// 从而触发重注；非 anime 后端无所谓档位。
-  VideoEnhancementTier _appliedTier = VideoEnhancementTier.lite;
+  VideoEnhancementTier _appliedTier = VideoEnhancementTier.balanced;
 
   /// [阶梯降档·2026-10 +142] 本播放会话的档位覆盖，仅由 _watchPerformance
   /// 过载降档写入，null 表示按用户偏好。刻意不做持久化：降档是「这一集跑
@@ -392,14 +392,14 @@ class VideoEnhancementController extends ChangeNotifier {
         VideoEnhancementBackend.fsrcnnx => <String>[
           VideoEnhancementAssets.fsrcnnx,
         ],
-        // [档位·2026-10] 按 tier 选链：质量档=VL 链，轻量档=M/S 链
-        // （+87 默认）。两链 WHEN 均保留，平台筛选由 mpv 完成。
+        // [档位·2026-10] 按 tier 选链：质量档=VL 链，精细档=M/S 链
+        // （+87 引入；+144 起默认档为均衡档）。两链 WHEN 均保留，平台筛选由 mpv 完成。
         // [阶梯降档·+142] 用 _effectiveTier 而非 _preferences.tier：看门狗
         // 降档只改会话级覆盖，用户保存的偏好不变（见 _tierOverride 注释）。
         VideoEnhancementBackend.anime => switch (_effectiveTier) {
           VideoEnhancementTier.quality =>
             VideoEnhancementAssets.animeChainQuality,
-          VideoEnhancementTier.lite => VideoEnhancementAssets.animeChainLite,
+          VideoEnhancementTier.fine => VideoEnhancementAssets.animeChainFine,
           VideoEnhancementTier.standard =>
             VideoEnhancementAssets.animeChainStandard,
           VideoEnhancementTier.balanced =>

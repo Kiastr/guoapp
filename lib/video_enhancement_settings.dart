@@ -131,16 +131,16 @@ class VideoEnhancementSettings extends StatelessWidget {
             Text(
               switch (preferences.tier) {
                 VideoEnhancementTier.quality =>
-                  '质量档：VL 重建 + VL 超分，效果最好，但负载约为轻量档 3.4 倍；'
+                  '质量档：VL 重建 + VL 超分，效果最好，但负载约为精细档 3.4 倍；'
                       '1080p 源在中端 GPU 上基本跑不动，卡顿时会自动逐级降档。',
-                VideoEnhancementTier.lite =>
-                  '轻量档：M+S 重建 + M 超分，负载约为均衡档 2.6 倍；'
+                VideoEnhancementTier.fine =>
+                  '精细档：M+S 重建 + M 超分，负载约为均衡档 2.6 倍；'
                       '画质优先，1080p 源请留意帧率。',
                 VideoEnhancementTier.standard =>
                   '标准档：M 重建 + S 超分，负载约为均衡档 1.6 倍；'
-                      '比均衡档重建更稳（低码率片源收益明显），比轻量档省 40% 算力。',
+                      '比均衡档重建更稳（低码率片源收益明显），比精细档省 40% 算力。',
                 VideoEnhancementTier.balanced =>
-                  '均衡档：S 重建 + S 超分，重压缩片源观感最稳的便宜档；'
+                  '均衡档（默认）：S 重建 + S 超分，重压缩片源观感最稳的便宜档；'
                       '720p 源开固定表面恰好 2× 无损耗，1080p 源建议骁龙 8 系一类 GPU。',
                 // [极简超分档·+143] 与极简档同价（972 MAC/px），但带 2× 超分；
                 // 官方 Mode C 形态（Upscale_Denoise 开链、无 Restore），重压缩
@@ -156,7 +156,7 @@ class VideoEnhancementSettings extends StatelessWidget {
               style: helperStyle,
             ),
             // [阶梯降档·+142] 六档算力递增，看门狗按实际掉帧判定过载后
-            // 逐级降档（质量→轻量→标准→均衡→极简超分→极简），本集内自动执行、
+            // 逐级降档（质量→精细→标准→均衡→极简超分→极简），本集内自动执行、
             // 不改动用户选择；切档或换集后恢复。
             const SizedBox(height: 4),
             Text(
