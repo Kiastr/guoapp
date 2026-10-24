@@ -404,6 +404,8 @@ class VideoEnhancementController extends ChangeNotifier {
             VideoEnhancementAssets.animeChainStandard,
           VideoEnhancementTier.balanced =>
             VideoEnhancementAssets.animeChainBalanced,
+          VideoEnhancementTier.minimalUpscale =>
+            VideoEnhancementAssets.animeChainMinimalUpscale,
           VideoEnhancementTier.minimal =>
             VideoEnhancementAssets.animeChainMinimal,
         },
@@ -850,6 +852,8 @@ class VideoEnhancementController extends ChangeNotifier {
       // passes 只有 De-Ring + Restore_S，即极简档）。
       // 用 _appliedTier（实际注入的链）而非 _preferences.tier（可能刚切档
       // 尚未重注），保证期望与链内容一致。
+      // （+143 极简超分档带 Upscale_Denoise_S 链，expectsUpscale 为 true，
+      // 仍按 Depth-to-Space 判定；六档里只有极简档无超分链。）
       final expectsUpscale =
           fixed != null &&
           _appliedTier != VideoEnhancementTier.minimal &&

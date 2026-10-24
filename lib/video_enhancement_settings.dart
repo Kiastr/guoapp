@@ -131,25 +131,32 @@ class VideoEnhancementSettings extends StatelessWidget {
             Text(
               switch (preferences.tier) {
                 VideoEnhancementTier.quality =>
-                  '质量档：VL 重建 + VL 超分，效果最好，但负载约为轻量档 3.7 倍；'
+                  '质量档：VL 重建 + VL 超分，效果最好，但负载约为轻量档 3.4 倍；'
                       '1080p 源在中端 GPU 上基本跑不动，卡顿时会自动逐级降档。',
                 VideoEnhancementTier.lite =>
-                  '轻量档：M+S 重建 + M 超分，负载约为均衡档 2.7 倍；'
+                  '轻量档：M+S 重建 + M 超分，负载约为均衡档 2.6 倍；'
                       '画质优先，1080p 源请留意帧率。',
                 VideoEnhancementTier.standard =>
-                  '标准档：M 重建 + S 超分，负载约为均衡档 1.5 倍；'
-                      '比均衡档重建更稳（低码率片源收益明显），比轻量档省 45% 算力。',
+                  '标准档：M 重建 + S 超分，负载约为均衡档 1.6 倍；'
+                      '比均衡档重建更稳（低码率片源收益明显），比轻量档省 40% 算力。',
                 VideoEnhancementTier.balanced =>
-                  '均衡档：S 重建 + S 超分，最便宜的真超分档；'
-                      '720p 源开固定表面恰好 2× 无损耗，1080p 源在骁龙 865 一类设备上也能跑。',
+                  '均衡档：S 重建 + S 超分，重压缩片源观感最稳的便宜档；'
+                      '720p 源开固定表面恰好 2× 无损耗，1080p 源建议骁龙 8 系一类 GPU。',
+                // [极简超分档·+143] 与极简档同价（972 MAC/px），但带 2× 超分；
+                // 官方 Mode C 形态（Upscale_Denoise 开链、无 Restore），重压缩
+                // 片源的 ringing 风险高于均衡档，靠 Denoise 训练 + Clamp 兜底。
+                VideoEnhancementTier.minimalUpscale =>
+                  '极简超分档：只留高光钳制 + Denoise 版超分，与极简档同价但给真 2× 超分；'
+                      '为骁龙 865 一类跑不动均衡档的设备准备，重压缩片源请与均衡档对比观感。',
                 VideoEnhancementTier.minimal =>
                   '极简档：只留高光钳制 + S 档重建，无超分链；'
-                      '每帧 7 个 pass、负载最低，骁龙 865 一类设备也能跑，但给不了真超分。',
+                      '每帧 7 个 pass、负载最低，骁龙 865 一类设备也能跑。'
+                      '同价位的极简超分档带 2× 超分，要超分请选那一档。',
               },
               style: helperStyle,
             ),
-            // [阶梯降档·+142] 五档算力递增，看门狗按实际掉帧判定过载后
-            // 逐级降档（质量→轻量→标准→均衡→极简），本集内自动执行、
+            // [阶梯降档·+142] 六档算力递增，看门狗按实际掉帧判定过载后
+            // 逐级降档（质量→轻量→标准→均衡→极简超分→极简），本集内自动执行、
             // 不改动用户选择；切档或换集后恢复。
             const SizedBox(height: 4),
             Text(

@@ -22,6 +22,26 @@ class VideoEnhancementAssets {
     'Anime4K_Restore_CNN_S.glsl',
   ];
 
+  /// Anime4K 极简超分档链（+143：与极简档同价、但带真 2× 超分）。
+  /// Clamp + Upscale_Denoise_S：官方 Mode C 的开链组合——定制规则明确
+  /// 「不以 Restore 开头的链必须以 Upscale_Denoise 或 Denoise 开头，
+  /// 因为几乎所有视频压缩算法都是有损的」。Denoise 版超分网络见过带压缩
+  /// 伪影的输入，可独立承担片源，省掉 Restore_S（972 MAC/px）整段。
+  /// 成本与极简档持平（972 MAC/px、65 采样/px、8 pass/帧 vs 极简 7 pass），
+  /// 但预算花在 2× 超分而非同分辨率重建，是骁龙 865 一类跑不动均衡档
+  /// （1944 MAC/px）的设备的真超分入门档。
+  /// 边界（官方 Mode C 定位为低退化内容）：重压缩片源的 ringing 放大风险
+  /// 高于有 Restore 兜底的均衡档，靠 Denoise 训练 + 链上 Clamp De-Ring
+  /// 兜底；1080p→2560×1440 属 1.333× 场景，Upscale 仍按 2× 渲染再降回
+  /// 表面（与均衡档同路径），720p→1440p 恰好 2× 无损耗。
+  /// Upscale_Denoise_S 与 Upscale_S 的 HOOK/WHEN(1.2)/SAVE 名逐字一致，
+  /// 属纯 drop-in 替换：_monitor 的 Depth-to-Space 判定、_isOwnPass 的
+  /// Anime4K 匹配均无需改动（见 test/video_enhancement_policy_test.dart）。
+  static const animeChainMinimalUpscale = <String>[
+    'Anime4K_Clamp_Highlights.glsl',
+    'Anime4K_Upscale_Denoise_CNN_x2_S.glsl',
+  ];
+
   /// Anime4K 均衡档链（+142：最便宜的真超分组合，Clamp + Restore_S + Upscale_S）。
   /// 固定表面下 1080p → 2560×1440 属 1.333× 场景：Upscale 的卷积 pass 跑在
   /// 源分辨率（3 层 684 MAC/px），末尾 Depth-to-Space 按 2× 输出后再由 mpv

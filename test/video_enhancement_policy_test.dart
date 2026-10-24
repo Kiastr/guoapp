@@ -334,9 +334,9 @@ void main() {
     });
 
     // [档位扩展·+142] 均衡/标准两档的链内容：均衡 = Clamp + S 重建 + S 超分
-    // （最便宜的真超分链），标准 = Clamp + M 重建 + S 超分。两者都必须带
-    // Upscale_S——否则固定表面下会重蹈 +141 的覆辙（期望 Depth-to-Space 却
-    // 拿不到，_monitor 误报 render-pass 拉黑后端）。
+    // （有 Restore 兜底的最便宜真超分链），标准 = Clamp + M 重建 + S 超分。
+    // 两者都必须带 Upscale_S——否则固定表面下会重蹈 +141 的覆辙（期望
+    // Depth-to-Space 却拿不到，_monitor 误报 render-pass 拉黑后端）。
     test('均衡档是 Clamp + S 重建 + S 超分，且成本低于标准档', () {
       expect(VideoEnhancementAssets.animeChainBalanced, [
         'Anime4K_Clamp_Highlights.glsl',
@@ -364,10 +364,41 @@ void main() {
       );
     });
 
-    test('均衡/标准档往返序列化保持', () {
+    // [极简超分档·+143] 与极简档同价（都是 2 文件、972 MAC/px）但把算力
+    // 花在 2× 超分上：Upscale_Denoise_S 是官方 Mode C 开链组件（无 Restore
+    // 链必须以 Upscale_Denoise/Denoise 开头），其 HOOK/WHEN/SAVE 与
+    // Upscale_S 逐字一致，固定表面下同样产出 Depth-to-Space，_monitor
+    // 的 expectsUpscale（_appliedTier != minimal）天然为 true。
+    test('极简超分档是 Clamp + Denoise 版超分，无 Restore 但与极简档同价', () {
+      expect(VideoEnhancementAssets.animeChainMinimalUpscale, [
+        'Anime4K_Clamp_Highlights.glsl',
+        'Anime4K_Upscale_Denoise_CNN_x2_S.glsl',
+      ]);
+      // 与极简档同为 2 文件；不含任何 Restore，也不含普通版 Upscale_S。
+      expect(
+        VideoEnhancementAssets.animeChainMinimalUpscale.length,
+        VideoEnhancementAssets.animeChainMinimal.length,
+      );
+      expect(
+        VideoEnhancementAssets.animeChainMinimalUpscale,
+        isNot(contains('Anime4K_Restore_CNN_S.glsl')),
+      );
+      expect(
+        VideoEnhancementAssets.animeChainMinimalUpscale,
+        isNot(contains('Anime4K_Upscale_CNN_x2_S.glsl')),
+      );
+      // 比均衡档少一个 Restore_S 文件（超分网络内置降噪，无需 Restore 兜底）。
+      expect(
+        VideoEnhancementAssets.animeChainMinimalUpscale.length,
+        lessThan(VideoEnhancementAssets.animeChainBalanced.length),
+      );
+    });
+
+    test('均衡/标准/极简超分档往返序列化保持', () {
       for (final tier in const [
         VideoEnhancementTier.balanced,
         VideoEnhancementTier.standard,
+        VideoEnhancementTier.minimalUpscale,
       ]) {
         final preferences = VideoEnhancementPreferences(
           mode: VideoEnhancementMode.advanced,
@@ -380,9 +411,10 @@ void main() {
       }
     });
 
-    test('档位声明顺序即成本升序：质量 > 轻量 > 标准 > 均衡 > 极简', () {
+    test('档位声明顺序即成本升序：质量 > 轻量 > 标准 > 均衡 > 极简超分 > 极简', () {
       expect(VideoEnhancementTier.values, [
         VideoEnhancementTier.minimal,
+        VideoEnhancementTier.minimalUpscale,
         VideoEnhancementTier.balanced,
         VideoEnhancementTier.standard,
         VideoEnhancementTier.lite,
@@ -392,6 +424,8 @@ void main() {
 
     // [阶梯降档·+142] nextCheaperTier 是看门狗降档的唯一依据，其正确性
     // 直接决定「过载先降档而非直接放弃增强」是否按预期逐级下移。
+    // [极简超分档·+143] 均衡档的下一站是极简超分档而非极简档——同价但
+    // 保留 2× 超分；极简超分档过载再降到极简档（丢失超分换 1 个 pass）。
     test('nextCheaperTier 逐级下移，极简返回 null', () {
       expect(
         nextCheaperTier(VideoEnhancementTier.quality),
@@ -407,6 +441,10 @@ void main() {
       );
       expect(
         nextCheaperTier(VideoEnhancementTier.balanced),
+        VideoEnhancementTier.minimalUpscale,
+      );
+      expect(
+        nextCheaperTier(VideoEnhancementTier.minimalUpscale),
         VideoEnhancementTier.minimal,
       );
       expect(nextCheaperTier(VideoEnhancementTier.minimal), isNull);
