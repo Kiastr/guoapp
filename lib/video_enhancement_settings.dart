@@ -240,6 +240,6 @@ class VideoEnhancementSettings extends StatelessWidget {
     VideoEnhancementMode.economy || VideoEnhancementMode.quality =>
       '实验性：自动按画面和设备选择增强，命中与效果可能变化；省电使用轻量缩放，清晰优先允许更高负载。追求稳定效果请用高级档。建议先选择源站高清画质。',
     VideoEnhancementMode.advanced =>
-      '高级模式直接强制 Anime4K 神经增强链（安卓端默认为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选轻量/质量档位。',
+      '高级模式直接强制 Anime4K 神经增强链（安卓端固定输出表面启用时为真超分、未启用为同分辨率重建/降噪，桌面端为 2× 超分），绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；渲染异常时仍会自动回退原画。下方可选轻量/质量档位；极简档不含超分链，给不了真超分。',
   };
 }

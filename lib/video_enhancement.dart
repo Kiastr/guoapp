@@ -822,8 +822,16 @@ class VideoEnhancementController extends ChangeNotifier {
           (surfaceWidth - selected.output!.width).abs() <= 2 &&
           (surfaceHeight - selected.output!.height).abs() <= 2;
       final sourceSize = videoDisplaySize(player.state.videoParams);
+      // 极简档链只有 Clamp + Restore_S，没有 Upscale/Depth-to-Space；固定
+      // 大表面下它只是「重建 + spline36 放大到表面」，若仍按含超分链的
+      // 档位要求 Depth-to-Space，会必然误报 render-pass（+141 真机实证：
+      // 期望/表面/osd 均为 2560×1440、尺寸匹配，但链内无 Depth-to-Space，
+      // passes 只有 De-Ring + Restore_S，即极简档）。
+      // 用 _appliedTier（实际注入的链）而非 _preferences.tier（可能刚切档
+      // 尚未重注），保证期望与链内容一致。
       final expectsUpscale =
           fixed != null &&
+          _appliedTier != VideoEnhancementTier.minimal &&
           selected.output != null &&
           sourceSize != null &&
           (selected.output!.width > sourceSize.width + 2 ||
@@ -838,8 +846,9 @@ class VideoEnhancementController extends ChangeNotifier {
           // 仅 Clamp + Restore_CNN 生效（pass 描述含 Restore）。二者有其一
           // 即视为链已加载，避免把安卓端的正常 Restore 形态误判为未生效
           // （+95 极简档只有 Clamp + Restore_S，同样命中 Restore）。
-          // 固定大表面启用后，输出大于源时必须见到 Depth-to-Space，
-          // 否则说明 Upscale 仍被 WHEN 跳过，不能仅凭 Restore 判为成功。
+          // 固定大表面启用后，输出大于源时必须见到 Depth-to-Space（极简档
+          // 无 Upscale 链，expectsUpscale 已置 false，见上），否则说明
+          // Upscale 仍被 WHEN 跳过，不能仅凭 Restore 判为成功。
           descriptions.contains('Anime4K') &&
               (expectsUpscale
                   ? descriptions.contains('Depth-to-Space')

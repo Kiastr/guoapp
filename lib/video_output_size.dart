@@ -95,8 +95,9 @@ const androidFixedSurfacePolicy = VideoFixedSurface(
 ///   （重新 SetSurfaceSize 就是播放中改表面，会转圈），该次会话只剩
 ///   同分辨率重建；中途把增强从「关」改到「开」同理，需退出重进播放器。
 /// - 放大表面后，video_enhancement.dart 的 `_monitor` 用
-///   `expectsUpscale` 强制要求 Anime4K 链出现 `Depth-to-Space` 末 pass，
-///   防止 Upscale 仍被 WHEN 跳过却误报成功。
+///   `expectsUpscale` 强制要求 Anime4K 链出现 `Depth-to-Space` 末 pass
+///   （极简档无 Upscale 链，不强制，否则必误报 render-pass），防止
+///   Upscale 仍被 WHEN 跳过却误报成功。
 /// - 增强策略侧（video_enhancement_policy.dart）拿到的 surfaceOutput 即
 ///   实际表面尺寸，与 fork 应用的值恒等，sizeMatches 才不会误拉黑后端。
 class VideoOutputSizeAdapter {

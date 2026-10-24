@@ -2,13 +2,13 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+140**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+141**。
 
 如要使用多片源请使用真果鉴
 
 ## 在原项目基础上的主要升级
 
-> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+140（+83 ~ +140，共 58 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
+> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+141（+83 ~ +141，共 59 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
 
 ### 1. 运行时片源生态——支持纯用户端解析libretv需要后端解析的视频源（重要改动）
 
@@ -44,10 +44,11 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **卡顿修复**：轮询状态签名去重 + 首页分组缓存，消除周期性整页重建
 - **错误提示人话化**：接口返回网页、缺少函数、jar 包源等分别给出具体原因，不再统一显示「类型暂不支持」
 
-## 最近更新（0.2.74+140）
+## 最近更新（0.2.74+141）
 
 | 版本 | 变更 |
 | --- | --- |
+| +141 | **修复固定表面+极简档必然误报 render-pass 回退（真机实证）**。真机日志：期望/表面/osd 均为 2560×1440（尺寸匹配，**固定表面本身已正常工作**），但 passes 只有 De-Ring + Restore_CNN_S（无 Restore_M、无 Upscale），即当前链为**极简档**（Clamp + Restore_S，本就不含超分链）。+140 的 `expectsUpscale` 只按「输出大于源」就强制要求 Depth-to-Space 末 pass，极简档永远满足不了 → 连续 5 次确认失败 → `_failBackend('render-pass')` 误报回退。修复：`_monitor` 的 `expectsUpscale` 改按**实际注入的档位**（`_appliedTier`，而非可能刚切换尚未重注的 `_preferences.tier`）判定——极简档不期待 Depth-to-Space（接受 Restore，与 OUTPUT≡MAIN 时一致），轻量/质量档保留原检测（仍能发现"该超分却没超分"）。设置页高级档文案同步：固定表面启用时为真超分；并明示"极简档不含超分链，给不了真超分"（真超分请选轻量/质量档）。验证：固定表面+极简档的误报路径已按代码核对消除；轻量/质量档+固定表面在 1080p→2560×1440（1.333× > Upscale 的 WHEN 阈值 1.2）下 Depth-to-Space 应正常出现，待真机复测。|
 | +140 | **安卓端固定输出表面：从"同分辨率重建"走向 1080p→2K 真超分（开发快照，未真机验证）**。背景：安卓端渲染表面恒等于视频显示尺寸，Anime4K 链的 Upscale pass 因 `WHEN`（OUTPUT≡MAIN）被 mpv 整段跳过，只剩 Restore 同分辨率重建；而真机验证过播放中改表面有三个连锁问题（VO 重建 + seek 转圈、与 media_kit 自身 videoParams 监听乒乓、误触增强自愈把后端永久拉黑）。做法：fork `media_kit_video`（packages/，dependency_overrides 指向本地）新增 `VideoFixedSurface` 纯数据策略，`VideoController` 创建时一次性下发，fork 在**首次** videoParams 事件上按「源尺寸 × 倍率」放大表面并**锁定**——沿用上游首次 `SetSurfaceSize` 的时机，不新增调用点，三个问题均不触发。倍率按源尺寸（而非屏幕尺寸）计算以保持视频宽高比：mpv 在表面内 letterbox、Flutter 侧 `FittedBox(contain)` 再贴一次，表面取屏幕尺寸会把视频挤成中央一小块。默认参数 1080p → 2560×1440、720p/540p → ×2、4K 不缩表面、奇数源偶数对齐。启用条件（`PlayerScreen._fixedSurfacePolicy`）：安卓 + 非电视 + 增强已开 + libmpv 后端 + 自建 VideoController，缺一即交还 media_kit 自身维护（与上游行为逐字节一致）；桌面/电视端完全不传。增强侧（`VideoEnhancementController._fixedSurfaceSize`）读取 fork 实际应用的表面参与决策，`_monitor` 的 sizeMatches 才成立；输出大于源时强制要求 Anime4K 链出现 `Depth-to-Space` 末 pass，防止 Upscale 仍被跳过却误报成功。**已知限制**：① 表面只在播放器创建时锁定一次，竖屏进入后旋转横屏不会重新放大（该次会话只剩同分辨率重建），中途把增强从「关」改到「开」同理，需退出重进播放器；② 竖屏下表面仍是 2× 源，该场景策略层本就走高质量缩放，会多一点填充率开销；③ 真正的瓶颈是策略层安卓显存预算 128MB（`video_enhancement_policy.dart` 的 `memory`），1080p/720p 源目前仍会被预算拦下走缩放，低分辨率片源（≤540p）才能拿到 Anime4K——设备余力大时可调大该值；④ 未真机验证，沙箱 Dart 版本亦无法运行测试。附单元测试：`VideoFixedSurface.resolve` 倍率公式 + `chooseVideoEnhancement(fixedSurface:)` 策略语义（output 恒为固定表面、与视口/平台无关、超预算回落、关闭增强不生效）。|
 | +139 | **修复启动日志版本号永远显示 +80**。根因：`lib/app_build.dart` 的 `duanjuBuildNumber` 靠 `--dart-define=BUILD_NUMBER` 编译期注入，但 android / ios / windows 三个构建脚本和 CI 都只传了 `ALL_SOURCES`，谁都没传 `BUILD_NUMBER`，Dart 侧一路回落 `defaultValue: 80`——包早已 +138，日志仍显示 0.2.73+80，排障时会按错误版本号误判代码新旧（本轮红果问题初判就因此跑偏）。修复：`scripts/app_build.py` 新增 `build_number_from_pubspec()`，从唯一权威源 `pubspec.yaml` 的 `version: x.y.z+N` 提取 N，经共用的 `flutter_arguments` 注入三个平台的全部构建入口（含 CI，其 android job 直接调 `build_android.py`）；`defaultValue` 同步更新并注释说明勿手动维护；新增回归测试钉死「flutter build 命令必带与 pubspec 一致的 BUILD_NUMBER」，防止再丢。|
 | +138 | **加载期卡顿真因 + 启动链路梳理**。① 主线程最大热点：`SourceSite.isAvailable/isPrimary` 每次调用都重建站源列表（含运行时源排序）再线性查找，而首页 `_visible` 对**每一条**剧都会调用；3000 条 × 40 个导入源实测 **32.9ms/次**（真机约 100ms），流式刷新每 90ms 重算一次 → 加载期间持续掉帧。改为缓存 ID 集合（导入/删除运行时源才失效），同场景 **2.4ms**。② 站源状态轮询改为一次 RPC （`sourceStatuses`）：原来每 10 秒按源逐个查，几十个源就是几十次 FFI + isolate。③ 展示顺序改为**条目级追加**：A 批 → B 批 → A 的下一页……已有卡片永不移动（此前是「按源分块」，翻页时会把该源的新条目插回它自己的位置）。④ 启动时 libretv / drpy 注册表并行拉取；目录与分类的缓存回读合流，同一份缓存只跨一次 FFI。⑤ 附带实测：Go 剧库 581KB 加载 6ms（在 FFI 隔离区执行，不占 UI 线程）。仍保留：加载中使用名称/季号排序时，每批会按该排序重排一次。|
