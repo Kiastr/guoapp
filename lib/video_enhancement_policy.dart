@@ -191,6 +191,7 @@ VideoEnhancementDecision chooseVideoEnhancement({
   required double rate,
   required int costLimit,
   required Set<VideoEnhancementBackend> rejected,
+  Size? fixedSurface,
   bool opaque8Bit = false,
 }) {
   const original = VideoEnhancementBackend.original;
@@ -241,7 +242,7 @@ VideoEnhancementDecision chooseVideoEnhancement({
   /// video_enhancement.dart 的 _monitor 用 output 与实际表面
   /// （rect / osd-dimensions）比对来确认增强生效；安卓若返回放大尺寸，
   /// sizeMatches 永远不成立，连续 5 次即 _failBackend 拉黑后端。
-  final surfaceOutput = android ? source : output;
+  final surfaceOutput = fixedSurface ?? (android ? source : output);
   // [结构重构·2026-10] 高级档：用户明确要求"直接开启 Anime4K"，全部绕过
   // 自动判断——动画标签、温控/headroom、播放倍速、显存预算、targetScale、
   // rejected 拉黑、色彩/GPU/GLES 预检一概不看。

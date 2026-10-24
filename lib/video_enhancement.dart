@@ -21,6 +21,7 @@ class VideoEnhancementController extends ChangeNotifier {
     required VideoEnhancementPreferences preferences,
     required String category,
     required List<String> tags,
+    this.fixedSurface,
   }) : _preferences = preferences,
        _animationHint = videoHasAnimationTags(category, tags) {
     final native = player.platform;
@@ -68,6 +69,7 @@ class VideoEnhancementController extends ChangeNotifier {
   static const _device = MethodChannel('duanju/device');
   static const _filterLabel = 'duanju_vsr';
   final Player player;
+  final Size? fixedSurface;
   late final bool supported;
   final bool _animationHint;
   VideoEnhancementPreferences _preferences;
@@ -328,6 +330,7 @@ class VideoEnhancementController extends ChangeNotifier {
       rate: player.state.rate,
       costLimit: _costLimit,
       rejected: _rejected,
+      fixedSurface: fixedSurface,
       opaque8Bit: _opaque8Bit,
     );
     final selected = _comparing && canCompare
@@ -752,6 +755,7 @@ class VideoEnhancementController extends ChangeNotifier {
         rate: player.state.rate,
         costLimit: _costLimit,
         rejected: _rejected,
+        fixedSurface: fixedSurface,
         opaque8Bit: _opaque8Bit,
       );
       if (!_comparing && reassessed != selected) {
@@ -792,6 +796,13 @@ class VideoEnhancementController extends ChangeNotifier {
           surfaceHeight is num &&
           (surfaceWidth - selected.output!.width).abs() <= 2 &&
           (surfaceHeight - selected.output!.height).abs() <= 2;
+      final sourceSize = videoDisplaySize(player.state.videoParams);
+      final expectsUpscale =
+          fixedSurface != null &&
+          selected.output != null &&
+          sourceSize != null &&
+          (selected.output!.width > sourceSize.width + 2 ||
+              selected.output!.height > sourceSize.height + 2);
       final effectFound = switch (selected.backend) {
         VideoEnhancementBackend.ravu => descriptions.contains(
           _luma ? 'RAVU-Lite-AR (step2' : 'RAVU (step4',
@@ -802,9 +813,13 @@ class VideoEnhancementController extends ChangeNotifier {
           // 仅 Clamp + Restore_CNN 生效（pass 描述含 Restore）。二者有其一
           // 即视为链已加载，避免把安卓端的正常 Restore 形态误判为未生效
           // （+95 极简档只有 Clamp + Restore_S，同样命中 Restore）。
+          // 固定大表面启用后，输出大于源时必须见到 Depth-to-Space，
+          // 否则说明 Upscale 仍被 WHEN 跳过，不能仅凭 Restore 判为成功。
           descriptions.contains('Anime4K') &&
-              (descriptions.contains('Depth-to-Space') ||
-                  descriptions.contains('Restore')),
+              (expectsUpscale
+                  ? descriptions.contains('Depth-to-Space')
+                  : (descriptions.contains('Depth-to-Space') ||
+                        descriptions.contains('Restore'))),
         VideoEnhancementBackend.fsrcnnx =>
           descriptions.contains('feature map') &&
               descriptions.contains('aggregation'),

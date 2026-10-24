@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:media_kit/media_kit.dart';
@@ -12,6 +13,29 @@ Size? videoDisplaySize(VideoParams parameters) {
   return rotation == 90
       ? Size(height.toDouble(), width.toDouble())
       : Size(width.toDouble(), height.toDouble());
+}
+
+Size androidFixedSurfaceSize(
+  Size physicalScreen, {
+  double maxPixels = 3686400,
+  double maxDimension = 4096,
+}) {
+  final width = physicalScreen.width;
+  final height = physicalScreen.height;
+  if (width <= 0 || height <= 0 || !width.isFinite || !height.isFinite) {
+    return Size.zero;
+  }
+  final scale = math.min(
+    1.0,
+    math.min(
+      math.sqrt(maxPixels / (width * height)),
+      maxDimension / math.max(width, height),
+    ),
+  );
+  return Size(
+    math.max(2, (width * scale).round() ~/ 2 * 2).toDouble(),
+    math.max(2, (height * scale).round() ~/ 2 * 2).toDouble(),
+  );
 }
 
 /// 画质增强的"输出表面尺寸"适配器。
