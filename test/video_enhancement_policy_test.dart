@@ -554,6 +554,26 @@ void main() {
       expect(decision.output, surface);
     });
 
+    // [极简档不放大·+146] PlayerScreen._fixedSurfacePolicy 对「高级 + 极简档」
+    // 返回 null（不传 fixedSurface），实际入参等价于本用例：极简档链没有
+    // Upscale，大表面只剩 spline36 放大同分辨率重建结果，纯属填充率/带宽
+    // 开销。这里钉住该入参下的策略语义：output 回到源尺寸、后端仍是 anime。
+    test('极简档不传固定表面时 output 为源尺寸（+146 A）', () {
+      const preferences = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        content: VideoEnhancementContent.animation,
+        tier: VideoEnhancementTier.minimal,
+      );
+      final decision = decide(
+        preferences: preferences,
+        parameters: source,
+        viewport: const Size(1080, 2400),
+        android: true,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.output, const Size(544, 960));
+    });
+
     test('固定表面过大撑爆显存预算时回落 scaling（预算含表面项）', () {
       // 890×1600 源 + 2560×1440 表面：神经项 ~280MB、ravu 项 ~193MB，
       // 均超安卓 128MB 预算，与视口无关地回落到高质量缩放。

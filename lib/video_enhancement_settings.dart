@@ -151,7 +151,8 @@ class VideoEnhancementSettings extends StatelessWidget {
                 VideoEnhancementTier.minimal =>
                   '极简档：只留高光钳制 + S 档重建，无超分链；'
                       '每帧 7 个 pass、负载最低，骁龙 865 一类设备也能跑。'
-                      '同价位的极简超分档带 2× 超分，要超分请选那一档。',
+                      '同价位的极简超分档带 2× 超分，要超分请选那一档；'
+                      '无超分链，安卓端不放大输出表面（放大只会白耗带宽）。',
               },
               style: helperStyle,
             ),

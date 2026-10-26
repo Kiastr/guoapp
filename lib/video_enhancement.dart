@@ -424,6 +424,16 @@ class VideoEnhancementController extends ChangeNotifier {
         _setOption('dscale', 'mitchell');
         _setOption('cscale', 'bilinear');
         _setOption('correct-downscaling', 'yes');
+        // [降采样省带宽·+146] linear-downscaling 是 mpv 默认值（yes）：降采样
+        // 时会插入 linearize + delinearize 两个全屏 pass。超分链走固定表面时
+        // 每帧都是「Depth-to-Space 2× 输出 → 降回 1.333× 表面」，按 1080p 源
+        // 算 4K→2K 每帧多搬约 190MB（rgba16f 读+写），30fps 约 5.7GB/s，
+        // 占手机有效带宽的 1/4~1/3——这是纯带宽税，不产生任何超分细节。
+        // 关闭后降采样退回 gamma 空间平均：观感差异集中在暗部渐变与高对比
+        // 边缘（几个百分点亮度），动漫大面积平色基本无感；correct-downscaling
+        // 保留，滤波核仍按缩小比例展宽，抗锯齿/防摩尔纹不受影响。
+        // 原值由 _setOption 记入 _originalOptions，增强关闭时自动恢复。
+        _setOption('linear-downscaling', 'no');
         if (shaderPaths != null) {
           _setOption('fbo-format', 'rgba16f');
           final current = _shaderList();

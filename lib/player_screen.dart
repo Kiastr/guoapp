@@ -175,7 +175,8 @@ class _PlayerScreenState extends State<PlayerScreen>
   /// 3. media_kit/libmpv 后端——LunaExoPlayer 等没有 glsl-shaders 注入点，
   ///    放大表面纯属浪费；
   /// 4. 非电视端——电视端走原生硬件直通，放大表面只会白耗 GPU；
-  /// 5. 增强未关闭——关闭时锁大表面没有任何收益。
+  /// 5. 增强未关闭——关闭时锁大表面没有任何收益；
+  /// 6. 不是「高级 + 极简档」——见下方 [+146] 注释。
   ///
   /// ⚠️ 表面只在播放器创建时锁定一次：竖屏进入后旋转横屏不会重新放大
   /// （播放中改表面会触发 VO 重建 + seek 转圈，见 video_output_size.dart
@@ -191,6 +192,19 @@ class _PlayerScreenState extends State<PlayerScreen>
     // main() 在 runApp 前已 await 过 AppDevice.detect，缓存必然就绪。
     if (AppDevice.cached?.television ?? false) return null;
     if (enhancement.mode == VideoEnhancementMode.off) return null;
+    // [极简档不放大·+146] 极简档链（Clamp + Restore_S）不含 Upscale，大表面
+    // 的唯一收益是让 mpv 用 spline36 把「同分辨率重建」的结果放大到 2K，
+    // 却要付大表面的填充率、显存与带宽（2K 比 1080p 多 78% 像素）——没有
+    // 超分收益的纯开销。交还 media_kit 自身维护（= 源尺寸）后，Upscale 的
+    // WHEN(1.2) 本就不满足、仍会被跳过，观感不变：屏幕不大于源时零差异，
+    // 屏幕更大时放大改由 Flutter 合成完成，质量略低于 spline36（要放大观感
+    // 请选极简超分档，同价位且带真 2× 超分）。
+    // 只对「高级 + 极简档」确定生效：自动族（省电/清晰优先）可能落到
+    // ravu/fsrcnnx/anime 超分，仍需大表面才能触发，维持现状。
+    if (enhancement.mode == VideoEnhancementMode.advanced &&
+        enhancement.tier == VideoEnhancementTier.minimal) {
+      return null;
+    }
     return androidFixedSurfacePolicy;
   }
 
