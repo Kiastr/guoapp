@@ -2,13 +2,13 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+151**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+152**。
 
 如要使用多片源请使用真果鉴
 
 ## 在原项目基础上的主要升级
 
-> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+151（+83 ~ +151，共 68 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
+> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+152（+83 ~ +152，共 70 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
 
 ### 1. 运行时片源生态——支持纯用户端解析libretv需要后端解析的视频源（重要改动）
 
@@ -44,10 +44,11 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **卡顿修复**：轮询状态签名去重 + 首页分组缓存，消除周期性整页重建
 - **错误提示人话化**：接口返回网页、缺少函数、jar 包源等分别给出具体原因，不再统一显示「类型暂不支持」
 
-## 最近更新（0.2.74+151）
+## 最近更新（0.2.74+152）
 
 | 版本 | 变更 |
 | --- | --- |
+| +152 | **修「tag 不存在导致 Release 建不出来，整版构建被跳过」**。现象：+151 的 workflow 推上去后，run 41104100853 的 `prepare-release` 一步直接红掉，报 `tag app-v0.2.74-151 doesn't exist in the repo Kiastr/guoapp, aborting due to --verify-tag flag`，android / release 两个 job 跟着 `skipped`——六个 APK 一个都没编译。根因是上一版加的 `--verify-tag` 用错了语义：它表示「tag 必须已经存在，否则中止」，而清理 +150 那个重复空壳 Release 时 tag 被一并带走，于是 create 当场 abort（当时只顾着防「两个 job 并发建出两个 Release」，没配套保证 tag 先落地）。改动：`prepare-release` 在建 Release 之前先用 API 把 tag 建到本次 `${GITHUB_SHA}`（`refs/tags/<tag>` 不存在则 POST 创建，存在但指向别的 commit 则 PATCH 移动，已指向本次 commit 则沿用），之后 `gh release create --verify-tag` 与 android 的 `gh release upload` 都有确定的落点；PR 构建仍只在步骤内跳过、不动 job，避免整条编译链被 skip。|
 | +151 | **修发布竞态：同名 tag 建出两个 Release，导致校验文件与说明发不出去**。现象：+150 的六个 APK 都传完了，release job 却倒在创建 Release 那一步，报 `HTTP 422: Release.tag_name already exists`。根因不是编译、也不是配额——**两个 android 矩阵 job 各自跑 `gh release view \|\| gh release create`，并发下 GitHub 造出了两个同名 tag 的 Release 对象**（id 429298580 带 7 个附件、429298581 是空壳，创建时间同一秒）。此后任何按 tag 的写操作都会撞 422：连手动 `PATCH /releases/{id}` 都被拒，错误信息完全一样。改动：新增 `prepare-release` job，Release 由它**唯一**创建（`--verify-tag`，重跑同版本时沿用已有 tag），`android` 改为 `needs: [prepare-release]` 且只上传、不再自建；`release` job 的存在性判断带 3 次退避重试，`create` 失败回落到补传校验文件而不是让整版发不出去。`prepare-release` 不能用 job 级 `if` 跳过（一 skip 整条编译链跟着跳过，PR 会失去编译校验），改成 job 照跑、步骤内判断事件类型。已用接口清掉重复的空壳 Release 429298581，并补回 +150 缺失的说明文案与 SHA256SUMS（7 个附件现已齐全）。|
 | +150 | **红果官网扫码登录**。现象：应用没有账号入口，收藏 / 观看历史 / 云端续播这类账号能力一直缺位。做法：新增 `provider_hongguo_web_login.go`，走红果官网 passport web 端点——`/passport/web/get_qrcode/` 拿 token 与二维码，`/passport/web/check_qrconnect/` 轮询状态，手机确认后跟随 `redirect_url` 完成会话建立并收割 `sessionid`，登录态落盘到应用数据目录的 `hongguo-login.json`（0600）。三个必须踩准的点：**aid 用官网网页端的 513755**（App 的 8662 与番茄小说的 1967 在 web passport 上都是「该应用无权限」error_code 16）；**中间 cookie 必须跨请求保持**（`passport_csrf_token` 同时进 cookie 与 `x-tt-passport-csrf-token` 头，get_qrcode → check_qrconnect → 回跳三步共用一份 jar）；**`redirect_url` 是远端可控输入**，带 cookie 去 GET 之前要校验同 scheme + 同 host，且必须关掉 Go 的自动重定向逐跳校验，否则等于「任意 URL + 凭据」的 SSRF。设置页新增「红果账号」入口，对话框每 2 秒轮询、二维码倒计时归零即停（不靠服务端 expired 被动收尾，避免用户离开后仍空转）、支持「校验登录态」与「退出登录」。**能力边界写在代码与 UI 文案里**：登录只解决账号态，播放取流走匿名设备身份，登不登录都能看同样的剧、画质也不受影响。验证：真实网络 create 265ms 拿到 35 字符 token 与 22KB PNG（有效 60 秒）、poll 105ms 返回 `status=new`；单测 7 组（data URI 剥离、脏 token、过期时间归一、跨站回跳拦截、完整 create→poll→落盘→退出链路、服务端过期、坏文件容错）全过；Go 全量失败集与改动前逐项同名（6 项既有 catalog 用例 + 同一个 panic），零回归。**不含短信登录**：那条链路要注册设备、过五件套签名，还会撞滑块风控，属后续独立排期。|
 | +149 | **红果剧库四条链路修复：分类兜底多路 + 404 收尾 + 翻页游标 + 推荐流换批**。背景：分类页与首页推荐长期只有「真人剧」一条兜底，漫剧 / AI 剧页固定报「红果 App 接口返回空内容」，翻到末页报 HTTP 404，「加载更多」永远重复第一页。① **兜底多路**：`hongguoWebFallbackRoutes` 把分类键映射到官网分类页（`real-drama` / `comic-drama` / `ai-drama`），空分类（「全部」）走三路聚合（与 App 接口正常时的三路语义一致），单分类一路；判定改为「只要有一路正常响应就算成功」（`okCount > 0`），某一路越界 404 不拖垮整屏。② **404 语义**：`hongguoIsNotFound` 按错误串尾部判定（兼容 `HTTP 404：<原因>`，不误伤 `HTTP 4040`）；分类页越界按空页返回（官网 `totalPages=34`，`page=35` 必 404，三个剧类都一样），详情页 404 换成「红果官网没有这部剧（可能已下架，或只在 App 端存在）」，不再把「App 详情失败」拼在前面埋掉真正原因。③ **翻页游标**：兜底分支回填 `result.Page`——原先该分支从不赋值，Dart 侧 `nextPage = page + 1` 恒为 1，「加载更多」一直拉第一页。④ **推荐流**：新增 `provider_hongguo_feed.go`，走 `reading/bookapi/bookmall/tab/v1/`（`aid=8662` / `app_name=novelread` / `tab_type=16` / `bottom_tab_type=7`），**匿名可用、不需要签名**，只带 UA `com.dragon.read/73532` + `Accept` + `X-XS-From-Web: 0` + `Sdk-Version: 2`，靠 `offset` 递增 + 服务端 `session_id` 换批；卡片藏在 `cell_data[].cell_data[].video_data[]`，剧集字段在 `video_detail`（个别卡片平铺），按 `content_type` 过滤（1=真人剧、1004=漫剧/AI剧，其余是小说与广告位）。单次交互连取最多 4 批攒到 9 部，`has_more` / `bottom_unlimited` 实测不可信（恒 false 但仍有新卡片）故固定 `HasMore=true`；推荐页顶部新增「推荐」tab 并设为默认，**该 tab 的「刷新」语义是换一批**（保留 offset/session/seen，不清空旧列表），与分类页「重看这一屏」区分。⑤ **推荐失败兜底**：`fetchHongguoWebHomeSections` 解析官网首页四个板块（热播短剧 / 真人剧 / 漫剧 / AI 剧，36 部去重后 33），失败时兜底并清空旧警告；因为官网首页没有下一页，兜底结果**不写推荐游标**，避免下一轮「加载更多」拿着对不上的游标打 App 接口。⑥ **CI**：产物不再经 `actions/upload-artifact` 中转（账号级 500MB 配额撞满会让编译成功的 job 判 failure、连带 release job 被 skip），编译完直接上传本版本 Release 附件，release job 改从 Release 取回并补 `SHA256SUMS.txt`；上传逐文件 + 5 次指数退避，避免单个附件撞 502 拖垮整批；发布阶段只回传新生成的校验文件，不再把 200+ MB 的 APK 从同一 Release 下载后重传一遍。验证：真实网络三分类各 24 部 / 34 页、越界页 0 部无错误、官网首页 33 部、信息流连取三批 9→4→5 部（累计 18，每批都有新增，单次 2.2~2.6 秒）；新增 4 组单测（兜底映射、404 八种边界、推荐流解析五组、查询校验）；core 全量测试失败集与改动前逐项同名（6 项既有环境失败），零回归。**已知边界**：官网分类页是固定热播序列（无时间字段，`?sort_type` / `?tab` / `?category_json_ids` 传了会 404 或被静默忽略），刷新不出新剧是数据面事实，要看新内容靠翻页或推荐流；推荐流是混排信息流，没有题材维度，取不到「动作冒险」这类筛选——那需要 landpage 的 `select_items.category_dim_theme`（`cate_xxxx` slug）配合完整签名链。本仓库仍为匿名取流实现，不含登录 / 账号链路。|
