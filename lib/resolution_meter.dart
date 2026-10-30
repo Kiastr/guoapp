@@ -6,12 +6,20 @@ import 'package:flutter/material.dart';
 ///
 /// ## 检测来源
 /// 播放器解码后通过 `PlayerStream.videoParams`（mpv 的 w/h/dw/dh）上报真实
-/// 片源像素尺寸，[resolutionLevelOf] 把高度折算成常见档位。没有拿到尺寸
-/// （未起播 / 音频 / 检测失败）时显示「待检测」提示，进度条停在 0，不猜测档位。
+/// 片源像素尺寸，[resolutionLevelOf] 折算成常见档位。没有拿到尺寸（未起播 /
+/// 音频 / 检测失败）时显示「待检测」提示，进度条停在 0，不猜测档位。
+///
+/// ## 判定基准是短边，不是高度
+/// 档位名指的是画面**短边的行数**：1080P 就是 1080 行。竖屏 1080×1920 与
+/// 横屏 1920×1080 是同一档，21:9 的 2560×1080、4:3 的 1440×1080 亦然。
+/// 所以判档与填充一律走 [resolutionReferenceSide]（显示尺寸里较短的一边）。
+/// 这里不能直接用高度：`videoDisplaySize` 会把旋转片源换正（rotate 90 时
+/// 交换宽高），竖屏 1080×1920 换正后高度是 1920，按高度判会误判成 2K、
+/// 进度条也会填到 93%（几乎顶到 4K 节点）。说明行仍显示原始「宽×高」。
 ///
 /// ## 节点与填充
-/// 进度条上有 4 个节点（480P / 1080P / 2K / 4K），按高度对数刻度定位：
-/// 填充比例 = ln(检测高度/360) / ln(2160/360)，夹在 [0,1]。用对数而不是
+/// 进度条上有 4 个节点（480P / 1080P / 2K / 4K），按短边对数刻度定位：
+/// 填充比例 = ln(短边/360) / ln(2160/360)，夹在 [0,1]。用对数而不是
 /// 线性，是为了让 1080P 落在条中部而不是贴着左端，节点间距在视觉上更均匀。
 class ResolutionLevel {
   const ResolutionLevel(this.label, this.minHeight, this.major)
@@ -20,7 +28,8 @@ class ResolutionLevel {
   /// 节点文案，如「1080P」「2K」。
   final String label;
 
-  /// 到达该档位所需的最小视频高度（像素）。
+  /// 到达该档位所需的**最小短边行数**（像素）。字段名沿用 minHeight，
+  /// 但比较对象是 [resolutionReferenceSide] 的返回值，不再是画面高度。
   final int minHeight;
 
   /// 主节点画大圆点（1080P / 2K / 4K），次节点（480P）画小圆点。
@@ -53,23 +62,35 @@ double _logScale(double value, double min, double max) {
   return (math.log(value / min) / denominator).clamp(0.0, 1.0);
 }
 
-/// 折算高度对应的档位（取「不超过该高度的最大节点」）。
+/// 判定基准：显示尺寸里较短的一边（有效行数）。
 ///
-/// 高于 4K 的片源归入 4K 档；高度无效（<=0）返回 null，由
+/// 竖屏片源经 `videoDisplaySize` 换正后是 1080×1920（宽 < 高），它的高度
+/// 1920 会把 1080P 判成 2K；取短边则 1080×1920 与 1920×1080 同为 1080P。
+/// 任一边无效（<=0）返回 0，由调用方按「未检测到尺寸」兜底，不猜档。
+int resolutionReferenceSide(int width, int height) {
+  if (width <= 0 || height <= 0) return 0;
+  return width < height ? width : height;
+}
+
+/// 折算片源尺寸对应的档位（取「不超过短边的最大节点」）。
+///
+/// 高于 4K 的片源归入 4K 档；尺寸无效（任一边 <=0）返回 null，由
 /// [ResolutionMeter] 的提示文案兜底，不猜测档位。
-ResolutionLevel? resolutionLevelOf(int height) {
-  if (height <= 0) return null;
+ResolutionLevel? resolutionLevelOf(int width, int height) {
+  final side = resolutionReferenceSide(width, height);
+  if (side <= 0) return null;
   ResolutionLevel? matched;
   for (final level in resolutionLevels) {
-    if (height >= level.minHeight) matched = level;
+    if (side >= level.minHeight) matched = level;
   }
   return matched;
 }
 
-/// 检测高度换算成填充比例（0..1）。height<=0 时为 0。
-double resolutionProgressOf(int height) {
-  if (height <= 0) return 0;
-  return _logScale(height.clamp(360, 2160).toDouble(), 360, 2160);
+/// 片源尺寸换算成填充比例（0..1）。尺寸无效时为 0。
+double resolutionProgressOf(int width, int height) {
+  final side = resolutionReferenceSide(width, height);
+  if (side <= 0) return 0;
+  return _logScale(side.clamp(360, 2160).toDouble(), 360, 2160);
 }
 
 /// 「已检测 1080P (1920×1080)」一类的说明行；未检测到尺寸时给提示语。
@@ -77,7 +98,7 @@ String resolutionCaption(int width, int height) {
   if (width <= 0 || height <= 0) {
     return '正在检测片源尺寸，起播后显示实际分辨率';
   }
-  final level = resolutionLevelOf(height);
+  final level = resolutionLevelOf(width, height);
   final pixels = '$width×$height';
   return level == null ? '已检测 $pixels' : '已检测 ${level.label} ($pixels)';
 }
@@ -115,8 +136,10 @@ class ResolutionMeter extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final detected = width > 0 && height > 0;
-    final progress = resolutionProgressOf(height);
-    final level = resolutionLevelOf(height);
+    // 判档 / 填充 / 节点点亮都以短边为准（竖屏片源的高度会把档位抬高一级）。
+    final side = resolutionReferenceSide(width, height);
+    final progress = resolutionProgressOf(width, height);
+    final level = resolutionLevelOf(width, height);
     final textStyle = theme.textTheme.labelSmall?.copyWith(
       color: Colors.white70,
       letterSpacing: .3,
@@ -189,7 +212,7 @@ class ResolutionMeter extends StatelessWidget {
                                 ? Colors.white54
                                 : level == node
                                     ? Colors.white
-                                    : height >= node.minHeight
+                                    : side >= node.minHeight
                                         ? activeColor
                                         : Colors.white54,
                             shape: BoxShape.circle,
@@ -234,10 +257,10 @@ class ResolutionMeter extends StatelessWidget {
                             overflow: TextOverflow.visible,
                             style: textStyle?.copyWith(
                               fontWeight:
-                                  detected && height >= node.minHeight
+                                  detected && side >= node.minHeight
                                       ? FontWeight.w700
                                       : FontWeight.w400,
-                              color: detected && height >= node.minHeight
+                              color: detected && side >= node.minHeight
                                   ? Colors.white
                                   : Colors.white54,
                             ),
