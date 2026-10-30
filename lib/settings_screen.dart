@@ -18,6 +18,7 @@ import 'resource_settings_screen.dart';
 import 'lan_screen.dart';
 import 'webdav_screen.dart';
 import 'diary_service.dart';
+import 'hongguo_login_dialog.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -203,6 +204,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               ),
+              if (widget.repository.supportsSourceManagement)
+                ListTile(
+                  key: const ValueKey('hongguo-account'),
+                  leading: const Icon(Icons.qr_code_2_rounded),
+                  title: const Text('红果账号'),
+                  subtitle: const Text('扫码登录，用于收藏、观看历史与云端续播'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () =>
+                      openHongguoLogin(context, widget.repository),
+                ),
               ListTile(
                 key: const ValueKey('diary-setting'),
                 leading: const Icon(Icons.receipt_long_rounded),

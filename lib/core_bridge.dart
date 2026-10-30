@@ -22,6 +22,7 @@ import 'cover_request_gate.dart';
 import 'catalog_updates.dart';
 import 'download_collections.dart';
 import 'resource_settings.dart';
+import 'hongguo_login.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -120,6 +121,28 @@ abstract class AppRepository {
     bool force = false,
   }) async => const [CatalogCategory.all];
   bool get supportsSourceManagement => false;
+
+  /// 红果官网扫码登录。默认实现全部拒绝，由原生仓库覆盖。
+  ///
+  /// 登录拿到的是**账号态**（收藏 / 观看历史 / 云端续播），取流不依赖它。
+  Future<HongguoLoginState> hongguoLoginStatus() async =>
+      const HongguoLoginState();
+
+  /// 申请一张新二维码。返回的 token 只用于 [hongguoLoginPoll]。
+  Future<HongguoLoginQRCode> hongguoLoginCreate() async =>
+      throw AppFailure('当前环境不支持红果登录');
+
+  /// 轮询一次扫码状态。confirmed 后 Go 侧已落盘，[HongguoLoginPollResult.state]
+  /// 里就是最新登录态，不需要再调 [hongguoLoginStatus]。
+  Future<HongguoLoginPollResult> hongguoLoginPoll(String token) async =>
+      throw AppFailure('当前环境不支持红果登录');
+
+  /// 拿本地 cookie 打一次账号接口，确认会话还有效并刷新昵称。
+  Future<HongguoLoginState> hongguoLoginVerify() async =>
+      const HongguoLoginState();
+
+  /// 退出登录（只清本地，不调服务端登出）。
+  Future<void> hongguoLoginLogout() async {}
   Future<SourceStatus> sourceStatus(String source) async =>
       SourceStatus.fromJson({'source': source});
 
@@ -424,6 +447,48 @@ class NativeRepository extends AppRepository {
 
   @override
   bool get supportsSourceManagement => true;
+
+  @override
+  Future<HongguoLoginState> hongguoLoginStatus() async {
+    final result = await _call({
+      'action': 'hongguoLogin',
+      'command': 'status',
+    });
+    return HongguoLoginState.fromJson(result);
+  }
+
+  @override
+  Future<HongguoLoginQRCode> hongguoLoginCreate() async {
+    final result = await _call({
+      'action': 'hongguoLogin',
+      'command': 'create',
+    });
+    return HongguoLoginQRCode.fromJson(result);
+  }
+
+  @override
+  Future<HongguoLoginPollResult> hongguoLoginPoll(String token) async {
+    final result = await _call({
+      'action': 'hongguoLogin',
+      'command': 'poll',
+      'loginToken': token,
+    });
+    return HongguoLoginPollResult.fromJson(result);
+  }
+
+  @override
+  Future<HongguoLoginState> hongguoLoginVerify() async {
+    final result = await _call({
+      'action': 'hongguoLogin',
+      'command': 'verify',
+    });
+    return HongguoLoginState.fromJson(result);
+  }
+
+  @override
+  Future<void> hongguoLoginLogout() async {
+    await _call({'action': 'hongguoLogin', 'command': 'logout'});
+  }
 
   @override
   Future<List<RankingBoard>> rankingBoards() async {

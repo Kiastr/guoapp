@@ -149,6 +149,8 @@ type nativeInput struct {
 	Session  string `json:"session"`
 	Sequence int64  `json:"sequence"`
 	Force    bool   `json:"force"`
+	// LoginToken 扫码登录的会话 token（create 返回，poll 时回传）。
+	LoginToken string `json:"loginToken"`
 }
 
 type nativeCatalogResult struct {
@@ -218,6 +220,11 @@ type nativeEngine struct {
 	sourceRecords     map[string]nativeSourceRecord
 	sourceCatalogMu   sync.Mutex
 	sourceCatalogs    map[string]chan struct{}
+	// loginMu/login 是红果官网扫码登录的会话池（provider_hongguo_web_login.go）。
+	// 只活在内存里，进程重启即作废——那是「正在扫的那张码」的中间态，
+	// 不是登录态；登录态落盘在应用数据目录的 hongguo-login.json。
+	loginMu sync.Mutex
+	login   *hongguoLoginRuntime
 }
 
 var nativeState struct {
@@ -454,6 +461,25 @@ func nativeDispatch(input nativeInput) (any, error) {
 		return engine.nativeRecommendations(ctx, input)
 	case "cachedRecommendations":
 		return engine.cachedRecommendations(input.Category)
+	case "hongguoLogin":
+		// 扫码登录：create / poll / status / verify / logout。
+		// 链路与取流完全独立（provider_hongguo_web_login.go 顶部有说明），
+		// 所以不做 nativeSourceAvailable 校验——即使红果源没编进来，
+		// 登录态本身仍然有意义（收藏/历史这些账号接口）。
+		switch input.Command {
+		case "create":
+			return engine.hongguoLoginCreate(ctx)
+		case "poll":
+			return engine.hongguoLoginPoll(ctx, input.LoginToken)
+		case "status":
+			return engine.hongguoLoginStatus(), nil
+		case "verify":
+			return engine.hongguoLoginVerify(ctx)
+		case "logout":
+			return map[string]any{"signedIn": false}, engine.hongguoLoginLogout()
+		default:
+			return nil, errors.New("未知的登录操作")
+		}
 	case "rankingBoards":
 		boards := []rankingBoard{}
 		for _, board := range rankingBoards {
