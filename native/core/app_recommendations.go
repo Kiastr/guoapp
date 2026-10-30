@@ -55,11 +55,47 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	if !input.Force && !found && len(cached.Items) > 0 {
 		return cached, nil
 	}
-	if input.Force || !found {
+	// [feed] 推荐流的「刷新」= 换一批，不是回到头部。若照搬分类页的
+	// 「force 即重置游标」，用户下拉刷新拿到的永远是首批那 3 部——这正是
+	// 「刷新后还是原来的剧」的复现。这里保留 offset/session/seen 继续往后取。
+	feed := genre == hongguoFeedGenre
+	if (input.Force || !found) && !(feed && found) {
 		state = nativeRecommendationState{Query: hongguoRecommendationQuery{Genre: genre}, HasMore: true}
 	}
 	page, err := engine.downloader.fetchHongguoRecommendations(ctx, state.Query)
 	if err != nil {
+		// 推荐兜底到官网首页四个板块（热播短剧 / 真人剧 / 漫剧 / AI 剧，
+		// 共 36 部，字段与分类页同构）。
+		//
+		// 【为什么不写游标】推荐是带 offset + session + seen 的流，官网首页是
+		// 固定的 36 部、没有下一页。把兜底结果写进 recommendations 状态，下一轮
+		// 「加载更多」就会拿着一个对不上的游标去请求 App 接口。这里只返回结果、
+		// 不落游标，下次刷新重新走「先试 App 接口，空了再兜底」。
+		//
+		// 【为什么清掉旧警告】不清的话，源状态面板会一直挂着上一条「红果 App
+		// 接口返回空内容」——而用户对匿名设备门禁无能为力（换注册身份也空），
+		// 兜底既然给了真实在架内容，就该让状态回到干净态。
+		if fallback, fallbackErr := engine.downloader.fetchHongguoWebHomeSections(ctx); fallbackErr == nil && len(fallback) > 0 {
+			engine.mu.Lock()
+			known := make(map[string]nativeDrama, len(engine.catalogs[sourceHongguo]))
+			for _, drama := range engine.catalogs[sourceHongguo] {
+				known[drama.ID] = drama
+			}
+			state := engine.catalogStates[nativeRecommendationKey(genre)]
+			state.Warning = ""
+			state.UpdatedAt = time.Now()
+			engine.catalogStates[nativeRecommendationKey(genre)] = state
+			engine.mu.Unlock()
+			items := make([]nativeDrama, 0, len(fallback))
+			for _, drama := range fallback {
+				item := nativeNormalize(drama)
+				if old, exists := known[item.ID]; exists {
+					item = mergeNativeDrama(old, item)
+				}
+				items = append(items, item)
+			}
+			return nativeCatalogResult{Items: items, Page: 1, Fresh: true}, nil
+		}
 		if len(cached.Items) == 0 || errors.Is(err, context.Canceled) {
 			return nativeCatalogResult{}, err
 		}
@@ -77,7 +113,9 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	}
 	key := nativeRecommendationKey(genre)
 	previous := engine.catalogs[key]
-	if input.Force {
+	// 分类页刷新是「重看这一屏」，清空旧列表；推荐流刷新是「再来一批」，
+	// 新剧追加在后面，不能把已看到的先清掉。
+	if input.Force && !feed {
 		previous = nil
 	}
 	seen := make(map[string]bool, len(previous))

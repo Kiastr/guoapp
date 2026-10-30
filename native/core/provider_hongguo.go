@@ -16,6 +16,36 @@ import (
 
 const hongguoBaseURL = "https://hongguoduanju.com"
 
+// errHongguoDetailMissing 官网明确回了「没有这部剧」。
+//
+// 和网络故障要分开处理：App 内容接口（video_detail）对匿名设备一律返回空
+// body（实测三个注册身份全空），所以详情链路必然落到官网兜底；此时
+// 「App 详情失败」这条噪声对用户毫无信息量，真正的原因只有官网这一句。
+var errHongguoDetailMissing = errors.New("红果官网没有这部剧（可能已下架，或只在 App 端存在）")
+
+// hongguoIsNotFound 判断一次官网抓取是不是「资源不存在」（HTTP 404）。
+//
+// 为什么用文本判断而不是判类型：状态码是 fetchProviderText 内部用
+// catalogResponseError 拼进错误串的（"<host> HTTP <code>"），要拿到结构化
+// 状态码得改全局错误类型，会波及所有内置源的错误文案与重试判断。这里只看
+// 结尾，改动面最小，也够用。
+func hongguoIsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	const marker = " HTTP 404"
+	idx := strings.Index(text, marker)
+	if idx < 0 {
+		return false
+	}
+	// 状态码后面只可能是结尾，或 catalogResponseError 带 reason 时的冒号
+	// （"<host> HTTP 404：<原因>"）。用前缀判断而不是 HasSuffix，是为了兼容
+	// 带原因形态；再往后看一位，避免把 "HTTP 4040" 这类误判成 404。
+	rest := text[idx+len(marker):]
+	return rest == "" || strings.HasPrefix(rest, "：") || strings.HasPrefix(rest, ":")
+}
+
 func (d *Downloader) fetchHongguoDramas(ctx context.Context) ([]Drama, error) {
 	initialized := hongguoCatalogInitialized(d.hongguoCatalogSnapshot())
 	dramas, appErr := d.fetchHongguoAppCatalog(ctx)
@@ -110,6 +140,13 @@ func (d *Downloader) fetchHongguoRoute(ctx context.Context, route, category stri
 func (d *Downloader) fetchHongguoCategoryPage(ctx context.Context, route, category string) ([]Drama, int, error) {
 	body, err := d.fetchProviderText(ctx, hongguoBaseURL+"/category/"+route, hongguoBaseURL+"/")
 	if err != nil {
+		// 翻到总页数之外时官网直接 404（实测 real-drama totalPages=34，
+		// page=35 即 404，三个剧类都一样）。语义上这就是「没有这一页」，
+		// 按空页返回，交给调用方「条目不足一页即停」的逻辑自然收尾——
+		// 否则裸 HTTP 404 会一路冒到界面，整个剧库变成一条红色报错。
+		if hongguoIsNotFound(err) {
+			return nil, 0, nil
+		}
 		return nil, 0, err
 	}
 	data := parseRouterData(body)
@@ -128,6 +165,40 @@ func (d *Downloader) fetchHongguoCategoryPage(ctx context.Context, route, catego
 	return out, pages, nil
 }
 
+// fetchHongguoWebHomeSections 抓官网首页的四个板块（热播短剧 / 热播真人剧 /
+// 热播漫剧 / 热播 AI 剧，各 9 条），供「推荐」在 App 接口空 body 时兜底。
+//
+// 【为什么推荐也要兜底】推荐页走 App 的 landpage，匿名设备整段空 body；失败时
+// 上层只能退回上一次的缓存并挂一条警告，用户看到的就是「刷新没反应 + 源状态
+// 一条红字」。官网首页这 36 部是同一时刻真实在架的内容——虽然它同样是固定的
+// 热播序列（官网没有「最新」入口，分类页条目也没有任何时间字段），但至少是
+// 有效内容、界面不再报错。
+func (d *Downloader) fetchHongguoWebHomeSections(ctx context.Context) ([]Drama, error) {
+	body, err := d.fetchProviderText(ctx, hongguoBaseURL+"/", hongguoBaseURL+"/")
+	if err != nil {
+		return nil, err
+	}
+	data := parseRouterData(body)
+	page := routerLoaderMap(data, "page")
+	if len(page) == 0 {
+		return nil, errors.New("红果首页数据不可用，可能是页面结构或访问权限变化")
+	}
+	seen := map[string]bool{}
+	var out []Drama
+	for _, section := range anyList(page["homeSections"]) {
+		entry, _ := section.(map[string]any)
+		for _, value := range anyList(entry["video_list"]) {
+			drama := hongguoDramaFromAny(value, "推荐")
+			if drama.ID == "" || seen[drama.ID] {
+				continue
+			}
+			seen[drama.ID] = true
+			out = append(out, drama)
+		}
+	}
+	return out, nil
+}
+
 func (d *Downloader) fetchHongguoChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
 	sourceID = strings.TrimPrefix(strings.TrimSpace(sourceID), "hg-series-v1:")
 	if sourceID == "" {
@@ -144,12 +215,23 @@ func (d *Downloader) fetchHongguoChapters(ctx context.Context, sourceID string) 
 	if webErr == nil {
 		return title, chapters, nil
 	}
+	// 官网明确「没有这部剧」时只报这一句。App 详情接口对匿名设备一律
+	// 空 body（实测），把「App 详情失败」拼在前面只会把真正的原因埋掉。
+	if errors.Is(webErr, errHongguoDetailMissing) {
+		return "", nil, webErr
+	}
 	return "", nil, fmt.Errorf("App 详情失败: %v；网页详情失败: %w", publicError(appErr), webErr)
 }
 
 func (d *Downloader) fetchHongguoWebChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
 	body, err := d.fetchProviderText(ctx, hongguoBaseURL+"/detail?series_id="+url.QueryEscape(sourceID), hongguoBaseURL+"/")
 	if err != nil {
+		// 官网对不存在的 series_id 回 HTTP 404（实测随机 ID → 404，
+		// 真实 ID → 200 且带 vid_list）。收藏里来自 App 空间、或已下架的剧
+		// 都会走到这里，原先界面直接显示 "hongguoduanju.com HTTP 404"。
+		if hongguoIsNotFound(err) {
+			return "", nil, errHongguoDetailMissing
+		}
 		return "", nil, err
 	}
 	data := parseRouterData(body)

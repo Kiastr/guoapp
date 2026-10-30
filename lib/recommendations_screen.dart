@@ -26,12 +26,16 @@ class RecommendationsScreen extends StatefulWidget {
 
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
   static const _genres = [
+    // 首屏默认走 App 推荐流（bookmall/tab/v1）：真实个性化信息流，
+    // 「换一批」= offset+1，每次都能拿到新剧。下面三个分类仍走 landpage，
+    // 该接口对匿名设备返回空 body，失败时由 core 兜底到官网分类页。
+    CatalogCategory('feed', '推荐'),
     CatalogCategory('short_play', '真人剧'),
     CatalogCategory('comic_series', '漫剧'),
     CatalogCategory('ai_series', 'AI 剧'),
   ];
   final _scroll = ScrollController();
-  String _genre = 'short_play';
+  String _genre = 'feed';
   List<Drama> _items = [];
   bool _loading = false;
   bool _more = false;

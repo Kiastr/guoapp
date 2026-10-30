@@ -740,10 +740,46 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		if category != "" && state != nil {
 			result.HasMore = !state.Feeds["category:"+category].Exhausted
 		}
-		if len(items) == 0 && err != nil && ctx.Err() == nil && (category == "" || category == "short_play") {
-			var totalPages int
-			items, totalPages, err = d.fetchHongguoCategoryPage(ctx, "real-drama?page="+strconv.Itoa(page), "真人剧")
-			result.HasMore = page < totalPages
+		// App 内容接口（landpage）对匿名设备整段空 body：2026-10-30 复测
+		// 三个分类各打 6 次，全部 0 字节（换注册身份也一样）。官网分类页 meanwhile
+		// 稳定可用（每页 24 部，漫剧有数据）。原先这里的兜底写死了 real-drama /
+		// 真人剧，且条件排除掉 comic_series / ai_series，于是剧库的「漫剧」页
+		// 永远只看到「漫剧: 红果 App 接口返回空内容」。改为按分类键映射官网段。
+		//
+		// 空分类（「全部」）改为三路聚合：App 接口正常时「全部」本来就是
+		// 真人剧 + 漫剧 + AI 剧三路，兜底只给真人剧一页 24 部会让列表骤减，
+		// 用户体感是「刷新后内容反而变少了」。单分类仍是 1 路，不受影响。
+		if len(items) == 0 && err != nil && ctx.Err() == nil {
+			if routes := hongguoWebFallbackRoutes(category); len(routes) > 0 {
+				var totalPages int
+				var merged []Drama
+				// okCount 记「官网正常响应」的路数（含 404 越界——越界按
+				// 空页返回 nil error，pages=0）。只要有一路正常响应，就说明官网
+				// 是通的：合并结果即真相，哪怕全空也只是「没有这一页」，不该把
+				// App 接口的空 body 错误顶到界面上（那正是翻到末页后仍弹
+				// 「红果 App 接口返回空内容」的来源）。
+				okCount := 0
+				for _, item := range routes {
+					pageItems, pages, pageErr := d.fetchHongguoCategoryPage(ctx, item.route+"?page="+strconv.Itoa(page), item.name)
+					// 单路失败不影响其余：官网对越界页回 404（按空页处理），
+					// 某个剧类总页数偏少时不该拖垮整屏。
+					if pageErr != nil {
+						continue
+					}
+					okCount++
+					merged = append(merged, pageItems...)
+					totalPages = max(totalPages, pages)
+				}
+				if okCount > 0 {
+					items, err = merged, nil
+					result.HasMore = page < totalPages
+					// 兜底路径必须回填页码。hongguo 分支原先从不给 Page 赋值，
+					// 恒为 0，Dart 侧 `entry.nextPage = result.page + 1` 便永远等于 1——
+					// 「加载更多」一直在重复拉第一页。只在这一条分支赋值，是为了不
+					// 改变 App 接口成功时的既有游标行为（它自带服务端游标）。
+					result.Page = page
+				}
+			}
 		}
 	case sourceHuangdou:
 		client := newHuangdouAPIClient(d)

@@ -145,12 +145,49 @@ jobs:
       - name: Remove signing files
         if: always()
         run: python scripts/configure_signing.py --clean
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.edition }}-android
-          path: dist/android/*
-          if-no-files-found: error
-          retention-days: 14
+      # 产物不经 actions/upload-artifact 中转，直接传到本版本 Release。
+      #
+      # 原因：Actions 产物存储是账号级的 500MB 配额。一旦撞满，编译成功的 job
+      # 会倒在最后一步 "Failed to CreateArtifact: Artifact storage quota has
+      # been hit"（三个 ABI 的 APK 都已 Built、签名也验过），job 判 failure 后
+      # 依赖它的 release job 被 skip，整版一个包都发不出去。Release 附件按仓库
+      # 体积算，不受该配额约束，所以编译完就把 APK 传上去，SHA256SUMS 与说明
+      # 文案仍由 release job 负责（它改成从 Release 取回文件）。
+      - name: 上传 APK 到 Release
+        # fork 来的 PR 只有读权限、发不了 Release；本仓库自己的 PR 也不需要
+        # 在版本号上挂附件。
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Releases API 偶发 502（"HTTP 502: Server Error (.../releases/assets/...)"），
+          # 结果就是某个架构的包没传上去、Release 少一个附件。逐个文件上传并
+          # 各自重试：一条命令传全部的话，任意一个撞 502 整批失败，而且
+          # --clobber 会先把已传的删掉再重来，越重试越乱。
+          retry() {
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge 5 ]; then
+                echo "重试 5 次仍失败：$*" >&2
+                return 1
+              fi
+              echo "第 ${attempt} 次失败，$((attempt * 5)) 秒后重试：$*" >&2
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+          version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
+          tag="app-v${version//+/-}"
+          # 两个矩阵 job 并发创建同名 Release 会撞车（后到的 422），
+          # 撞了就当「已存在」继续，真正的成败看下面的 upload。
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "红果鉴 / 真果鉴 ${version}" \
+                 --notes "构建中，说明与校验文件随后更新。" \
+            || true
+          for file in dist/android/*.apk; do
+            retry gh release upload "$tag" "$file" --clobber
+          done
   windows:
     if: false
     needs: checks
@@ -185,33 +222,39 @@ jobs:
 
   release:
     needs: [android]
-    if: always() && needs.android.result == 'success'
+    if: always() && needs.android.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - name: 生成发布文件清单
+      # 不再从 actions/download-artifact 取文件：产物上传那一步本身就是配额
+      # 瓶颈（见 android job 里的说明），这里改成把两个矩阵 job 已经传到本
+      # 版本 Release 的附件拉回来，再补 SHA256SUMS、说明文案、清理过期附件。
+      - name: 取回本版本已上传的产物
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
+          tag="app-v${version//+/-}"
           mkdir -p release
-          for directory in artifacts/*/; do
-            for file in "$directory"*; do
-              [ -f "$file" ] || continue
-              name=$(basename "$file")
-              if [ "$name" = "SHA256SUMS.txt" ]; then
-                continue
-              fi
-              cp "$file" "release/$name"
-            done
-          done
+          # 必须全量下载再删校验文件：gh release download 传 --pattern 时，
+          # 任一 pattern 匹配不到资产会直接退出 1（ios/windows 任务目前是关的，
+          # *.ipa / *.zip 必然为空），而旧一轮的 SHA256SUMS.txt 如果不先删掉，
+          # 会被算进新一轮清单里。
+          gh release download "$tag" -D release --clobber
+          rm -f release/SHA256SUMS.txt
+      - name: 生成发布文件清单
+        run: |
+          set -euo pipefail
           cd release
           mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "Release 里取不到任何产物，构建可能未完成。" >&2
+            exit 1
+          fi
           sha256sum "${files[@]}" > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: 发布 Release
@@ -248,12 +291,32 @@ jobs:
             fi
           } > notes.md
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" release/* --clobber
+            # 同 android job：逐文件 + 重试，避免单个附件撞 502 拖垮整批。
+            retry_upload() {
+              local attempt=1
+              until gh release upload "$tag" "$1" --clobber; do
+                if [ "$attempt" -ge 5 ]; then
+                  echo "重试 5 次仍失败：$1" >&2
+                  return 1
+                fi
+                echo "第 ${attempt} 次失败，$((attempt * 5)) 秒后重试：$1" >&2
+                sleep $((attempt * 5))
+                attempt=$((attempt + 1))
+              done
+            }
+            # 只回传本轮新生成的校验文件。
+            #
+            # 这些 APK 是上面刚从**同一个 Release** 下载下来的，逐个体重传
+            # 200+ MB 毫无意义，还会把一次构建拖进 502/超时：上一版的 release
+            # job 就是这样挂的（6 个 APK 都在，唯独 SHA256SUMS.txt 没传上去）。
+            # 缺架构的情况这里也补不了——本地没有的文件，从 Release 也下不到。
+            retry_upload release/SHA256SUMS.txt
             gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
             # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
             for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
               if [ ! -e "release/$name" ]; then
-                gh release delete-asset "$tag" "$name" --yes
+                # 删除失败不阻断发布——附件多留一个比整版发不出去好。
+                gh release delete-asset "$tag" "$name" --yes || echo "清理旧附件失败（忽略）：$name" >&2
               fi
             done
           else

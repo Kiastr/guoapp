@@ -24,6 +24,19 @@ type hongguoRecommendationPage struct {
 }
 
 func (query hongguoRecommendationQuery) validate() error {
+	// [feed] 推荐流是独立的一路：它没有 genre 维度（返回的是混排信息流），
+	// 用伪分类键 feed 与三个真实分类区分。见 provider_hongguo_feed.go。
+	if query.Genre == hongguoFeedGenre {
+		if query.Offset < 0 || query.Offset > 1_000_000 || len(query.SessionID) > 4096 || strings.ContainsAny(query.SessionID, "\r\n\x00") || len(query.Seen) > 540 {
+			return errors.New("推荐分页参数无效，请重新获取")
+		}
+		for _, id := range query.Seen {
+			if !hongguoNumericID.MatchString(strings.TrimPrefix(id, "hongguo:")) {
+				return errors.New("推荐分页含无效剧集 ID")
+			}
+		}
+		return nil
+	}
 	known := false
 	for _, genre := range hongguoAppGenres {
 		known = known || query.Genre == genre.key
@@ -43,6 +56,11 @@ func (downloader *Downloader) fetchHongguoRecommendations(ctx context.Context, q
 	page := hongguoRecommendationPage{Dramas: []Drama{}}
 	if err := query.validate(); err != nil {
 		return page, err
+	}
+	// [feed] 推荐流走 bookmall/tab/v1，与 landpage 分类推荐不是同一条链路：
+	// 后者对匿名设备空 body，前者可用且 offset 递增即「换一批」。
+	if query.Genre == hongguoFeedGenre {
+		return downloader.fetchHongguoFeed(ctx, query)
 	}
 	scene, category := "", ""
 	for _, genre := range hongguoAppGenres {

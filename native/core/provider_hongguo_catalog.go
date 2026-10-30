@@ -22,6 +22,48 @@ var hongguoAppGenres = []struct {
 	{key: "ai_series", scene: "ai_series", name: "AI剧"},
 }
 
+// hongguoWebRoute 是官网分类页的一个分类段与它的中文名。
+type hongguoWebRoute struct {
+	route string
+	name  string
+}
+
+// hongguoWebFallbackRoutes 把剧库分类键映射到官网（hongguoduanju.com）分类页，
+// 供 App 内容接口返回空 body 时兜底。返回多路，调用方逐路取同页码再合并。
+//
+// 为什么需要：App 的 landpage 接口对匿名设备整段空 body（2026-10-30 三个分类
+// 各 6 次全空，换注册身份亦然），而官网分类页仍正常（每页 24 部）。两套接口
+// 的 ID 空间一致（都是纯数字 series_id），所以兜底取到的条目可以直接沿用。
+//
+// category 为空表示「全部」：这里返回三个分类而不是只兜真人剧——「全部」在
+// App 接口正常时本来就是三路聚合（真人剧 + 漫剧 + AI 剧），兜底若只给真人剧
+// 首页的 24 部，用户会看到列表从一百多部骤降到一页，观感像「刷新后内容变少」。
+//
+// 【官网不支持排序与题材筛选，别再试】分类页的 query 只认 page 这一个参数：
+// 2026-10-30 实测 ?tab=1&sort_type=2、?sort_type=2&page=1、?tab=1&sort_type=1&page=2
+// 全部 HTTP 404；?category_json_ids=5027 这类题材参数会被静默忽略（返回的还是
+// 默认排序那 24 部）。页面上那 24 个题材（含「动作冒险」）只在前端 JS 里生效。
+// 同一个原因，分类页也无法按「最新上线」排序——它固定是热播序列，第 1 页就是
+// 固定的那 24 部，刷新不会变（这不是 bug，是数据源事实）。
+func hongguoWebFallbackRoutes(category string) []hongguoWebRoute {
+	switch category {
+	case "":
+		return []hongguoWebRoute{
+			{route: "real-drama", name: "真人剧"},
+			{route: "comic-drama", name: "漫剧"},
+			{route: "ai-drama", name: "AI剧"},
+		}
+	case "short_play":
+		return []hongguoWebRoute{{route: "real-drama", name: "真人剧"}}
+	case "comic_series":
+		return []hongguoWebRoute{{route: "comic-drama", name: "漫剧"}}
+	case "ai_series":
+		return []hongguoWebRoute{{route: "ai-drama", name: "AI剧"}}
+	default:
+		return nil
+	}
+}
+
 type libraryMoreKey struct{}
 
 type libraryUpdateKey struct{}
