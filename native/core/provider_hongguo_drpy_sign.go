@@ -103,8 +103,17 @@ func hgDrpyQuote(value string) string {
 	return builder.String()
 }
 
+// hongguoBranchAttempts 抖动 _rticket 的最大次数。
+//
+// 每抖 1 毫秒，hashF13 的分支结果就重算一次；命中 branch 0 的概率约 1/3，
+// 128 次全部落空的概率是 (2/3)^128 ≈ 1e-22，实际不可能发生。
+const hongguoBranchAttempts = 128
+
 // hgDrpyBranchOf 预测本次请求的 hashF13 分支（drpys branchOf）。
-// 返回 1 的签名变体服务端不认，调用方须抖动 _rticket 避开。
+//
+// 只有 branch 0 返回数据：1 与 2 一律 HTTP 200 空 body（2026-10-30 实测，主页与
+// 取流共用同一分桶）。调用方须抖动 _rticket 直到命中 0——只避开 1 的旧逻辑仍有
+// 1/3 概率落 branch 2，照样拿空响应。
 func hgDrpyBranchOf(fullURL string, body []byte, khronos uint32) int {
 	query := ""
 	if index := strings.IndexByte(fullURL, '?'); index >= 0 && index < len(fullURL)-1 {
@@ -135,9 +144,9 @@ func hgDrpyMd5Hex(value []byte) string {
 
 // hgDrpySignedVideoRequest 组装带 6 神签名的播放取址请求（drpys signedVideoRequest）。
 //
-// 返回完整 URL（含 query）与 10 个请求头。query 内 iid/device_id 每次请求
-// 重新合成（与 URL、签名保持一致）；branch 1 变体会通过抖动 _rticket
-// （最多 32 秒偏移）避开。
+// 返回完整 URL（含 query）与 10 个请求头。query 内 iid/device_id 随机合成——
+// **这条路径 2026-10-30 起取不到流**（服务端要求设备注册过的身份），仅保留给
+// 离线签名向量校验与单测；生产取流走 hgDrpySignedVideoRequestWithDevice。
 // 等价于 hgDrpySignedVideoRequestAt(payload, now, hgDrpyVideoAPI)。
 func hgDrpySignedVideoRequest(payload []byte, now time.Time) (string, map[string]string) {
 	return hgDrpySignedVideoRequestAt(payload, now, hgDrpyVideoAPI)
@@ -147,13 +156,20 @@ func hgDrpySignedVideoRequest(payload []byte, now time.Time) (string, map[string
 // x-medusa 与 hgDrpyBranchOf 都以 fullURL（含 host）为输入，换端点会自动重算
 // 签名、_rticket 抖动循环自动适配分支，无需额外处理。
 func hgDrpySignedVideoRequestAt(payload []byte, now time.Time, api string) (string, map[string]string) {
-	iid := hgDrpyLocalID()
-	deviceID := hgDrpyLocalID()
+	return hgDrpySignedVideoRequestWithDevice(payload, now, api, hgDrpyLocalID(), hgDrpyLocalID())
+}
+
+// hgDrpySignedVideoRequestWithDevice 用指定设备身份组装取址请求。
+//
+// 身份由 hongguoAnonDevice 提供（device_register 注册产物）；随机身份会被服务端
+// 判为空 body，因此生产链路一律走这个入口。除 iid/device_id 外，其余参数与
+// hgDrpySignedVideoRequestAt 完全一致——签名对 query 字节级敏感，两者不可混用。
+func hgDrpySignedVideoRequestWithDevice(payload []byte, now time.Time, api, iid, deviceID string) (string, map[string]string) {
 	khronos := uint32(now.Unix())
 	ticketBase := now.UnixMilli()
 	var query, fullURL string
 	requestTicket := ticketBase
-	for offset := int64(0); offset < 32; offset++ {
+	for offset := int64(0); offset < hongguoBranchAttempts; offset++ {
 		requestTicket = ticketBase + offset
 		values := make([][2]string, 0, len(hgDrpyDeviceParams)+4)
 		values = append(values, hgDrpyDeviceParams...)
@@ -165,7 +181,7 @@ func hgDrpySignedVideoRequestAt(payload []byte, now time.Time, api string) (stri
 		)
 		query = hgDrpyPythonURLEncode(values)
 		fullURL = api + "?" + query
-		if hgDrpyBranchOf(fullURL, payload, khronos) != 1 {
+		if hgDrpyBranchOf(fullURL, payload, khronos) == 0 {
 			break
 		}
 	}

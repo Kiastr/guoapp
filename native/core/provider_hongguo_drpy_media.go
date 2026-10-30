@@ -89,18 +89,30 @@ func (downloader *Downloader) resolveHongguoDrpyMedia(ctx context.Context, video
 
 // hgDrpyVideoModelAt 第一段：按端点池依次尝试 multi_video_model。
 //
+// 【设备身份】2026-10-30 起 iid/device_id 不再是随便合成就能用：随机身份一律
+// HTTP 200 空 body，只有 device_register 注册出来的身份才可能拿到数据（详见
+// provider_hongguo_anon_device.go）。取号与换号重试统一由 hongguoAnonPlayback 编排。
+//
 // 默认池内只有一个端点，行为与改造前完全一致；池内有多端点时，
 // 某个端点失败会换下一个继续，并对该 (线路, 端点) 组合记账
 // （连续失败达阈值后冷却期内跳过，详见 provider_hongguo_health.go）。
 // 记账只消费真实取流请求的结果，不额外发起探测。
 func (downloader *Downloader) hgDrpyVideoModelAt(ctx context.Context, payload []byte) (map[string]any, error) {
+	body, _, err := hongguoAnonPlayback(ctx, downloader, func(ctx context.Context, identity hongguoAnonDevice) (map[string]any, error) {
+		return downloader.hgDrpyVideoModelWith(ctx, payload, identity)
+	})
+	return body, err
+}
+
+// hgDrpyVideoModelWith 用指定设备身份跑一遍端点池。
+func (downloader *Downloader) hgDrpyVideoModelWith(ctx context.Context, payload []byte, identity hongguoAnonDevice) (map[string]any, error) {
 	var lastErr error
 	for _, api := range hongguoDrpyHosts {
 		key := hongguoHostKey(hongguoRouteDrpy, api)
 		if hongguoRoutesHealth.skip(key, time.Now()) {
 			continue
 		}
-		signedURL, headers := hgDrpySignedVideoRequestAt(payload, time.Now(), api)
+		signedURL, headers := hgDrpySignedVideoRequestWithDevice(payload, time.Now(), api, identity.InstallID, identity.DeviceID)
 		body, err := hgDrpyRequestJSON(ctx, http.MethodPost, signedURL, headers, payload)
 		if err == nil {
 			hongguoRoutesHealth.noteOK(key)

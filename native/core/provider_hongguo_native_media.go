@@ -5,33 +5,85 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// hongguoAppPlaybackPath 是 App 取流端点。
+//
+// 【端点选择依据】2026-10-16 用完整签名（gorgon+khronos+argus+ladon）实测四个端点：
+//
+//	/novel/player/video_model/v1/               → 曾可用（data.video_model，单集）
+//	/novel/player/multi_video_model/v1/         → 200 code:0（批量，按 video_id 索引）
+//	/novel/player/multi_video_model/preload/v1/ → 200 code:0（批量预加载）
+//	/novel/player/video_model/preload/v1/       → 404（**不存在**，勿照搬）
+//
+// 【2026-10-30 端点切换：单集 → 批量】单集端点已不再返回数据：用注册身份 + 不带任何
+// 签名实测 HTTP 200 空 body，同身份同参数打批量端点 3/3 有数据——差异在端点，不在
+// 身份或签名。参考实现 jackotom/hongguo-drama 的 fetchAppPlayUrl 也只用批量端点。
+// 故主用批量，payload 与它同构（mixed_video_id_map，键 1004 = 内容类型编码）。
+const hongguoAppPlaybackPath = "/novel/player/multi_video_model/v1/"
+
+// hongguoAppPlaybackPayload 构造批量取流请求体（与参考实现 fetchAppPlayUrl 同构）。
+func hongguoAppPlaybackPayload(videoID string) map[string]any {
+	return map[string]any{
+		"biz_param": map[string]any{
+			"detail_page_version":       0,
+			"device_level":              3,
+			"disable_digg_stat":         false,
+			"need_all_video_definition": true,
+			"need_mp4_align":            false,
+			"use_os_player":             false,
+			"use_server_dns":            false,
+			"video_platform":            1024,
+		},
+		"mixed_video_id_map": map[string]any{
+			"1004": []string{videoID},
+		},
+	}
+}
+
+// hongguoAppModel 从批量响应里取本集的 video_model。
+//
+// 响应形如 {"data":{"<video_id>":{"video_model":{...}}}}；video_model 可能是对象，
+// 也可能是 JSON 字符串（服务端两种形态都出现过）。
+func hongguoAppModel(result map[string]any, videoID string) (map[string]any, error) {
+	data := nestedMap(result, "data")
+	entry := nestedMap(data, videoID)
+	model := nestedMap(entry, "video_model")
+	if encoded, ok := entry["video_model"].(string); ok {
+		decoder := json.NewDecoder(strings.NewReader(encoded))
+		decoder.UseNumber()
+		if err := decoder.Decode(&model); err != nil {
+			return nil, errors.New("红果 App 播放信息格式异常")
+		}
+	}
+	if len(model) == 0 {
+		// 批量端点也支持顶层 data.video_model（单集形态），作为兜底。
+		model = nestedMap(data, "video_model")
+	}
+	if len(model) == 0 {
+		return nil, errors.New("App 接口未返回所选分集")
+	}
+	return model, nil
+}
+
 func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoID string) (providerMedia, error) {
 	if !hongguoNumericID.MatchString(videoID) {
 		return providerMedia{}, errors.New("红果视频 ID 无效")
 	}
-	payload := map[string]any{
-		"video_id": videoID, "content_type": 1,
-		"biz_param": map[string]any{"need_all_video_definition": true, "video_platform": 3},
-	}
-	result, err := downloader.hongguoAppRequest(ctx, http.MethodPost, "/novel/player/video_model/v1/", nil, payload)
+	payload := hongguoAppPlaybackPayload(videoID)
+	result, _, err := hongguoAnonPlayback(ctx, downloader, func(ctx context.Context, identity hongguoAnonDevice) (map[string]any, error) {
+		return downloader.hongguoAppVideoModelAt(ctx, hongguoAppPlaybackPath, payload, identity)
+	})
 	if err != nil {
 		return providerMedia{}, err
 	}
-	data := nestedMap(result, "data")
-	model, _ := data["video_model"].(map[string]any)
-	if encoded, ok := data["video_model"].(string); ok {
-		decoder := json.NewDecoder(strings.NewReader(encoded))
-		decoder.UseNumber()
-		if err := decoder.Decode(&model); err != nil {
-			return providerMedia{}, errors.New("红果 App 播放信息格式异常")
-		}
+	model, err := hongguoAppModel(result, videoID)
+	if err != nil {
+		return providerMedia{}, err
 	}
 	return selectHongguoAppMedia(model)
 }

@@ -19,6 +19,14 @@ const hongguoAppBaseURL = "https://api5-normal-sinfonlineb.fqnovel.com"
 
 const hongguoAppUserAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
 
+// hongguoAnonIdentityKey 在 context 里携带取流专用的匿名注册身份。
+//
+// 【为什么用 context 而不是改函数签名】hongguoAppRequest 是目录/详情/搜索/弹幕/
+// 取流共用的核心函数，加参数会波及十余处调用；而「用注册身份」只对取流线路成立
+// （主页接口恰恰相反：实测用本地随机身份，病灶在 branch 不在身份）。
+// 用 context 值可以只让取流链路生效，其余路径零改动。
+type hongguoAnonIdentityKey struct{}
+
 type hongguoCatalogCursor struct {
 	Offset        int       `json:"offset"`
 	SessionID     string    `json:"sessionId,omitempty"`
@@ -132,6 +140,10 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 	client.mu.Lock()
 	base, deviceID, installID := client.baseURL, client.state.DeviceID, client.state.InstallID
 	client.mu.Unlock()
+	// 取流链路经 context 注入注册身份：覆盖掉本地随机 device_id/iid。
+	if identity, ok := ctx.Value(hongguoAnonIdentityKey{}).(hongguoAnonDevice); ok {
+		deviceID, installID = identity.DeviceID, identity.InstallID
+	}
 	query := url.Values{
 		"aid": {"8662"}, "app_name": {"novelread"}, "version_code": {"73532"}, "version_name": {"7.3.5.32"},
 		"manifest_version_code": {"73532"}, "update_version_code": {"73532"}, "channel": {"update_64"},
@@ -189,11 +201,28 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 		}
 		response, err := downloader.doPreparedCatalogRequest(request, 20*time.Second, func(prepared *http.Request) {
 			now := time.Now()
-			query.Set("_rticket", strconv.FormatInt(now.UnixMilli(), 10))
-			prepared.URL.RawQuery = query.Encode()
 			if comment {
+				query.Set("_rticket", strconv.FormatInt(now.UnixMilli(), 10))
+				prepared.URL.RawQuery = query.Encode()
 				signHongguoCommentRequest(prepared, commentNonce, now)
 			} else {
+				// 【branch 抖动】服务端按 hashF13 把请求分到三个桶，**只有 branch 0
+				// 返回数据**，1 和 2 一律 HTTP 200 空 body。这是「主页接口也返回空」
+				// 的直接原因，与签名、UA、设备画像都无关（这些变量单独替换均不影响
+				// 结果，唯有「不筛 branch」能让空响应复现）。
+				//
+				// 抖的是 _rticket：它同时进 query 与 x-ss-req-ticket，服务端按最终
+				// URL 分桶，因此必须在签名**之前**定稿。khronos 取与签名同源的时间
+				// 值（signHongguoRequest 内部用 now.Unix()）。
+				khronos := uint32(now.Unix())
+				ticket := now.UnixMilli()
+				for offset := int64(0); offset < hongguoBranchAttempts; offset++ {
+					query.Set("_rticket", strconv.FormatInt(ticket+offset, 10))
+					prepared.URL.RawQuery = query.Encode()
+					if hgDrpyBranchOf(prepared.URL.String(), body, khronos) == 0 {
+						break
+					}
+				}
 				signHongguoRequest(prepared, body, now)
 			}
 		})
@@ -218,7 +247,12 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 			}
 			continue
 		}
-		if len(content) == 0 || len(content) > providerMaxBodyBytes {
+		if len(content) == 0 {
+			// 空 body 是设备级风控的匿名拒绝信号，交给 hongguoAnonPlayback 换号重试；
+			// 与「响应格式异常」区分开，否则会被归类成 parse 故障拿 30 分钟冷却。
+			return nil, errHongguoEmptyBody
+		}
+		if len(content) > providerMaxBodyBytes {
 			return nil, errors.New("红果 App 接口未返回有效数据")
 		}
 		var result map[string]any
@@ -234,4 +268,14 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 		return result, nil
 	}
 	return nil, lastErr
+}
+
+// hongguoAppVideoModelAt 用指定设备身份请求取流端点。
+//
+// 身份经 context 注入 hongguoAppRequest：把 query 里的本地随机 device_id/iid 换成
+// device_register 得到的匿名身份（服务端对取流端点校验设备身份，随机值必空）。
+// path 参数化只为给将来多端点留口子，当前只有 hongguoAppPlaybackPath 一个取值。
+func (downloader *Downloader) hongguoAppVideoModelAt(ctx context.Context, path string, payload any, identity hongguoAnonDevice) (map[string]any, error) {
+	scoped := context.WithValue(ctx, hongguoAnonIdentityKey{}, identity)
+	return downloader.hongguoAppRequest(scoped, http.MethodPost, path, nil, payload)
 }
