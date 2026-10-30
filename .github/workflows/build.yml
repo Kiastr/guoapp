@@ -52,7 +52,41 @@ jobs:
         working-directory: native
         continue-on-error: true
 
+  prepare-release:
+    # Release 必须由**一个** job 创建。之前两个 android 矩阵 job 各自跑
+    # `gh release view || gh release create`，并发时 GitHub 会造出两个同名
+    # tag 的 Release 对象（0.2.74+150 正是如此：429298580 带 7 个附件、
+    # 429298581 是空壳），此后所有按 tag 的写操作都会撞 422「Release.
+    # tag_name already exists」——release job 就是这样发不出去的。
+    # 注意这里不能用 `if: github.event_name != 'pull_request'` 把整个 job
+    # 跳过：android 依赖本 job，一 skip 整条编译链就跟着跳过，PR 会失去编译
+    # 校验。所以 job 照跑，只在步骤里判断要不要真的建 Release。
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: 预建 Release 占位
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # fork 来的 PR 只有读权限、发不了 Release；本仓库自己的 PR 也不
+          # 需要在版本号上挂附件。
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "PR 构建，跳过预建 Release"
+            exit 0
+          fi
+          version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
+          tag="app-v${version//+/-}"
+          # 重跑同一版本时 tag 已存在，--verify-tag 表示「沿用已有 tag」。
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --verify-tag \
+                 --title "红果鉴 / 真果鉴 ${version}" \
+                 --notes "构建中，说明与校验文件随后更新。"
   android:
+    needs: [prepare-release]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -179,12 +213,19 @@ jobs:
           }
           version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
           tag="app-v${version//+/-}"
-          # 两个矩阵 job 并发创建同名 Release 会撞车（后到的 422），
-          # 撞了就当「已存在」继续，真正的成败看下面的 upload。
-          gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "红果鉴 / 真果鉴 ${version}" \
-                 --notes "构建中，说明与校验文件随后更新。" \
-            || true
+          # Release 由 prepare-release 唯一创建，本 job 只上传。这里短暂等
+          # 一下是因为按 tag 查询存在极短的可见性延迟；等到就继续，等不到
+          # 直接失败，不要自己 create——并发 create 正是重复 Release 的源头。
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Release 未就绪：$tag" >&2
+              exit 1
+            fi
+            sleep $((attempt * 3))
+          done
           for file in dist/android/*.apk; do
             retry gh release upload "$tag" "$file" --clobber
           done
@@ -290,35 +331,58 @@ jobs:
               printf '%s\n' "签名证书：未配置（当前为 debug 签名）"
             fi
           } > notes.md
-          if gh release view "$tag" >/dev/null 2>&1; then
-            # 同 android job：逐文件 + 重试，避免单个附件撞 502 拖垮整批。
-            retry_upload() {
-              local attempt=1
-              until gh release upload "$tag" "$1" --clobber; do
-                if [ "$attempt" -ge 5 ]; then
-                  echo "重试 5 次仍失败：$1" >&2
-                  return 1
-                fi
-                echo "第 ${attempt} 次失败，$((attempt * 5)) 秒后重试：$1" >&2
-                sleep $((attempt * 5))
-                attempt=$((attempt + 1))
-              done
-            }
-            # 只回传本轮新生成的校验文件。
+          # 同 android job：逐文件 + 重试，避免单个附件撞 502 拖垮整批。
+          retry_upload() {
+            local attempt=1
+            until gh release upload "$tag" "$1" --clobber; do
+              if [ "$attempt" -ge 5 ]; then
+                echo "重试 5 次仍失败：$1" >&2
+                return 1
+              fi
+              echo "第 ${attempt} 次失败，$((attempt * 5)) 秒后重试：$1" >&2
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          # Release 存在性判断必须带重试。Releases API 偶发 502 / 限流会让
+          # gh release view 直接返回非零，一次误判就会走进 create 分支，撞
+          # 422「Release.tag_name already exists」——本版正是这么挂的：6 个
+          # APK 早传完了，唯独校验文件和说明文案没补上。
+          exists=no
+          for attempt in 1 2 3; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              exists=yes
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 4))
+            fi
+          done
+
+          if [ "$exists" = yes ]; then
+            # 主路径：只回传本轮新生成的校验文件。
             #
             # 这些 APK 是上面刚从**同一个 Release** 下载下来的，逐个体重传
-            # 200+ MB 毫无意义，还会把一次构建拖进 502/超时：上一版的 release
-            # job 就是这样挂的（6 个 APK 都在，唯独 SHA256SUMS.txt 没传上去）。
-            # 缺架构的情况这里也补不了——本地没有的文件，从 Release 也下不到。
+            # 200+ MB 毫无意义，还会把一次构建拖进 502/超时。缺架构的情况
+            # 这里也补不了——本地没有的文件，从 Release 也下不到。
             retry_upload release/SHA256SUMS.txt
-            gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
-            # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
-            for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
-              if [ ! -e "release/$name" ]; then
-                # 删除失败不阻断发布——附件多留一个比整版发不出去好。
-                gh release delete-asset "$tag" "$name" --yes || echo "清理旧附件失败（忽略）：$name" >&2
-              fi
-            done
           else
-            gh release create "$tag" release/* --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
+            # tag 常常已经由 android job 的 create 建出来了（两个矩阵 job 并发
+            # 时必然如此），所以带 --verify-tag，允许「tag 在、Release 不在」。
+            if ! gh release create "$tag" release/* --verify-tag \
+              --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md; then
+              # 撞 422 说明 Release 其实存在、只是刚才没查到。回落成补传，
+              # 别让整版发不出去。
+              echo "create 失败，回落到补传校验文件" >&2
+              retry_upload release/SHA256SUMS.txt
+            fi
           fi
+          gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
+          # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
+          for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
+            if [ ! -e "release/$name" ]; then
+              # 删除失败不阻断发布——附件多留一个比整版发不出去好。
+              gh release delete-asset "$tag" "$name" --yes || echo "清理旧附件失败（忽略）：$name" >&2
+            fi
+          done
