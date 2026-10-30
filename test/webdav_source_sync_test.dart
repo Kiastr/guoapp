@@ -76,11 +76,22 @@ class FakeSourceRepository extends AppRepository {
   @override
   Future<LibreTVImportResult> libretvImport(String subscription) async {
     libretvImports.add(subscription);
-    if (failures.contains(subscription)) throw StateError('模拟导入失败');
-    final key = siteKeyOf(subscription);
+    // 同步侧现在传的是单站点订阅 JSON（裸地址 + key / name），失败判定
+    // 同时兼容「整份载荷」与「载荷里含该地址」两种登记方式。
+    if (failures.any(
+      (f) => f == subscription || subscription.contains(f),
+    )) {
+      throw StateError('模拟导入失败');
+    }
+    final key = importedSiteKey(subscription);
     _sites = [
       ..._sites,
-      LibreTVSite(key: key, name: '导入站 $key', api: subscription),
+      // 与真实核心一致：订阅条目里带了 name 就用它，不带才回落地址。
+      LibreTVSite(
+        key: key,
+        name: importedSiteName(subscription) ?? '导入站 $key',
+        api: importedApiOf(subscription),
+      ),
     ];
     return const LibreTVImportResult(
       added: [],
@@ -152,6 +163,38 @@ class FakeSourceRepository extends AppRepository {
 /// 测试约定的站点 key 派生规则：取 URL 主机名第一段。
 /// 远端订阅条目与 FakeSourceRepository 导入登记共用，保证源 ID 一致。
 String siteKeyOf(String url) => Uri.parse(url).host.split('.').first;
+
+/// 同步侧交给核心的导入载荷里的唯一站点条目。
+///
+/// +154 起普通采集站也包装成单站点订阅 JSON（带 key / name）；规则源一直
+/// 是订阅 JSON。裸地址（旧行为，仍用于对照）返回 null。
+Map<String, dynamic>? importPayloadSite(String subscription) {
+  final text = subscription.trim();
+  if (!text.startsWith('{')) return null;
+  final decoded = jsonDecode(text);
+  if (decoded is! Map<String, dynamic>) return null;
+  final sites = decoded['sites'];
+  if (sites is! List || sites.isEmpty) return null;
+  return sites.first is Map<String, dynamic>
+      ? sites.first as Map<String, dynamic>
+      : null;
+}
+
+/// 载荷里的站点 key；裸地址按主机名派生（与核心 libretvKeyFromAPI 同序）。
+String importedSiteKey(String subscription) {
+  final key = importPayloadSite(subscription)?['key'] as String? ?? '';
+  return key.trim().isNotEmpty ? key : siteKeyOf(importedApiOf(subscription));
+}
+
+/// 载荷里的站名；为空表示同步侧没带名字（核心会回落成主机名）。
+String? importedSiteName(String subscription) {
+  final name = importPayloadSite(subscription)?['name'] as String?;
+  return name == null || name.trim().isEmpty ? null : name;
+}
+
+/// 载荷里的采集地址（规则源这里是 Spider 地址）。
+String importedApiOf(String subscription) =>
+    importPayloadSite(subscription)?['api'] as String? ?? subscription;
 
 /// 伪造一台「对端设备」已上传的同步文件（只带片源偏好 / 订阅，
 /// 无追剧记录——记录合并已有 webdav_sync_test 覆盖）。
@@ -294,7 +337,12 @@ void main() {
     );
 
     final outcome = await sync(a, transport, repository);
-    expect(repository.libretvImports, [api]);
+    expect(repository.libretvImports, hasLength(1));
+    // 导入载荷是单站点订阅 JSON：地址 + 源设备的 key / 站名（+154 起，
+    // 修「同步过去站名变成网址」）。
+    expect(importedApiOf(repository.libretvImports.single), api);
+    expect(importedSiteKey(repository.libretvImports.single), siteKeyOf(api));
+    expect(importedSiteName(repository.libretvImports.single), '测试站');
     expect(SourceSite.isKnown('libretv:${siteKeyOf(api)}'), isTrue);
     expect(outcome.sourceImports, 1);
 
@@ -302,6 +350,52 @@ void main() {
     final again = await sync(a, transport, repository);
     expect(repository.libretvImports, hasLength(1));
     expect(again.sourceImports, 0);
+  });
+
+  test('同步导入携带站名与 key：对端不退化成主机名，源 ID 与源设备一致', () async {
+    final before = SourceSite.runtimeValues;
+    addTearDown(() => SourceSite.setRuntimeSources(before));
+    final a = await createStore();
+    await configure(a);
+    final repository = FakeSourceRepository();
+    const xmlApi = 'https://xml.example.com/provide/vod/at/xml';
+    // 规则源同步过来的本身就是单站点订阅 JSON（含 key / name / 规则地址），
+    // 同步侧原样交给核心，不做二次包装。
+    const rulePayload = '{"sites":[{"key":"xbpq","name":"XBPQ 影视","type":3,'
+        '"api":"http://127.0.0.1:9978/api/ext","ext":"http://r.example/x.json"}]}';
+    final transport = FakeWebDavTransport(
+      files: remoteFiles(
+        replica: 'c' * 32,
+        subs: {
+          // 源 ID 用的就是站点 key：载荷必须把它带过去，否则对端按地址
+          // 派生出另一个 key，每个同步周期都会被当成新源重新导入。
+          'libretv:mihua': const LanSourceSub(name: '咪咕', api: xmlApi, at: 2),
+          'libretv:xbpq': const LanSourceSub(
+            name: 'XBPQ 影视',
+            api: rulePayload,
+            at: 2,
+          ),
+        },
+      ),
+    );
+
+    final outcome = await sync(a, transport, repository);
+    expect(outcome.sourceImports, 2);
+    expect(repository.libretvImports, hasLength(2));
+    final imports = <String, String>{
+      for (final payload in repository.libretvImports)
+        importedSiteKey(payload): payload,
+    };
+    // 普通采集站：key / name / type 都来自源设备条目；XML 地址判为 type 2
+    // （与核心 looksLikeLibreTVXMLAPI 同口径）。名字非空 → 不会变网址。
+    final xml = imports['mihua']!;
+    expect(importedApiOf(xml), xmlApi);
+    expect(importedSiteName(xml), '咪咕');
+    expect((importPayloadSite(xml)!['type'] as num).toInt(), 2);
+    // 规则源：同步过来的订阅 JSON 原样透传。
+    expect(imports['xbpq'], rulePayload);
+    // 站名进入运行时注册表（对端站源管理 / 首页显示的就是它）。
+    expect(SourceSite.byId('libretv:mihua').name, '咪咕');
   });
 
   test('粘贴导入的 drpy 脚本源无法跨设备同步，跳过并警告', () async {

@@ -798,13 +798,8 @@ class _DetailScreenState extends State<DetailScreen> {
           // 简介块内注明片源：多片源合并展示时（LibreTV / drpy 收藏后与
           // 内置源同级），用户需要知道这一部具体来自哪个站源。
           // 标红处理：片源归属是排查「内容对不上」时的关键信息，需要醒目。
-          Text(
-            '片源：${SourceSite.byId(drama.source).name}',
-            style: TextStyle(
-              color: colors.error,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          // 导入的 LibreTV / drpy 片源还带一颗收藏星，与站源管理页同一入口。
+          _sourceLine(colors, drama.source),
           const SizedBox(height: 4),
           Text(
             drama.description,
@@ -833,6 +828,65 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
       ],
     );
+  }
+
+  /// 简介里的片源行：站名 + 收藏星（仅导入的 LibreTV / drpy 片源可收藏）。
+  ///
+  /// 与站源管理页的收藏按钮共用 [LocalStore.toggleFavoriteSource]：这里点
+  /// 一下等同于在站源管理里给对应片源点上收藏，收藏后首页把该片源从
+  /// LibreTV / drpy 大组拆出独占一组（与红果等内置源同级）。收藏状态由
+  /// store 广播驱动刷新（本页已在 initState 里监听），无需额外 setState。
+  Widget _sourceLine(ColorScheme colors, String sourceId) {
+    final name = SourceSite.byId(sourceId).name;
+    final favorite = widget.store.isFavoriteSource(sourceId);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '片源：$name',
+            style: TextStyle(
+              color: colors.error,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        // 内置源（红果 / 番茄等）没有收藏概念，核心侧也只认
+        // `libretv:` / `drpy:` 前缀，故只对运行时导入的片源显示。
+        if (sourceId.startsWith('libretv:') || sourceId.startsWith('drpy:'))
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+            iconSize: 20,
+            tooltip: favorite ? '取消收藏$name' : '收藏$name',
+            onPressed: () => _toggleFavoriteSource(sourceId, name),
+            icon: Icon(
+              favorite ? Icons.star_rounded : Icons.star_border_rounded,
+              color: favorite ? Colors.amber : colors.error,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 收藏 / 取消收藏当前片源（等价于站源管理页的同一操作）。
+  Future<void> _toggleFavoriteSource(String sourceId, String name) async {
+    try {
+      await widget.store.toggleFavoriteSource(sourceId);
+      if (!mounted) return;
+      final favorite = widget.store.isFavoriteSource(sourceId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            favorite ? '已收藏「$name」，首页将独立显示该片源' : '已取消收藏「$name」',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('操作失败：$error')));
+    }
   }
 
   Widget _seriesSelector(Drama drama) {

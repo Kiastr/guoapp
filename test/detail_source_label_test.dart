@@ -94,4 +94,83 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('简介里的收藏按钮：一键收藏片源，内置源不显示', (tester) async {
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    final store = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(store.dispose);
+
+    const runtimeDrama = Drama(
+      id: 'libretv:mihua:one',
+      source: 'libretv:mihua',
+      title: '咪咕剧一',
+      description: '这是一部来自咪咕采集站的短剧。',
+      episodes: 2,
+    );
+    const builtinDrama = Drama(
+      id: 'hongguo:one',
+      source: 'hongguo',
+      title: '红果剧一',
+      description: '这是一部来自红果的短剧。',
+      episodes: 2,
+    );
+    final repository = LibraryFeatureRepository()
+      ..details[runtimeDrama.id] = LibraryFeatureRepository.makeDetail(
+        runtimeDrama,
+        2,
+      )
+      ..details[builtinDrama.id] = LibraryFeatureRepository.makeDetail(
+        builtinDrama,
+        2,
+      );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailScreen(
+          drama: runtimeDrama,
+          repository: repository,
+          store: store,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 导入的 LibreTV 片源：片源行带一颗空心星（未收藏）。
+    expect(find.byTooltip('收藏咪咕'), findsOneWidget);
+    await tester.tap(find.byTooltip('收藏咪咕'));
+    await tester.pumpAndSettle();
+    // 与站源管理页同一份数据：收藏后首页把该片源独立成组。
+    expect(store.isFavoriteSource('libretv:mihua'), isTrue);
+    expect(find.byTooltip('取消收藏咪咕'), findsOneWidget);
+    expect(find.text('已收藏「咪咕」，首页将独立显示该片源'), findsOneWidget);
+
+    // 再点一次取消收藏（状态与提示同步回到未收藏）。
+    await tester.tap(find.byTooltip('取消收藏咪咕'));
+    await tester.pumpAndSettle();
+    expect(store.isFavoriteSource('libretv:mihua'), isFalse);
+    expect(find.text('已取消收藏「咪咕」'), findsOneWidget);
+
+    // 内置源（红果）没有收藏概念：不显示收藏按钮。
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailScreen(
+          drama: builtinDrama,
+          repository: repository,
+          store: store,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('片源：红果'), findsOneWidget);
+    expect(find.byIcon(Icons.star_border_rounded), findsNothing);
+    expect(find.byIcon(Icons.star_rounded), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

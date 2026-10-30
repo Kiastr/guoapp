@@ -499,8 +499,10 @@ class WebDavSynchronizer {
             warnings.add('片源「$label」缺少采集地址，已跳过');
             continue;
           }
-          // 规则源同步过来的是单站点订阅 JSON（含规则地址），走同一导入链路。
-          await repository.libretvImport(sub.api);
+          // 规则源同步过来的是单站点订阅 JSON（含规则地址），走同一导入
+          // 链路；普通采集站在同步文档里只有裸地址，用 [_libretvImportPayload]
+          // 补成单站点订阅，把 key / 名字一起带过去（详见其注释）。
+          await repository.libretvImport(_libretvImportPayload(id, sub));
         } else if (id.startsWith('drpy:')) {
           if (sub.api.trim().isEmpty) {
             warnings.add('脚本源「$label」为粘贴导入，无法跨设备同步');
@@ -532,6 +534,50 @@ class WebDavSynchronizer {
       store.notifySourceRegistryChanged();
     }
     return (imported: imported, warnings: warnings);
+  }
+
+  /// 片源订阅条目的导入载荷：把 `key` 与站名一并交给原生核心。
+  ///
+  /// 同步文档里普通采集站只存裸接口地址（云端格式与老版本 App 都依赖它，
+  /// 不能改成 JSON），但对端直接拿裸地址导入时，核心走的是「裸地址兜底」
+  /// 分支（`provider_libretv.go`：key / name 传空），于是
+  ///   - 站名缺省 → 回落成接口主机名：源设备叫「影视仓」，同步过去变成
+  ///     `api.example.com` 这种网址；
+  ///   - key 由地址派生（`libretvKeyFromAPI`）→ 源 ID 与源设备不一致
+  ///     （`libretv:<原 key>` vs `libretv:<主机名>-<哈希>`），每个同步周期
+  ///     都被当成新源重新导入并触发探测，收藏 / 隐藏偏好按源 ID 存储，
+  ///     对端也对不上。
+  /// 这里按条目现场组装单站点订阅 JSON，核心照常按订阅条目读取 key /
+  /// name，两个问题一起解决，且不需要改核心与云端格式。
+  ///
+  /// 规则源同步过来的本身就是单站点订阅 JSON（含 `key` / `name` / `type` /
+  /// `ext` 规则地址），原样交给核心，不做二次包装。
+  String _libretvImportPayload(String id, LanSourceSub sub) {
+    final api = sub.api.trim();
+    if (api.startsWith('{')) return api;
+    final key = id.startsWith('libretv:') ? id.substring(8).trim() : '';
+    return jsonEncode(<String, dynamic>{
+      'sites': <Map<String, dynamic>>[
+        <String, dynamic>{
+          // key 空着就交给核心按地址派生，与旧行为一致。
+          if (key.isNotEmpty) 'key': key,
+          'name': sub.name.trim(),
+          // type：1 = JSON 采集站，2 = XML 采集站，与核心裸地址兜底路径
+          // 的判定（looksLikeLibreTVXMLAPI）保持一致。
+          'type': _looksLikeXMLAPI(api) ? 2 : 1,
+          'api': api,
+        },
+      ],
+    });
+  }
+
+  /// XML 采集站地址判定，复刻核心 `looksLikeLibreTVXMLAPI` 的口径
+  /// （`/at/xml`、`at=xml`、`ac=xml` 三种写法）。
+  static bool _looksLikeXMLAPI(String api) {
+    final lowered = api.toLowerCase();
+    return lowered.contains('/at/xml') ||
+        lowered.contains('at=xml') ||
+        lowered.contains('ac=xml');
   }
 
   /// 本机片源的身份指纹：`api:<地址>` / `rule:<规则地址>` / `script:<脚本地址>`。
