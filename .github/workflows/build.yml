@@ -81,22 +81,34 @@ jobs:
           fi
           version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
           tag="app-v${version//+/-}"
-          # tag 必须先于 Release 存在：下面与 release job 一律带 --verify-tag，
-          # 而该参数的语义是「tag 不在就中止」——+152 修的就是这个坑：清理
-          # +150 的重复空壳 Release 时 tag 一起被带走，于是 prepare-release
-          # 直接 `tag ... doesn't exist ... aborting`，android / release 全被
-          # 跳过，六个 APK 一个都没编译。这里先按本次 commit 把 tag 建（或
-          # 挪）到位，后面的 create / upload 才有落点。
           sha="${GITHUB_SHA}"
-          cur=$(gh api "repos/$REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null || true)
+          # tag 必须先于 Release 存在：下面与 release job 都带 --verify-tag
+          # 兜底，而该参数的语义是「tag 不在就中止」——+152 修的就是这个坑：
+          # 清理 +150 的重复空壳 Release 时 tag 一起被带走，于是本 job 直接
+          # `tag ... doesn't exist ... aborting`，android / release 全被跳过，
+          # 六个 APK 一个都没编译。这里先把 tag 建（或挪）到本次 commit。
+          # 每步都显式判退出码并回显错误体：gh api 失败时默认把响应写到
+          # stderr，被重定向吞掉后只剩一个 exit 1，非常难定位。
+          cur=""
+          if out=$(gh api "repos/$REPO/git/ref/tags/$tag" --jq .object.sha 2>&1); then
+            cur="$out"
+          else
+            echo "tag $tag 尚不存在（$out），准备新建"
+          fi
           if [ -z "$cur" ]; then
-            gh api -X POST "repos/$REPO/git/refs" \
-              -f "ref=refs/tags/$tag" -f "sha=$sha" >/dev/null
+            if ! out=$(gh api -X POST "repos/$REPO/git/refs" \
+              -f "ref=refs/tags/$tag" -f "sha=$sha" 2>&1); then
+              echo "建 tag 失败：$out" >&2
+              exit 1
+            fi
             echo "已建 tag $tag -> $sha"
           elif [ "$cur" != "$sha" ]; then
-            gh api -X PATCH "repos/$REPO/git/refs/tags/$tag" \
-              -f "sha=$sha" -F force=true >/dev/null
-            echo "已把 tag $tag 移到 $sha"
+            if ! out=$(gh api -X PATCH "repos/$REPO/git/refs/tags/$tag" \
+              -f "sha=$sha" -F force=true 2>&1); then
+              echo "移动 tag 失败：$out" >&2
+              exit 1
+            fi
+            echo "已把 tag $tag 从 $cur 移到 $sha"
           else
             echo "tag $tag 已指向 $sha，沿用"
           fi
