@@ -148,7 +148,10 @@ void main() {
     expect(find.byTooltip('取消收藏咪咕'), findsOneWidget);
     expect(find.text('已收藏「咪咕」，首页将独立显示该片源'), findsOneWidget);
 
-    // 再点一次取消收藏（状态与提示同步回到未收藏）。
+    // 再点一次取消收藏。上一条提示还在屏上，而 SnackBar 是串行排队的：
+    // 先推进时间让它退场，否则第二条会一直排在队列里，文本断言落空。
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('取消收藏咪咕'));
     await tester.pumpAndSettle();
     expect(store.isFavoriteSource('libretv:mihua'), isFalse);
