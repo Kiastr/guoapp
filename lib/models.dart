@@ -169,34 +169,87 @@ class SourceGroup {
   final String name;
   final List<SourceSite> sources;
 
+  /// 出厂默认的分组顺序（首页片源选择与站源管理页共用）。
+  ///
+  /// 分组顺序原先是「按源在注册表里首次出现的顺序」隐式决定的：内置源在前、
+  /// 运行时源（LibreTV / drpy / Kazumi）在后。一旦青空被隐藏或当前用户无权
+  /// 访问它，「动漫源集合」就只剩 Kazumi 运行时源撑着，会掉到 drpy 脚本源
+  /// 集合后面——同一个分组在不同机器上位置不一样。这里显式定序：动漫源集合
+  /// 与预制源集合始终排在 drpy 脚本源集合之前。
+  ///
+  /// 表里没有的分组（用户导入后被收藏的 `drpy:xxx`、未来新增的站源）按所属
+  /// 分组排位，都不在则排在末尾、保持相对顺序。
+  static const defaultGroupOrder = <String>[
+    'hongguo', // 红果
+    'hanxiaoquan', // 韩小圈（收藏时才独占一组）
+    'preset', // 预制源集合
+    'sorani', // 青空（收藏时才独占一组）
+    'anime', // 动漫源集合
+    'huangdou',
+    'huangju',
+    'yeguo',
+    'dsd',
+    'huangguo', // 黄果
+    'drpy', // drpy 脚本源集合
+    'libretv', // 扩展片源集合
+  ];
+
   static List<SourceGroup> fromSources(
     Iterable<SourceSite> sources, {
     Set<String> favoriteIds = const {},
+    List<String> groupOrder = const [],
   }) {
+    final order = groupOrder.isEmpty ? defaultGroupOrder : groupOrder;
     final groups = <String, List<SourceSite>>{};
+    final favoriteGroup = <String, bool>{};
     for (final source in sources) {
       // 收藏的片源（libretv: / drpy: / kazumi: 运行时源与青空、韩小圈等
       // 内置源）不并入 LibreTV / 动漫源集合这类大组，独占一组、组名即源名，
       // 与红果等内置源同级出现在片源选择里。
       final favorite = favoriteIds.contains(source.id);
-      if (favorite) (groups[source.id] ??= []).add(source);
+      if (favorite) {
+        (groups[source.id] ??= []).add(source);
+        favoriteGroup[source.id] = true;
+      }
       // [+156] 收藏的源在所属分组里同时保留一份：既能在首页与红果同级单选，
       // 也能在「动漫源集合」里和同族源一起选。分组 id 与源 id 相同的内置源
       // （红果 / 帝果等）只加一次，否则同一组里会出现两份。
       if (!favorite || source.groupId != source.id) {
         (groups[source.groupId] ??= []).add(source);
+        favoriteGroup.putIfAbsent(source.groupId, () => false);
       }
     }
+    // 排位：分组 id 命中顺序表即用它；收藏独占组（青空 / 韩小圈 / drpy:xxx）
+    // 不在表里时跟着所属分组走，并排在所属分组之前。都不命中排末尾。
+    int rank(String id) {
+      final own = order.indexOf(id);
+      if (own >= 0) return own;
+      final family = order.indexOf(groups[id]!.first.groupId);
+      return family < 0 ? order.length : family;
+    }
+
+    final keys = groups.keys.toList(growable: false);
+    final natural = {for (var i = 0; i < keys.length; i++) keys[i]: i};
+    final sorted = keys.toList()..sort((a, b) {
+      final byOrder = rank(a).compareTo(rank(b));
+      if (byOrder != 0) return byOrder;
+      // 收藏独占组紧挨着它的所属分组、排在其前面（青空 → 动漫源集合）。
+      final byFavorite =
+          (favoriteGroup[a]! ? 0 : 1).compareTo(favoriteGroup[b]! ? 0 : 1);
+      if (byFavorite != 0) return byFavorite;
+      // 兜底保持「首次出现」的相对顺序，保证同一输入的输出稳定。
+      return natural[a]!.compareTo(natural[b]!);
+    });
     return [
-      for (final group in groups.entries)
+      for (final key in sorted)
         SourceGroup(
-          group.key,
+          key,
           // 组名只看组 id 是否是「收藏独占组」：不能按首个成员判断，否则
           // 「动漫源集合」会因为青空是收藏源而被误命名为「青空」。
-          favoriteIds.contains(group.key)
-              ? group.value.first.name
-              : group.value.first.groupName,
-          group.value,
+          favoriteGroup[key]!
+              ? groups[key]!.first.name
+              : groups[key]!.first.groupName,
+          groups[key]!,
         ),
     ];
   }

@@ -74,6 +74,13 @@ class LocalStore extends ChangeNotifier {
   /// allowsSource 直接拒绝（追剧/历史里的条目一并过滤），
   /// 可在站源管理页恢复显示。on=false 为取消墓碑。
   final Map<String, _SourceStamp> _hiddenStamps = {};
+
+  /// 用户手动调整过的站源分组顺序（空表示沿用出厂默认）。
+  ///
+  /// 只存分组 / 独占源 id 列表，与收藏、隐藏互不干涉；**不参与 WebDAV /
+  /// 局域网同步**——各设备的可用站源集合不同（导入片源、解锁状态都可能不
+  /// 一样），对齐顺序没有意义还会互相打架。
+  List<String> _sourceOrder = const [];
   Future<void> _writes = Future<void>.value();
   List<LocalProfile> _profiles = [];
   String _current = 'default';
@@ -281,6 +288,30 @@ class LocalStore extends ChangeNotifier {
     for (final id in SourceSite.defaultFavoriteSourceIds)
       if (!_favoriteStamps.containsKey(id)) id,
   };
+
+  /// 用户手动排过的站源分组顺序（拷贝；空表示没排过）。
+  List<String> get explicitSourceOrder => List.unmodifiable(_sourceOrder);
+
+  /// 生效的站源分组顺序 = 用户排过的顺序 + 出厂默认里没被排到的分组。
+  ///
+  /// 追加缺省项是为了让「新导入的片源 / 刚解锁的站源」也有确定位置（排在
+  /// 末尾），不会因为不在用户的列表里就抢到前面去。
+  List<String> get sourceOrder => [
+    ..._sourceOrder,
+    for (final id in SourceGroup.defaultGroupOrder)
+      if (!_sourceOrder.contains(id)) id,
+  ];
+
+  /// 保存站源分组顺序（站源管理页的上移 / 下移用）。
+  ///
+  /// [ids] 为当前可见分组（含收藏独占组）的 id 列表，按想要的顺序排列。
+  /// 传空列表即恢复出厂默认。
+  Future<void> setSourceOrder(List<String> ids) => _queue(() async {
+    final next = [for (final id in ids) if (id.trim().isNotEmpty) id.trim()];
+    await _commit({_key('sourceOrder'): jsonEncode(next)});
+    _loadLibrary();
+    _notify();
+  });
 
   /// 隐藏的运行时片源 ID 集合（拷贝，不含取消墓碑）。
   Set<String> get hiddenSourceIds =>
@@ -492,6 +523,7 @@ class LocalStore extends ChangeNotifier {
     _hiddenStamps
       ..clear()
       ..addAll(_readSourceStamps(_string(_key('hiddenSources'))));
+    _sourceOrder = _readSourceOrder(_string(_key('sourceOrder')));
     if (_configurationError != null) return;
     for (final row in readJsonList(_string(_key('history')))) {
       try {
@@ -862,6 +894,21 @@ class LocalStore extends ChangeNotifier {
     for (final entry in stamps.entries)
       entry.key: {'at': entry.value.at, 'on': entry.value.on},
   });
+
+  /// 读站源分组顺序：`["hongguo","anime",...]`。坏数据按空表处理（沿用出厂
+  /// 默认顺序），与 readJsonList 的容错策略一致。
+  List<String> _readSourceOrder(String? value) {
+    try {
+      final decoded = jsonDecode(value ?? '[]');
+      if (decoded is! List) return const [];
+      return [
+        for (final id in decoded.whereType<String>())
+          if (id.trim().isNotEmpty) id.trim(),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
 
   /// 读收藏 / 隐藏片源的时间戳表，兼容三种历史格式：
   /// 1. 最早版：JSON 数组（无时间戳），统一按「生效、at=0」处理；

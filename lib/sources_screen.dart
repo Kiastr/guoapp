@@ -253,6 +253,12 @@ class _SourcesScreenState extends State<SourcesScreen> {
           final bFirst = b.id == widget.initialSource ? 0 : 1;
           return aFirst.compareTo(bFirst);
         });
+      // [+157] 分组顺序：用户排过的顺序优先，未排过用出厂默认。上移 / 下移
+      // 写回 store，首页片源选择同一份顺序。
+      final groups = SourceGroup.fromSources(
+        sources,
+        groupOrder: widget.store.sourceOrder,
+      );
       final viewPaddingBottom = MediaQuery.viewPaddingOf(context).bottom;
       final paddingBottom = MediaQuery.paddingOf(context).bottom;
       final bottomInset = viewPaddingBottom > paddingBottom
@@ -276,39 +282,69 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                   _libretvCard(),
                   _kazumiCard(),
+                  if (widget.store.explicitSourceOrder.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          key: const ValueKey('source-order-reset'),
+                          onPressed: _libretvBusy ? null : _resetOrder,
+                          icon: const Icon(Icons.restart_alt_rounded),
+                          label: const Text('恢复默认顺序'),
+                        ),
+                      ),
+                    ),
                   if (sources.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
                       child: Text('当前用户没有可用站源'),
                     ),
-                  for (final group in SourceGroup.fromSources(sources))
+                  for (var index = 0; index < groups.length; index++)
                     // 多源分组（黄果 / 动漫源集合 / 预制源集合 / 扩展片源
                     // 集合 / drpy 脚本源集合）折叠成一层子级：收藏的源在首页
                     // 额外独占一组与红果同级，这一层按主题合并，首页片源选择
                     // 不至于被撑爆。
-                    if (group.sources.length > 1)
+                    if (groups[index].sources.length > 1)
                       Card(
                         clipBehavior: Clip.antiAlias,
                         margin: const EdgeInsets.only(bottom: 16),
                         child: ExpansionTile(
-                          key: PageStorageKey('source-group-${group.id}'),
-                          initiallyExpanded: group.sources.any(
+                          key: PageStorageKey('source-group-${groups[index].id}'),
+                          initiallyExpanded: groups[index].sources.any(
                             (source) => source.id == widget.initialSource,
                           ),
-                          leading: Icon(_groupIcon(group.id)),
-                          title: Text(group.name),
+                          leading: Icon(_groupIcon(groups[index].id)),
+                          title: Row(
+                            children: [
+                              Expanded(child: Text(groups[index].name)),
+                              _orderControls(
+                                groups[index].id,
+                                index,
+                                groups.length,
+                              ),
+                            ],
+                          ),
                           subtitle: Text(
-                            '${group.sources.length} 个入口 · ${group.sources.fold<int>(0, (count, source) => count + (_statuses[source.id]?.count ?? 0))} 部',
+                            '${groups[index].sources.length} 个入口 · ${groups[index].sources.fold<int>(0, (count, source) => count + (_statuses[source.id]?.count ?? 0))} 部',
                           ),
                           childrenPadding: const EdgeInsets.all(8),
                           children: [
-                            for (final source in group.sources)
+                            for (final source in groups[index].sources)
                               _sourceCard(source),
                           ],
                         ),
                       )
                     else
-                      for (final source in group.sources) _sourceCard(source),
+                      for (final source in groups[index].sources)
+                        _sourceCard(
+                          source,
+                          orderControls: _orderControls(
+                            groups[index].id,
+                            index,
+                            groups.length,
+                          ),
+                        ),
                 ],
               ),
             ),
@@ -317,6 +353,83 @@ class _SourcesScreenState extends State<SourcesScreen> {
       );
     },
   );
+
+  /// [+157] 分组顺序调整按钮：上移 / 下移。
+  ///
+  /// 调整的是「分组」的位置（红果、动漫源集合、drpy 脚本源集合……），组内
+  /// 成员顺序保持不变。写回 store 后首页片源选择用同一份顺序。
+  Widget _orderControls(String groupId, int index, int total) {
+    void move(int delta) => _moveOrder(groupId, delta);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          key: ValueKey('source-order-up-$groupId'),
+          tooltip: '上移',
+          iconSize: 18,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+          onPressed: _libretvBusy || index <= 0 ? null : () => move(-1),
+          icon: const Icon(Icons.arrow_upward_rounded),
+        ),
+        IconButton(
+          key: ValueKey('source-order-down-$groupId'),
+          tooltip: '下移',
+          iconSize: 18,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+          onPressed: _libretvBusy || index >= total - 1 ? null : () => move(1),
+          icon: const Icon(Icons.arrow_downward_rounded),
+        ),
+      ],
+    );
+  }
+
+  /// 把 [groupId] 在分组顺序里挪动 [delta] 位（±1），写回本地偏好。
+  Future<void> _moveOrder(String groupId, int delta) async {
+    if (_libretvBusy) return;
+    final ids = SourceGroup.fromSources(
+      widget.store.sources,
+      groupOrder: widget.store.sourceOrder,
+    ).map((group) => group.id).toList();
+    final from = ids.indexOf(groupId);
+    final to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    ids.removeAt(from);
+    ids.insert(to, groupId);
+    try {
+      await widget.store.setSourceOrder(ids);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('调整顺序失败：$error')));
+      }
+    }
+  }
+
+  /// 清空用户排的顺序，回到出厂默认（[SourceGroup.defaultGroupOrder]）。
+  Future<void> _resetOrder() async {
+    if (_libretvBusy) return;
+    try {
+      await widget.store.setSourceOrder(const []);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已恢复默认顺序')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('恢复默认顺序失败：$error')));
+      }
+    }
+  }
 
   /// 分组图标：内置主题组给专属图标，运行时家族沿用各自数据形态。
   IconData _groupIcon(String groupId) => switch (groupId) {
@@ -1171,7 +1284,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
     );
   }
 
-  Widget _sourceCard(SourceSite source) {
+  /// [orderControls] 为 +157 的分组顺序调整按钮：只在顶层条目上挂，
+  /// 展开后的组内成员不再重复挂一遍（顺序是按分组调的）。
+  Widget _sourceCard(SourceSite source, {Widget? orderControls}) {
     final status = _statuses[source.id];
     final pending = _pending.contains(source.id);
     final busy = pending || status?.running == true;
@@ -1201,9 +1316,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                 ),
                 Text('${status?.count ?? 0} 部'),
+                if (orderControls != null) orderControls,
                 // [+155] 收藏按钮：收藏的源在首页独占一组、与红果同级；
-                // 取消收藏后回落到所属分组的子级（动漫站源 / 预制源组合 /
-                // LibreTV 片源 / drpy 脚本源）。内置源与导入源同按钮。
+                // 取消收藏后回落到所属分组的子级（动漫源集合 / 预制源集合 /
+                // 扩展片源集合 / drpy 脚本源集合）。内置源与导入源同按钮。
                 _favoriteButton(source),
               ],
             ),

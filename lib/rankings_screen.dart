@@ -160,6 +160,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
   Widget build(BuildContext context) {
     final groups = SourceGroup.fromSources(
       _boards.map((board) => SourceSite.byId(board.source)).toSet(),
+      // [+157] 与首页 / 站源管理页同一份分组顺序。
+      groupOrder: widget.store.sourceOrder,
     );
     final boards = _boards
         .where((board) => board.groupId == _board?.groupId)

@@ -92,14 +92,17 @@ class _HomeScreenState extends State<HomeScreen> {
   List<SourceGroup> get _sourceGroups {
     final signature =
         '${widget.store.favoriteSourceIds.join(',')}|'
-        '${widget.store.sources.map((site) => site.id).join(',')}';
+        '${widget.store.sources.map((site) => site.id).join(',')}|'
+        '${widget.store.sourceOrder.join(',')}';
     if (signature != _groupsSignature) {
       _groupsSignature = signature;
       // store.sources 已排除被隐藏的运行时片源（与黄果同逻辑）；
       // favoriteSourceIds 让收藏的片源独占一组，与红果等同级。
+      // [+157] groupOrder 让用户排的顺序生效（站源管理页上移 / 下移）。
       final groups = SourceGroup.fromSources(
         widget.store.sources,
         favoriteIds: widget.store.favoriteSourceIds,
+        groupOrder: widget.store.sourceOrder,
       );
       _groupsCache = [
         if (groups.length > 1) SourceGroup('all', '全部站源', widget.store.sources),
