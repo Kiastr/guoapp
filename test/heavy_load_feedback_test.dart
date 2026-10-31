@@ -180,6 +180,83 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('订阅多个源后自动重载当前组，并立刻出现提示（不等 300ms）', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // 先停在只有 2 个采集站的「扩展片源集合」：这组秒开，本来不该弹提示。
+    final store = await storeFor(_manySources(2));
+    addTearDown(store.dispose);
+    final repository = _DelayedRepository(delay: const Duration(seconds: 1));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
+    final before = repository.requests.length;
+
+    // 一次性订阅 10 个新采集站，全部落在当前分组里。
+    SourceSite.setRuntimeSources(_manySources(12));
+    store.notifySourceRegistryChanged();
+
+    // 关键：不推进任何时间。这批源没有缓存，属于冷启动，提示必须立刻出现；
+    // 如果走「刷新同组」的 300ms 延迟档，这里会是 findsNothing。
+    await tester.pump();
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsOneWidget);
+    expect(find.textContaining('/ 12 个站源'), findsOneWidget);
+
+    // 当前组被整体重载：新增的源都发出了请求，列表不会停在旧内容上。
+    // 夹具在延迟之后才记 requests，所以推一段时间再核对（并发 8，两批各 1 秒）。
+    await tester.pump(const Duration(seconds: 2));
+    expect(repository.requests.length, before + 12);
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('订阅的源不属于当前分组时不重载，也不弹提示', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SourceSite.setRuntimeSources(_manySources(2));
+    SharedPreferences.setMockInitialValues({});
+    final store = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(store.dispose);
+    // 停在红果单源组：新订阅的采集站跟它无关。
+    await store.setCatalogSource('hongguo', allSources: false);
+
+    final repository = _DelayedRepository(delay: const Duration(seconds: 1));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final before = repository.requests.length;
+
+    SourceSite.setRuntimeSources(_manySources(12));
+    store.notifySourceRegistryChanged();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // 当前组没多源，不该顺手重载，也不该弹提示。
+    expect(repository.requests.length, before);
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('源数低于阈值的普通分组不出现加载提示', (tester) async {
     tester.view.physicalSize = const Size(430, 1200);
     tester.view.devicePixelRatio = 1;

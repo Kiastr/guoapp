@@ -269,6 +269,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!wasEmpty &&
         allowed.contains(_source.id) &&
         _source.id == widget.store.source) {
+      // [+160] 当前分组的源集合变大了（订阅 / 导入的源正好命中当前组）：
+      // 列表还停在旧内容上，新源要等手动下拉或重新选组才会出现——而用户
+      // 刚订阅完，最直觉的预期就是"新源已经在了"。这里自动补一轮，并当
+      // 冷启动处理：新源没有任何缓存，这是最慢的一轮，不能走 300ms 延迟档。
+      final current = {for (final site in _group.sources) site.id};
+      if (current.difference(_loadedGroupIds).isEmpty) return;
+      unawaited(_load(useCache: true, cold: true));
       return;
     }
     _changeSource(SourceSite.byId(widget.store.source));
@@ -534,6 +541,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // [+158] 上次选中的分组（多源分组聚合展示）从持久化偏好里恢复。
     _selectedGroupId = widget.store.catalogView.groupId;
     _sourceSignature = widget.store.sources.map((site) => site.id).join(',');
+    // [+160] 冷启动重载的基线：首轮加载还没跑，先按当前分组要请求的源记，
+    // 避免初始加载前收到一次注册表广播就被误判成"分组多了源"。
+    _loadedGroupIds = {for (final site in _group.sources) site.id};
     _browser = CatalogBrowser(
       widget.repository,
       health: widget.store.sourceHealth,
@@ -624,11 +634,17 @@ class _HomeScreenState extends State<HomeScreen> {
     bool useCache = false,
     bool force = false,
     bool cacheOnly = false,
+    // [+160] 冷启动重载：当前分组刚多了源（订阅 / 导入），这批源没有任何
+    // 缓存，必然会走满网络请求。即便列表里还有旧内容，也要像首次进组那样
+    // **立刻**给出加载提示——300ms 延迟档正好错过最卡的开头。
+    bool cold = false,
   }) async {
     if (_showRecommendations) return;
     if (more && (_loading || _loadingMore || !_hasMore)) return;
     final generation = ++_generation;
     final group = _group;
+    // 记录本轮实际请求的源集合，供 _sourcesChanged 判断"当前分组是否多了源"。
+    _loadedGroupIds = {for (final site in group.sources) site.id};
     final query = _onlineSearch ? _search.text.trim() : '';
     setState(() {
       _error = null;
@@ -645,8 +661,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _loadTotal = group.sources.length;
         if (_heavyGroup) {
           // 列表还空着（首次进组 / 刚换组）就立刻给反馈；已经有内容时延迟
-          // 300ms 再出现——秒开的刷新不该闪一下遮罩。
-          _startHeavyNotice(immediate: _items.isEmpty);
+          // 300ms 再出现——秒开的刷新不该闪一下遮罩。冷启动重载例外：新订阅
+          // 的源没有缓存，这一轮一定慢，直接立刻出现。
+          _startHeavyNotice(immediate: _items.isEmpty || cold);
         } else {
           _stopHeavyNotice();
         }
@@ -1397,6 +1414,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _heavyNoticeTimer;
   Timer? _heavyNoticeHideTimer;
   bool _heavyNotice = false;
+
+  /// 上一轮加载时当前分组实际请求的源集合。
+  ///
+  /// 订阅 / 导入新源后，当前分组本身也会变大（新增的源往往就落在当前组里）。
+  /// 用这份快照判断「是不是多了源」：多了就说明列表缺内容，需要自动补一轮。
+  Set<String> _loadedGroupIds = const {};
 
   bool get _heavyGroup =>
       _allSources || _group.sources.length >= _heavySourceThreshold;
