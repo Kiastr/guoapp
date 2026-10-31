@@ -10,7 +10,10 @@ import 'fixtures.dart';
 // 收藏的运行时片源在首页独占一组后：
 // - 选中它只能看到该片源自己的分类与剧集（不再落到 LibreTV / drpy 大组）；
 // - 同前缀的未收藏源仍在大组里聚合，不受影响；
-// - [+156] 收藏的源在所属大组里也保留一份，切到大组时它与同族源一起聚合。
+// - [+156] 收藏的源在所属大组里也保留一份，切到大组时它与同族源一起聚合；
+// - [+158] 点多源分组 = 按整组聚合，且分组 id 被记住——否则组内首个源
+//   是收藏源时（青空 / 韩小圈 / 咪咕），分组会被反推成「源 id 独占组」，
+//   点「动漫源集合」等于点「青空」。
 //
 // 回归背景：_group 曾用 SourceSite.groupId 匹配分组，收藏源的 groupId
 // 仍是 'libretv' 大组，导致选中收藏组实际落到大组上，显示聚合主页。
@@ -81,7 +84,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('切换到扩展片源集合落在组内首个源（收藏源仍在大组内）', (tester) async {
+  testWidgets('点击多源分组按整组聚合，标题保持组名', (tester) async {
     tester.view.physicalSize = const Size(430, 1200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -113,14 +116,60 @@ void main() {
     await tester.pumpAndSettle();
     repository.requests.clear();
 
-    // 组选择器切到扩展片源集合：落在组内第一个源（咪咕）上。
+    // 组选择器切到扩展片源集合：[+158] 按整组聚合——组内首个源咪咕是收藏源，
+    // 分组不能被反推成「咪咕」独占组，否则点集合等于点咪咕。
     await tester.tap(find.byKey(const ValueKey('source-switch')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('扩展片源集合').last);
     await tester.pumpAndSettle();
 
-    expect(repository.requests, ['libretv:mihua']);
+    expect(
+      repository.requests,
+      containsAll(['libretv:mihua', 'libretv:other']),
+    );
     expect(find.text('来自 libretv:mihua'), findsOneWidget);
+    expect(find.text('来自 libretv:other'), findsOneWidget);
+    // 顶部标题仍是组名，不是组内首个源的名字。
+    expect(find.text('扩展片源集合'), findsWidgets);
+    expect(store.catalogView.groupId, 'libretv');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('选中的分组会持久化：重建页面后仍按整组聚合', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    final store = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(store.dispose);
+    await store.setCatalogSource('hongguo', allSources: false);
+
+    final first = _FavoriteHomeRepository();
+    await tester.pumpWidget(
+      MaterialApp(home: HomeScreen(repository: first, store: store)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('source-switch')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('扩展片源集合').last);
+    await tester.pumpAndSettle();
+
+    final second = _FavoriteHomeRepository();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      MaterialApp(home: HomeScreen(repository: second, store: store)),
+    );
+    await tester.pumpAndSettle();
+
+    // 重建后不重新点，分组选择也要还在：两个源都请求、标题仍是组名。
+    expect(
+      second.requests,
+      containsAll(['libretv:mihua', 'libretv:other']),
+    );
+    expect(find.text('扩展片源集合'), findsWidgets);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

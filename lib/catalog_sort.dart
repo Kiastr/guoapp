@@ -17,25 +17,38 @@ class CatalogView {
     this.sort = CatalogSort.source,
     this.release = '',
     this.allSources = false,
+    this.groupId = '',
   });
   final CatalogSort sort;
   final String release;
   final bool allSources;
 
+  /// [+158] 用户在首页主动选中的分组 id。空串表示「按当前源反推分组」。
+  ///
+  /// 存在的原因：分组本来是**由当前源反推**的（`收藏源 → 源 id 独占组`、
+  /// `其它源 → groupId`），于是点「动漫源集合」会落到组内首个源——而组内
+  /// 首个源恰好是被收藏的青空时，分组就被反推成「青空」，点集合等于点青空。
+  /// 多源分组被点击时把组 id 记下来，目录就能按整组聚合展示。
+  /// 当前源不在该组里时自动失效（见 HomeScreen._groupIdOfSource）。
+  final String groupId;
+
   CatalogView copyWith({
     CatalogSort? sort,
     String? release,
     bool? allSources,
+    String? groupId,
   }) => CatalogView(
     sort: sort ?? this.sort,
     release: release ?? this.release,
     allSources: allSources ?? this.allSources,
+    groupId: groupId ?? this.groupId,
   );
 
   Map<String, dynamic> toJson() => {
     'sort': sort.name,
     'release': release,
     'allSources': allSources,
+    'groupId': groupId,
   };
 
   factory CatalogView.fromJson(Map<String, dynamic> value) => CatalogView(
@@ -48,6 +61,7 @@ class CatalogView {
         ? value['release'] as String
         : '',
     allSources: value['allSources'] == true,
+    groupId: (value['groupId'] as String? ?? '').trim(),
   );
 }
 

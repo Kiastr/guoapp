@@ -49,6 +49,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _debounce;
   late SourceSite _source;
   bool _allSources = false;
+
+  /// [+158] 用户在组选择器里选中的分组 id（多源分组聚合展示）。
+  ///
+  /// 必须是内存态而不是直接读 [LocalStore.catalogView]：切组时 setCatalogSource
+  /// 是异步落盘的，setState 之后的第一帧还读不到新值，目录就会按「旧分组」
+  /// 去加载（表现为点多源分组却只请求了组内首个源）。与 [_allSources] 同一
+  /// 套路：先 setState 生效，再异步持久化供重建 / 重启恢复。
+  String _selectedGroupId = '';
+
   List<Drama> _items = [];
 
   /// _items 的版本号：每次内容变化自增，_visible 的缓存据此失效。
@@ -115,12 +124,25 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 当前选中源对应的分组 id：收藏的运行时片源独占一组（组 id 即源 id，
   /// 与 SourceGroup.fromSources 的 favoriteIds 一致）；未收藏的按大组 /
   /// 内置源自身。「全部站源」为特殊组。
-  String get _groupIdOfSource =>
-      _allSources
-      ? 'all'
-      : (widget.store.isFavoriteSource(_source.id)
-            ? _source.id
-            : _source.groupId);
+  ///
+  /// [+158] 例外：用户在组选择器里点过多源分组时，分组 id 被显式记在
+  /// [_selectedGroupId]（并持久化到 [CatalogView.groupId]），直接用它——
+  /// 否则组内首个源若是收藏源（青空 / 韩小圈），分组会被反推成「源 id
+  /// 独占组」，点「动漫源集合」等于点「青空」。
+  /// 当前源不在那个组里时（用户后来切到了组外的源）自动失效。
+  String get _groupIdOfSource {
+    if (_allSources) return 'all';
+    final selected = _selectedGroupId;
+    if (selected.isNotEmpty) {
+      final group = _sourceGroups.where((g) => g.id == selected).firstOrNull;
+      if (group != null && group.sources.any((s) => s.id == _source.id)) {
+        return selected;
+      }
+    }
+    return widget.store.isFavoriteSource(_source.id)
+        ? _source.id
+        : _source.groupId;
+  }
 
   SourceGroup get _group {
     final id = _groupIdOfSource;
@@ -309,9 +331,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _changeGroup(SourceGroup group) {
-    if (_group.id != group.id) {
-      _changeSource(group.sources.first, allSources: group.id == 'all');
-    }
+    if (_group.id == group.id) return;
+    // [+158] 多源分组按整组聚合展示：目录同时请求组内每个源，标题保持组名
+    // （与「全部站源」同机制，先回来的源先渲染）。必须把组 id 记下来交给
+    // [CatalogView.groupId]，否则分组会被「当前源」反推掉——点「动漫源集合」
+    // 会落到组内首个源青空，而青空是收藏源，于是整页变成「青空」。
+    //
+    // 黄果组除外：它的三个源是同一站点的不同后端（视频 / AI / 旧版），
+    // 聚合会让同一部剧重复出现，保持原行为（落到组内首个源）。
+    final aggregate =
+        group.id != 'all' &&
+        group.id != 'huangguo' &&
+        group.sources.length > 1;
+    _changeSource(
+      group.sources.first,
+      allSources: group.id == 'all',
+      groupId: aggregate ? group.id : '',
+    );
   }
 
   void _changeCategory(String category) {
@@ -481,6 +517,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _scroll.addListener(_onCatalogScroll);
     _source = SourceSite.byId(widget.store.source);
     _allSources = widget.store.catalogView.allSources;
+    // [+158] 上次选中的分组（多源分组聚合展示）从持久化偏好里恢复。
+    _selectedGroupId = widget.store.catalogView.groupId;
     _sourceSignature = widget.store.sources.map((site) => site.id).join(',');
     _browser = CatalogBrowser(
       widget.repository,
@@ -644,8 +682,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _changeSource(SourceSite source, {bool allSources = false}) {
-    if (_source.id == source.id && _allSources == allSources) {
+  /// [groupId] 见 [_changeGroup]：多源分组传组 id 让首页按整组聚合，
+  /// 单源分组 / 全部站源传空串回到「按当前源反推」；不传表示保持现状。
+  void _changeSource(
+    SourceSite source, {
+    bool allSources = false,
+    String? groupId,
+  }) {
+    final nextGroupId = groupId ?? _selectedGroupId;
+    if (_source.id == source.id &&
+        _allSources == allSources &&
+        nextGroupId == _selectedGroupId) {
       return;
     }
     _debounce?.cancel();
@@ -656,6 +703,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedDramas.clear();
       _source = source;
       _allSources = allSources;
+      _selectedGroupId = nextGroupId;
       _items = [];
       _itemsRevision++;
       _hasMore = true;
@@ -665,7 +713,11 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(
       saveUserChange(
         context,
-        () => widget.store.setCatalogSource(source.id, allSources: allSources),
+        () => widget.store.setCatalogSource(
+          source.id,
+          allSources: allSources,
+          groupId: nextGroupId,
+        ),
       ),
     );
     if (_scroll.hasClients) {

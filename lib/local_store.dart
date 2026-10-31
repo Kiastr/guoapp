@@ -737,7 +737,14 @@ class LocalStore extends ChangeNotifier {
   Future<void> setCatalogView(CatalogView value) =>
       _setting(_key('catalogView'), jsonEncode(value.toJson()));
 
-  Future<void> setCatalogSource(String source, {required bool allSources}) {
+  /// [groupId] 为 +158 的「首页选中的分组」：多源分组被点击时传入组 id，
+  /// 让目录按整组聚合展示；传空串回到「按当前源反推分组」；不传（null）
+  /// 表示保持现状（单纯的排序 / 筛选变更不该把分组选择清掉）。
+  Future<void> setCatalogSource(
+    String source, {
+    required bool allSources,
+    String? groupId,
+  }) {
     final epoch = _epoch;
     return _queue(() async {
       if (!allowsSource(source) || epoch != _epoch) {
@@ -746,7 +753,7 @@ class LocalStore extends ChangeNotifier {
       await _commit({
         _key('source'): source,
         _key('catalogView'): jsonEncode(
-          catalogView.copyWith(allSources: allSources).toJson(),
+          catalogView.copyWith(allSources: allSources, groupId: groupId).toJson(),
         ),
       });
       _notify();

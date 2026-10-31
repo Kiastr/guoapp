@@ -1061,21 +1061,31 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   /// type 0/4 解析：用内置 WebView 打开播放页，截获媒体请求后把章节地址
   /// 替换成直链，Go 侧就会按直链播放（解析只对非直链生效，不会二次解析）。
+  ///
+  /// [+158] Kazumi 规则源也走这条路径：xfdmnext 这类规则的分集值是「分集
+  /// 标识」，Go 侧按 episodePage 拼出来的是**播放页**而不是直链（静态抓
+  /// 不到地址，页面是 SPA），必须靠 WebView 嗅探。它不属于 LibreTV 解析
+  /// 体系，所以不看 [_webViewParse]，只看地址本身是不是直链。
   Future<Episode> _prepareWebViewEpisode(Episode episode) async {
     await _webViewParseReady;
     final parse = _webViewParse;
-    if (parse == null) return episode;
-    if (!(episode.raw['source'] as String? ?? '').startsWith('libretv:')) {
-      return episode;
-    }
+    final source = episode.raw['source'] as String? ?? '';
+    final isLibretv = source.startsWith('libretv:');
+    final isKazumi = source.startsWith('kazumi:');
+    // LibreTV 源：解析方式由用户在站源管理里选，只有 type 0/4 才需要嗅探。
+    // Kazumi 源：不看解析配置，非直链就嗅探。其余源不处理。
+    if (isLibretv ? parse == null : !isKazumi) return episode;
     final address = (episode.raw['videoUrl'] as String? ?? '').trim();
     if (address.isEmpty || WebViewSniffer.looksLikeMediaUrl(address)) {
       return episode;
     }
     if (!WebViewSniffer.supported) {
       throw AppFailure(
-        '「${parse.name}」需要 WebView 嗅探，当前平台不支持；'
-        '请在站源管理改用「直链/嗅探」或本地解析脚本。',
+        isKazumi
+            ? '该 Kazumi 规则源的播放地址需要 WebView 嗅探，当前平台不支持；'
+                '换一条直链规则（如 giriGiriLove）即可正常播放。'
+            : '「${parse!.name}」需要 WebView 嗅探，当前平台不支持；'
+                '请在站源管理改用「直链/嗅探」或本地解析脚本。',
       );
     }
     if (mounted && !_closed) {
