@@ -31,9 +31,9 @@ class SourceSite {
   /// （见 [SourceGroup.fromSources] 的 favoriteIds）。
   String get groupId => switch (id) {
     'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
-    // [+155] 动漫站源：青空 + 所有 Kazumi 规则源。
+    // [+155] 动漫源集合：青空 + 所有 Kazumi 规则源。
     'sorani' => 'anime',
-    // [+155] 预制源组合：韩小圈 + 鬼片。
+    // [+155] 预制源集合：韩小圈 + 鬼片。
     'hanxiaoquan' || 'guipian' => 'preset',
     _ =>
       isRuntime
@@ -46,10 +46,10 @@ class SourceSite {
   };
   String get groupName => switch (groupId) {
     'huangguo' => '黄果',
-    'libretv' => 'LibreTV 片源',
-    'drpy' => 'drpy 脚本源',
-    'anime' => '动漫站源',
-    'preset' => '预制源组合',
+    'libretv' => '扩展片源集合',
+    'drpy' => 'drpy 脚本源集合',
+    'anime' => '动漫源集合',
+    'preset' => '预制源集合',
     _ => name,
   };
   String get entryName => switch (id) {
@@ -75,12 +75,12 @@ class SourceSite {
   /// 出厂默认收藏的内置站源（+155）。
   ///
   /// 收藏的源在首页独占一组、与红果同级；取消收藏后回落到所属分组的子级
-  /// （青空 → 动漫站源，韩小圈 → 预制源组合，鬼片默认就在预制源组合里）。
+  /// （青空 → 动漫源集合，韩小圈 → 预制源集合，鬼片默认就在预制源集合里）。
   /// 这里只是出厂偏好：用户一旦在本机改过某个源的收藏状态，就以用户的
   /// 设置为准（见 [LocalStore.favoriteSourceIds]）。
   static const defaultFavoriteSourceIds = <String>{
-    'sorani', // 青空 · 动漫站源
-    'hanxiaoquan', // 韩小圈 · 预制源组合
+    'sorani', // 青空 · 动漫源集合
+    'hanxiaoquan', // 韩小圈 · 预制源集合
   };
 
   /// 敏感站源：默认隐藏，输入解锁密码后才显示。
@@ -175,17 +175,25 @@ class SourceGroup {
   }) {
     final groups = <String, List<SourceSite>>{};
     for (final source in sources) {
-      // 收藏的运行时片源（libretv:/drpy:）不并入 LibreTV / drpy 大组，
-      // 独占一组、组名即源名，与红果等内置源同级出现在片源选择里。
+      // 收藏的片源（libretv: / drpy: / kazumi: 运行时源与青空、韩小圈等
+      // 内置源）不并入 LibreTV / 动漫源集合这类大组，独占一组、组名即源名，
+      // 与红果等内置源同级出现在片源选择里。
       final favorite = favoriteIds.contains(source.id);
-      final groupId = favorite ? source.id : source.groupId;
-      (groups[groupId] ??= []).add(source);
+      if (favorite) (groups[source.id] ??= []).add(source);
+      // [+156] 收藏的源在所属分组里同时保留一份：既能在首页与红果同级单选，
+      // 也能在「动漫源集合」里和同族源一起选。分组 id 与源 id 相同的内置源
+      // （红果 / 帝果等）只加一次，否则同一组里会出现两份。
+      if (!favorite || source.groupId != source.id) {
+        (groups[source.groupId] ??= []).add(source);
+      }
     }
     return [
       for (final group in groups.entries)
         SourceGroup(
           group.key,
-          favoriteIds.contains(group.value.first.id)
+          // 组名只看组 id 是否是「收藏独占组」：不能按首个成员判断，否则
+          // 「动漫源集合」会因为青空是收藏源而被误命名为「青空」。
+          favoriteIds.contains(group.key)
               ? group.value.first.name
               : group.value.first.groupName,
           group.value,

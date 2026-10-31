@@ -492,6 +492,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(repository.libretvImports, ['https://new.test/provide/vod']);
     expect(find.textContaining('新增 1 个片源 · 已验证 1 个'), findsOneWidget);
+    // [+156] 多源分组（扩展片源集合）在源多于 1 个时折叠成一层子级，要展开
+    // 才能看到源卡片。只在源卡片确实缺失时点：分组可能已被前面的操作展开，
+    // 再点一次反而会收起。
+    if (find.text('新采集站').evaluate().length < 2) {
+      final libretvGroup = find.text('扩展片源集合');
+      if (libretvGroup.evaluate().isNotEmpty) {
+        await tester.ensureVisible(libretvGroup);
+        await tester.tap(libretvGroup);
+        await tester.pumpAndSettle();
+      }
+    }
     // 卡片列表与源卡片各出现一次名称。
     expect(find.text('新采集站'), findsNWidgets(2));
     expect(find.text('已导入 2 个来源（2 片源 · 0 脚本）'), findsOneWidget);
@@ -604,6 +615,15 @@ void main() {
     await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
     expect(find.text('发现 drpy 脚本候选'), findsNothing);
+    // 同上：drpy 脚本源集合多于 1 个源时才折叠，同样只在缺失时点开。
+    if (find.text('演示脚本源').evaluate().length < 2) {
+      final drpyGroup = find.text('drpy 脚本源集合');
+      if (drpyGroup.evaluate().isNotEmpty) {
+        await tester.ensureVisible(drpyGroup);
+        await tester.tap(drpyGroup);
+        await tester.pumpAndSettle();
+      }
+    }
     expect(find.text('演示脚本源'), findsNWidgets(2));
     expect(SourceSite.isKnown('drpy:rule123'), isTrue);
     await tester.pumpWidget(const SizedBox.shrink());

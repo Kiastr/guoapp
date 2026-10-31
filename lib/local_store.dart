@@ -175,13 +175,16 @@ class LocalStore extends ChangeNotifier {
       !locked &&
       SourceSite.isAvailable(source) &&
       profile.allows(source) &&
-      // 用户导入的 LibreTV 片源与 drpy 脚本源视同内置主站源：导入即授权，
-      // 不占用敏感站源解锁。
+      // 用户导入的 LibreTV 片源、drpy 脚本源与 Kazumi 规则源视同内置主
+      // 站源：导入即授权，不占用敏感站源解锁。
+      // [+156] `kazumi:` 原先漏在白名单外，出厂内置的两条 Kazumi 规则源
+      // 被这一条挡掉，首页 / 站源管理页的「动漫源集合」因此是空的。
       (_gateOff ||
           _sourcesUnlocked ||
           SourceSite.isPrimary(source) ||
           source.startsWith('libretv:') ||
-          source.startsWith('drpy:')) &&
+          source.startsWith('drpy:') ||
+          source.startsWith('kazumi:')) &&
       // 被用户隐藏的运行时片源与黄果等隐藏源同逻辑：一律不可见。
       !(_hiddenStamps[source]?.on == true);
   List<SourceSite> get sources => SourceSite.visibleValues(
@@ -289,8 +292,8 @@ class LocalStore extends ChangeNotifier {
 
   /// 收藏 / 取消收藏片源。
   ///
-  /// 收藏后首页把它从大组（LibreTV / drpy / 动漫站源 / 预制源组合）里拆
-  /// 出来独占一组，与红果同级；取消收藏则回落到所属分组的子级。
+  /// 收藏后首页额外给它一组（组名即源名），与红果同级；[+156] 它在所属
+  /// 大组里仍保留一份，取消收藏则只剩大组入口。
   /// [+155] 内置源（青空 / 韩小圈 / 鬼片 / Kazumi 规则源）同样可收藏：
   /// 出厂默认收藏就是用「没有 explicit 记录」表达的，只有落到这里的 toggle
   /// 才能把它改成用户意愿。

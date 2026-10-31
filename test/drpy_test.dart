@@ -84,7 +84,7 @@ void main() {
       expect(registered.description, 'drpy 脚本 · 团团影院');
       expect(registered.isRuntime, isTrue);
       expect(registered.groupId, 'drpy');
-      expect(registered.groupName, 'drpy 脚本源');
+      expect(registered.groupName, 'drpy 脚本源集合');
     });
 
     test('import result parses key and name', () {

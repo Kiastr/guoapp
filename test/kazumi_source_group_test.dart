@@ -7,9 +7,10 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 
 // Kazumi 规则源（+155）与站源重分组：
 // - Kazumi 规则源是运行时源（kazumi:<key>），默认并入「动漫站源」；
-// - 内置源按主题合并：青空 + Kazumi → 动漫站源，韩小圈 + 鬼片 → 预制源组合；
-// - 出厂默认收藏青空与韩小圈：它们在首页独占一组、与红果同级；
-//   取消收藏后回落到各自分组的子级；用户没动过的源才用出厂默认值。
+// - 内置源按主题合并：青空 + Kazumi → 动漫源集合，韩小圈 + 鬼片 → 预制源集合；
+// - 出厂默认收藏青空与韩小圈：它们在首页独占一组、与红果同级，同时仍留在
+//   各自分组里（+156：既能单独选、也能在组里和同族源一起选）；
+//   取消收藏后只剩分组入口；用户没动过的源才用出厂默认值。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -56,20 +57,20 @@ void main() {
     return store;
   }
 
-  test('Kazumi 规则源归入动漫站源：未收藏时与青空同一组', () {
+  test('Kazumi 规则源归入动漫源集合：未收藏时与青空同一组', () {
     final groups = SourceGroup.fromSources(testSources());
     final anime = groups.firstWhere((group) => group.id == 'anime');
-    expect(anime.name, '动漫站源');
+    expect(anime.name, '动漫源集合');
     expect(
       anime.sources.map((site) => site.id),
       containsAll(['sorani', 'kazumi:xfdmnext', 'kazumi:giriGiriLove']),
     );
   });
 
-  test('预制源组合：韩小圈与鬼片同组，未收藏时整组是一个入口', () {
+  test('预制源集合：韩小圈与鬼片同组，未收藏时整组是一个入口', () {
     final groups = SourceGroup.fromSources(testSources());
     final preset = groups.firstWhere((group) => group.id == 'preset');
-    expect(preset.name, '预制源组合');
+    expect(preset.name, '预制源集合');
     expect(
       preset.sources.map((site) => site.id),
       containsAll(['hanxiaoquan', 'guipian']),
@@ -89,19 +90,24 @@ void main() {
     final ids = groups.map((group) => group.id).toList();
     expect(ids, contains('sorani'));
     expect(ids, contains('hanxiaoquan'));
-    // 青空收藏后不再留在动漫站源组里，该组只剩 Kazumi 规则源。
+    // [+156] 收藏后仍留在所属分组里：动漫源集合 = 青空 + Kazumi 规则源，
+    // 既能单独选「青空」，也能在组里和同族源一起选。
     final anime = groups.firstWhere((group) => group.id == 'anime');
-    expect(anime.sources.map((site) => site.id), isNot(contains('sorani')));
+    expect(anime.name, '动漫源集合');
     expect(
-      anime.sources.every((site) => site.id.startsWith('kazumi:')),
-      isTrue,
+      anime.sources.map((site) => site.id),
+      containsAll(['sorani', 'kazumi:xfdmnext', 'kazumi:giriGiriLove']),
     );
-    // 韩小圈同理，预制源组合里只剩鬼片。
+    // 韩小圈同理，预制源集合 = 韩小圈 + 鬼片。
     final preset = groups.firstWhere((group) => group.id == 'preset');
-    expect(preset.sources.single.id, 'guipian');
+    expect(preset.name, '预制源集合');
+    expect(
+      preset.sources.map((site) => site.id),
+      containsAll(['hanxiaoquan', 'guipian']),
+    );
   });
 
-  test('取消收藏后回落到分组子级，且能再收藏回来', () async {
+  test('取消收藏后只剩分组入口，且能再收藏回来', () async {
     final platform = InMemorySharedPreferencesStore.withData({});
     final store = await createStore(platform);
     await store.toggleFavoriteSource('sorani');
@@ -140,7 +146,7 @@ void main() {
     expect(site.detailLabel, 'm3u8.example.test');
     expect(site.toSourceSite().isRuntime, isTrue);
     expect(site.toSourceSite().groupId, 'anime');
-    expect(site.toSourceSite().groupName, '动漫站源');
+    expect(site.toSourceSite().groupName, '动漫源集合');
     // 需要嗅探的规则在 UI 上要说明下载不可用。
     expect(const KazumiRuleSite(key: 'a', name: 'a', webview: true).hint,
         contains('不支持下载'));

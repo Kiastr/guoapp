@@ -282,9 +282,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
                       child: Text('当前用户没有可用站源'),
                     ),
                   for (final group in SourceGroup.fromSources(sources))
-                    // 多源分组（黄果 / 动漫站源 / 预制源组合 / LibreTV / drpy）
-                    // 折叠成一层子级：收藏的源已经独占一组在首页与红果同级，
-                    // 未收藏的留在这一层，首页片源选择不至于被撑爆。
+                    // 多源分组（黄果 / 动漫源集合 / 预制源集合 / 扩展片源
+                    // 集合 / drpy 脚本源集合）折叠成一层子级：收藏的源在首页
+                    // 额外独占一组与红果同级，这一层按主题合并，首页片源选择
+                    // 不至于被撑爆。
                     if (group.sources.length > 1)
                       Card(
                         clipBehavior: Clip.antiAlias,
@@ -1158,8 +1159,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final favorite = widget.store.isFavoriteSource(source.id);
     return Tooltip(
       message: favorite
-          ? '取消收藏「${source.name}」，首页回到「${source.groupName}」分组内'
-          : '收藏「${source.name}」，首页单独显示、与红果同级',
+          ? '取消收藏「${source.name}」：首页不再单独显示，只留在「${source.groupName}」里'
+          : '收藏「${source.name}」：首页单独显示、与红果同级（仍留在「${source.groupName}」里）',
       child: IconButton(
         key: ValueKey('favorite-${source.id}'),
         onPressed: () => _toggleFavoriteSource(source.id, source.name),

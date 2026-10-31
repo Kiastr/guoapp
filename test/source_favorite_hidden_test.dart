@@ -43,7 +43,7 @@ void main() {
     final plain = SourceGroup.fromSources(sources);
     final libretvGroup = plain.firstWhere((group) => group.id == 'libretv');
     expect(libretvGroup.sources.length, 1);
-    expect(libretvGroup.name, 'LibreTV 片源');
+    expect(libretvGroup.name, '扩展片源集合');
 
     final favorited = SourceGroup.fromSources(
       sources,
@@ -53,8 +53,11 @@ void main() {
     final own = favorited.firstWhere((group) => group.id == 'libretv:mihua');
     expect(own.name, '咪咕');
     expect(own.sources.single.id, 'libretv:mihua');
-    // LibreTV 大组不再包含被收藏的源（该组此时没有成员，直接消失）。
-    expect(favorited.where((group) => group.id == 'libretv'), isEmpty);
+    // [+156] 收藏的源在 LibreTV 大组里仍保留一份：既能单独选，也能和大组
+    // 里的同族源一起选。
+    final libretvFav = favorited.firstWhere((group) => group.id == 'libretv');
+    expect(libretvFav.name, '扩展片源集合');
+    expect(libretvFav.sources.map((site) => site.id), contains('libretv:mihua'));
     // drpy 未收藏，仍在 drpy 大组里。
     final drpyGroup = favorited.firstWhere((group) => group.id == 'drpy');
     expect(drpyGroup.sources.single.id, 'drpy:jianpian');
@@ -77,7 +80,8 @@ void main() {
       favoriteIds: restarted.favoriteSourceIds,
     );
     expect(groups.map((group) => group.id), contains('libretv:mihua'));
-    expect(groups.where((group) => group.id == 'libretv'), isEmpty);
+    // 大组里也仍有一份（+156）。
+    expect(groups.map((group) => group.id), contains('libretv'));
   });
 
   test('隐藏的片源与敏感源同逻辑：不可见、不允许，可恢复', () async {

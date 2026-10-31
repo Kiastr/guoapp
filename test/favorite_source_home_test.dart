@@ -8,8 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'fixtures.dart';
 
 // 收藏的运行时片源在首页独占一组后：
-// - 选中它只能看到该片源自己的分类与剧集（不再并入 LibreTV / drpy 大组）；
-// - 未收藏的同前缀源仍在大组里聚合，不受影响。
+// - 选中它只能看到该片源自己的分类与剧集（不再落到 LibreTV / drpy 大组）；
+// - 同前缀的未收藏源仍在大组里聚合，不受影响；
+// - [+156] 收藏的源在所属大组里也保留一份，切到大组时它与同族源一起聚合。
 //
 // 回归背景：_group 曾用 SourceSite.groupId 匹配分组，收藏源的 groupId
 // 仍是 'libretv' 大组，导致选中收藏组实际落到大组上，显示聚合主页。
@@ -80,7 +81,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('切换到 LibreTV 大组仍聚合全部未收藏片源', (tester) async {
+  testWidgets('切换到扩展片源集合落在组内首个源（收藏源仍在大组内）', (tester) async {
     tester.view.physicalSize = const Size(430, 1200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -90,7 +91,18 @@ void main() {
     final store = LocalStore(await SharedPreferences.getInstance());
     addTearDown(store.dispose);
     await store.toggleFavoriteSource('libretv:mihua');
-    await store.setCatalogSource('libretv:mihua', allSources: false);
+    // 先停在红果上，再切到扩展片源集合，才能看到切换效果（停在组内任一源
+    // 上时当前组就是该大组，点它不会有反应）。
+    await store.setCatalogSource('hongguo', allSources: false);
+
+    // [+156] 收藏的源在所属大组里仍保留一份，且排在组内首位。
+    expect(
+      SourceGroup.fromSources(
+        store.sources,
+        favoriteIds: store.favoriteSourceIds,
+      ).firstWhere((group) => group.id == 'libretv').sources.map((s) => s.id),
+      containsAll(['libretv:mihua', 'libretv:other']),
+    );
 
     final repository = _FavoriteHomeRepository();
     await tester.pumpWidget(
@@ -101,15 +113,14 @@ void main() {
     await tester.pumpAndSettle();
     repository.requests.clear();
 
-    // 组选择器切到 LibreTV 大组：咪咕已收藏不在组内，只剩其它采集站。
+    // 组选择器切到扩展片源集合：落在组内第一个源（咪咕）上。
     await tester.tap(find.byKey(const ValueKey('source-switch')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('LibreTV 片源').last);
+    await tester.tap(find.text('扩展片源集合').last);
     await tester.pumpAndSettle();
 
-    expect(repository.requests, ['libretv:other']);
-    expect(find.text('来自 libretv:other'), findsOneWidget);
-    expect(find.text('来自 libretv:mihua'), findsNothing);
+    expect(repository.requests, ['libretv:mihua']);
+    expect(find.text('来自 libretv:mihua'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
