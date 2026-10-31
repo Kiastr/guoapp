@@ -44,6 +44,20 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const _recommendationCategory = 'app:recommendations';
+
+  /// [+159] 「重载分组」的判定阈值。
+  ///
+  /// 用户加了十几个站源之后，「所有站源」「扩展站源集合」这类分组一次要打
+  /// 几十个并发请求，首次进入时列表可能好几秒是空的——只靠顶部那个 2px 的
+  /// 细进度条完全看不出来在干活。这里把源数达到阈值的分组当成重载分组，
+  /// 在内容区盖一层转圈 + 进度提示（详见 [_loadOverlay]）。
+  static const _heavySourceThreshold = 10;
+
+  /// [+159] 当前这轮目录加载的进度（已结束源数 / 待请求源数），由
+  /// [CatalogBrowser.load] 的 onProgress 回传。仅用于重载分组的加载提示。
+  int _loadDone = 0;
+  int _loadTotal = 0;
+
   final _search = TextEditingController();
   final _scroll = ScrollController();
   Timer? _debounce;
@@ -155,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
           [_source],
         );
   }
+
   bool get _onlineSearch => _group.sources.any((source) => source.onlineSearch);
   bool get _searchSuggestions =>
       _group.sources.any((source) => source.searchSuggestions);
@@ -246,6 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _hasMore = false;
         _loading = false;
         _loadingMore = false;
+        _stopHeavyNotice();
       });
       return;
     }
@@ -340,9 +356,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // 黄果组除外：它的三个源是同一站点的不同后端（视频 / AI / 旧版），
     // 聚合会让同一部剧重复出现，保持原行为（落到组内首个源）。
     final aggregate =
-        group.id != 'all' &&
-        group.id != 'huangguo' &&
-        group.sources.length > 1;
+        group.id != 'all' && group.id != 'huangguo' && group.sources.length > 1;
     _changeSource(
       group.sources.first,
       allSources: group.id == 'all',
@@ -523,11 +537,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _browser = CatalogBrowser(
       widget.repository,
       health: widget.store.sourceHealth,
-      onHealth: (source, ok, elapsedMs) => widget.store.noteSourceHealth(
-        source,
-        ok: ok,
-        elapsedMs: elapsedMs,
-      ),
+      onHealth: (source, ok, elapsedMs) =>
+          widget.store.noteSourceHealth(source, ok: ok, elapsedMs: elapsedMs),
     );
     _updater = LibraryUpdater(
       widget.repository,
@@ -557,6 +568,8 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(_browser.cancel());
     unawaited(widget.repository.cancelSuggestions());
     _debounce?.cancel();
+    _heavyNoticeTimer?.cancel();
+    _heavyNoticeHideTimer?.cancel();
     _search.dispose();
     _scroll.removeListener(_onCatalogScroll);
     _scroll.dispose();
@@ -626,6 +639,17 @@ class _HomeScreenState extends State<HomeScreen> {
         _loading = true;
         _loadingMore = false;
         if (query != _submittedQuery) _items = [];
+        // 「已响应 x / N」按本轮实际要请求的源数起步；加载器随后会用真实
+        // 的请求集（扣掉健康度跳过的死源）覆盖它。
+        _loadDone = 0;
+        _loadTotal = group.sources.length;
+        if (_heavyGroup) {
+          // 列表还空着（首次进组 / 刚换组）就立刻给反馈；已经有内容时延迟
+          // 300ms 再出现——秒开的刷新不该闪一下遮罩。
+          _startHeavyNotice(immediate: _items.isEmpty);
+        } else {
+          _stopHeavyNotice();
+        }
       }
     });
     void accept(CatalogPage result, {bool cached = false}) {
@@ -638,6 +662,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _loading = cached && !result.fresh;
         _loadingMore = false;
         _error = result.warning.isEmpty ? null : result.warning;
+        // 只在这一轮真的结束（不是"先读缓存、网络还在跑"）时才收起提示：
+        // 缓存阶段通常几十毫秒，卡顿是后面几十个网络请求造成的。
+        if (!_loading) _stopHeavyNotice();
       });
       unawaited(
         saveUserChange(context, () => widget.store.refreshDramas(result.items)),
@@ -654,6 +681,14 @@ class _HomeScreenState extends State<HomeScreen> {
         force: force,
         cacheOnly: cacheOnly,
         onCached: (result) => accept(result, cached: true),
+        onProgress: (done, total) {
+          if (!mounted || generation != _generation) return;
+          if (done == _loadDone && total == _loadTotal) return;
+          setState(() {
+            _loadDone = done;
+            _loadTotal = total;
+          });
+        },
         onPartial: (result) {
           // 流式刷新：某个源先回来了就先把它渲染出来，其余源陆续补齐。
           //
@@ -678,6 +713,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _loading = false;
         _loadingMore = false;
         _error = error.toString();
+        _stopHeavyNotice();
       });
     }
   }
@@ -917,6 +953,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _loading = false;
       _loadingMore = false;
+      _stopHeavyNotice();
     });
   }
 
@@ -1257,7 +1294,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                 title: '暂无可用站源',
                                 message: '请联系管理员为当前用户开放站源。',
                               )
-                            : _catalog(selectionInBody: desktop || television)
+                            : _catalogWithLoadFeedback(
+                                selectionInBody: desktop || television,
+                              )
                       : _tab == 3
                       ? DownloadsScreen(
                           repository: widget.repository,
@@ -1335,7 +1374,146 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
-  Widget _catalog({required bool selectionInBody}) {
+  /// [+159] 重载分组的加载提示——有时间上限，绝不一直挡到加载结束。
+  ///
+  /// 「所有站源」和源数 ≥ [_heavySourceThreshold] 的集合一次要打几十个请求。
+  /// 实测难熬的只有**开头十几秒**：第一批内容很快就能出来，但列表在持续
+  /// 流式追加，这段掉帧最明显；之后只是慢源陆续回来，界面已经能正常用。
+  /// 所以提示带 [_heavyNoticeLimit] 上限，到点自动收起——几十个源的组可能
+  /// 拖到一分钟才收尾，一直挡着等于不让用户看剧。
+  ///
+  /// 两档形态：
+  /// - 列表还空着 → 立刻出现大半屏遮罩，明确告诉用户在等什么；
+  /// - 列表已经有内容（通常进组一两秒后就出剧了）→ 300ms 后才出现，
+  ///   遮罩更透，既说明"现在卡是正常的"，也能看见底下已经加载的内容。
+  ///
+  /// 非重载分组保持原样：一两个源的组本来就是秒开，盖提示反而像卡住了。
+  static const _heavyNoticeDelay = Duration(milliseconds: 300);
+
+  /// 提示最长存活时间。用户反馈卡顿集中在前十几秒，取 12 秒；到点无论
+  /// 是否还有慢源在返回，都把界面还给列表。
+  static const _heavyNoticeLimit = Duration(seconds: 12);
+
+  Timer? _heavyNoticeTimer;
+  Timer? _heavyNoticeHideTimer;
+  bool _heavyNotice = false;
+
+  bool get _heavyGroup =>
+      _allSources || _group.sources.length >= _heavySourceThreshold;
+
+  void _startHeavyNotice({required bool immediate}) {
+    _heavyNoticeTimer?.cancel();
+    _heavyNoticeHideTimer?.cancel();
+    if (immediate) {
+      _heavyNotice = true;
+      _scheduleHeavyNoticeHide();
+      return;
+    }
+    _heavyNoticeTimer = Timer(_heavyNoticeDelay, () {
+      if (!mounted) return;
+      setState(() => _heavyNotice = true);
+      _scheduleHeavyNoticeHide();
+    });
+  }
+
+  void _scheduleHeavyNoticeHide() {
+    _heavyNoticeHideTimer?.cancel();
+    _heavyNoticeHideTimer = Timer(_heavyNoticeLimit, () {
+      if (!mounted) return;
+      setState(() => _heavyNotice = false);
+    });
+  }
+
+  void _stopHeavyNotice() {
+    _heavyNoticeTimer?.cancel();
+    _heavyNoticeHideTimer?.cancel();
+    _heavyNotice = false;
+  }
+
+  Widget _catalogWithLoadFeedback({required bool selectionInBody}) {
+    final overlay = _heavyNotice && _loading;
+    final catalog = _catalog(
+      selectionInBody: selectionInBody,
+      hideEmptyLoading: overlay,
+    );
+    if (!overlay) return catalog;
+    return Stack(fit: StackFit.expand, children: [catalog, _loadOverlay()]);
+  }
+
+  Widget _loadOverlay() {
+    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final total = _loadTotal;
+    final done = total > 0 ? _loadDone.clamp(0, total) : _loadDone;
+    final hasItems = _items.isNotEmpty;
+    return AbsorbPointer(
+      child: ColoredBox(
+        key: const ValueKey('heavy-load-overlay'),
+        // 用 surface 而不是纯黑：Material 3 的浅色/深色主题都能自然融合。
+        // 已有内容时更透（0.72），让用户看得见底下已经加载出来的剧。
+        color: scheme.surface.withValues(alpha: hasItems ? 0.72 : 0.94),
+        child: Center(
+          child: Material(
+            color: hasItems ? scheme.surfaceContainerHigh : Colors.transparent,
+            elevation: hasItems ? 3 : 0,
+            borderRadius: BorderRadius.circular(24),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: hasItems ? 28 : 0,
+                vertical: hasItems ? 24 : 0,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: CircularProgressIndicator(
+                      // 第一个源回来之前先转不定长圈；有进度后换成确定进度，
+                      // 让「在动」这件事有具体数字可看。
+                      value: total > 0 && done > 0 ? done / total : null,
+                      strokeWidth: 4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    _allSources ? '正在加载全部站源' : '正在加载${_group.name}',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    total > 0 ? '已响应 $done / $total 个站源' : '正在并发请求站源…',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (hasItems) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '加载高峰期可能略卡，稍后自动收起',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _catalog({
+    required bool selectionInBody,
+    bool hideEmptyLoading = false,
+  }) {
     final items = _visible;
     final television = AppLayout.isTelevision(context);
     return Column(
@@ -1436,16 +1614,20 @@ class _HomeScreenState extends State<HomeScreen> {
             child: GestureDetector(
               onHorizontalDragEnd: television ? null : _swipeCategory,
               child: _loading && _items.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 18),
-                          Text('正在加载剧集'),
-                        ],
-                      ),
-                    )
+                  ? hideEmptyLoading
+                        // 重载分组有自己的遮罩，这里再渲染一份「正在加载剧集」
+                        // 会从半透明遮罩底下透出来重影。
+                        ? const SizedBox.expand()
+                        : const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 18),
+                                Text('正在加载剧集'),
+                              ],
+                            ),
+                          )
                   : _items.isEmpty && _error != null
                   ? StatusPanel(
                       title: '暂时无法加载',

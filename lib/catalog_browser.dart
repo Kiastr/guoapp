@@ -52,11 +52,8 @@ class _CatalogSession {
 }
 
 class CatalogBrowser {
-  CatalogBrowser(
-    this.repository, {
-    SourceHealthBook? health,
-    this.onHealth,
-  }) : health = health ?? SourceHealthBook();
+  CatalogBrowser(this.repository, {SourceHealthBook? health, this.onHealth})
+    : health = health ?? SourceHealthBook();
 
   final AppRepository repository;
 
@@ -107,7 +104,11 @@ class CatalogBrowser {
     return future;
   }
 
-  void _recordHealth(String source, {required bool ok, required int elapsedMs}) {
+  void _recordHealth(
+    String source, {
+    required bool ok,
+    required int elapsedMs,
+  }) {
     health.record(source, ok: ok, elapsedMs: elapsedMs);
     onHealth?.call(source, ok, elapsedMs);
   }
@@ -309,6 +310,11 @@ class CatalogBrowser {
     // 场景先出内容、再逐步补齐，而不是等所有源都回来才显示。
     // 内部按 [_partialInterval] 节流，但第一个源永远立即回调。
     void Function(CatalogPage)? onPartial,
+    // [+159] 网络阶段的完成进度（已结束 / 待请求），供首页在「所有站源」
+    // 这种几十个源的重载分组上展示转圈 / 进度。`total` 是**实际要请求的
+    // 源数**（已排除健康度跳过 / 续页里没有下一页的源由 finished 照常计数，
+    // 所以不会再出现「永远差几个」的进度条）。
+    void Function(int done, int total)? onProgress,
   }) async {
     if (cacheOnly && (more || force || query.trim().isNotEmpty)) {
       throw AppFailure('缓存读取不能同时请求搜索或续页');
@@ -449,59 +455,71 @@ class CatalogBrowser {
       if (cached.fresh && cached.items.isNotEmpty) return cached;
     }
 
-    await _each(sourceOrder, onProgress: emitPartial, (source) async {
-      if (generation != session.generation) return;
-      final entry = session.entries[source]!;
-      if (more && !entry.hasMore) return;
-      if (useCache && !force && !more && entry.fresh) return;
-      final page = more ? entry.nextPage : 1;
-      final started = DateTime.now();
-      try {
-        final result = await repository.catalog(
-          source,
-          category: requests[source]!,
-          query: query,
-          page: page,
-          force: force,
-        );
-        _recordHealth(
-          source,
-          ok: result.warning.isEmpty,
-          elapsedMs: DateTime.now().difference(started).inMilliseconds,
-        );
+    // [+159] 进度计数只统计网络阶段：上面的缓存阶段是本地读盘，几十个源也
+    // 很快，拿它当进度反而会让「已响应 x/N」先冲到 N 再回落到 0。
+    final total = sourceOrder.length;
+    var finished = 0;
+    await _each(
+      sourceOrder,
+      onProgress: () {
+        finished++;
+        onProgress?.call(finished, total);
+        emitPartial();
+      },
+      (source) async {
         if (generation != session.generation) return;
-        final items = <String, Drama>{
-          if (more)
-            for (final item in entry.items) item.id: item,
-          for (final item in result.items) item.id: item,
-        };
-        entry.items = items.values.toList();
-        _arrive(session, source);
-        entry.page = result.page;
-        entry.nextPage = result.warning.isEmpty ? result.page + 1 : page;
-        entry.hasMore =
-            (query.isEmpty || SourceSite.byId(source).pagedSearch) &&
-            (result.hasMore || result.warning.isNotEmpty);
-        entry.fresh = result.fresh && result.warning.isEmpty;
-        if (query.isEmpty) _remember(source, result.items);
-        if (result.warning.isNotEmpty) {
-          failures[source] = result.warning;
-        } else {
-          failures.remove(source);
+        final entry = session.entries[source]!;
+        if (more && !entry.hasMore) return;
+        if (useCache && !force && !more && entry.fresh) return;
+        final page = more ? entry.nextPage : 1;
+        final started = DateTime.now();
+        try {
+          final result = await repository.catalog(
+            source,
+            category: requests[source]!,
+            query: query,
+            page: page,
+            force: force,
+          );
+          _recordHealth(
+            source,
+            ok: result.warning.isEmpty,
+            elapsedMs: DateTime.now().difference(started).inMilliseconds,
+          );
+          if (generation != session.generation) return;
+          final items = <String, Drama>{
+            if (more)
+              for (final item in entry.items) item.id: item,
+            for (final item in result.items) item.id: item,
+          };
+          entry.items = items.values.toList();
+          _arrive(session, source);
+          entry.page = result.page;
+          entry.nextPage = result.warning.isEmpty ? result.page + 1 : page;
+          entry.hasMore =
+              (query.isEmpty || SourceSite.byId(source).pagedSearch) &&
+              (result.hasMore || result.warning.isNotEmpty);
+          entry.fresh = result.fresh && result.warning.isEmpty;
+          if (query.isEmpty) _remember(source, result.items);
+          if (result.warning.isNotEmpty) {
+            failures[source] = result.warning;
+          } else {
+            failures.remove(source);
+          }
+        } catch (error) {
+          _recordHealth(
+            source,
+            ok: false,
+            elapsedMs: DateTime.now().difference(started).inMilliseconds,
+          );
+          if (generation != session.generation) return;
+          entry.nextPage = page;
+          entry.hasMore = query.isEmpty || SourceSite.byId(source).pagedSearch;
+          entry.fresh = false;
+          failures[source] = error.toString();
         }
-      } catch (error) {
-        _recordHealth(
-          source,
-          ok: false,
-          elapsedMs: DateTime.now().difference(started).inMilliseconds,
-        );
-        if (generation != session.generation) return;
-        entry.nextPage = page;
-        entry.hasMore = query.isEmpty || SourceSite.byId(source).pagedSearch;
-        entry.fresh = false;
-        failures[source] = error.toString();
-      }
-    });
+      },
+    );
     final result = snapshot();
     if (result.items.isEmpty && failures.isNotEmpty) {
       throw AppFailure(result.warning);
