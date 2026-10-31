@@ -300,9 +300,13 @@ class LocalStore extends ChangeNotifier {
       throw StateError('片源无效');
     }
     final next = Map.of(_favoriteStamps);
+    // 出厂默认收藏的源（青空 / 韩小圈）本机没有记录，取反要以「当前生效
+    // 状态」为准：直接对 _favoriteStamps 取反会把第一次取消点成「收藏」，
+    // 用户会觉得按钮没反应。
+    final current = next[source]?.on ?? favoriteSourceIds.contains(source);
     next[source] = _SourceStamp(
       at: DateTime.now().millisecondsSinceEpoch,
-      on: next[source]?.on != true,
+      on: !current,
     );
     await _commit({
       _key('favoriteSources'): _encodeSourceStamps(next),

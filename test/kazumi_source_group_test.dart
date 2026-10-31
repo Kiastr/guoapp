@@ -32,6 +32,16 @@ void main() {
     SourceSite.setRuntimeSources(const []);
   });
 
+  /// 测试用的站源全集。
+  ///
+  /// 不用 [SourceSite.values]：它受 `ALL_SOURCES` 编译开关影响，CI 会跑
+  /// 带 / 不带该 dart-define 两遍，分组断言要在两遍里都成立，所以这里固定
+  /// 取「内置主站源 + 已注册的运行时源」。
+  List<SourceSite> testSources() => [
+    ...SourceSite.primaryValues,
+    ...SourceSite.runtimeValues,
+  ];
+
   Future<LocalStore> createStore([
     InMemorySharedPreferencesStore? platform,
   ]) async {
@@ -47,7 +57,7 @@ void main() {
   }
 
   test('Kazumi 规则源归入动漫站源：未收藏时与青空同一组', () {
-    final groups = SourceGroup.fromSources(SourceSite.values);
+    final groups = SourceGroup.fromSources(testSources());
     final anime = groups.firstWhere((group) => group.id == 'anime');
     expect(anime.name, '动漫站源');
     expect(
@@ -57,7 +67,7 @@ void main() {
   });
 
   test('预制源组合：韩小圈与鬼片同组，未收藏时整组是一个入口', () {
-    final groups = SourceGroup.fromSources(SourceSite.values);
+    final groups = SourceGroup.fromSources(testSources());
     final preset = groups.firstWhere((group) => group.id == 'preset');
     expect(preset.name, '预制源组合');
     expect(
@@ -73,7 +83,7 @@ void main() {
     expect(store.isFavoriteSource('guipian'), isFalse);
 
     final groups = SourceGroup.fromSources(
-      store.sources,
+      testSources(),
       favoriteIds: store.favoriteSourceIds,
     );
     final ids = groups.map((group) => group.id).toList();
@@ -97,7 +107,7 @@ void main() {
     await store.toggleFavoriteSource('sorani');
     expect(store.isFavoriteSource('sorani'), isFalse);
     var groups = SourceGroup.fromSources(
-      store.sources,
+      testSources(),
       favoriteIds: store.favoriteSourceIds,
     );
     expect(groups.map((group) => group.id), isNot(contains('sorani')));
@@ -112,7 +122,7 @@ void main() {
     await restarted.toggleFavoriteSource('sorani');
     expect(restarted.isFavoriteSource('sorani'), isTrue);
     groups = SourceGroup.fromSources(
-      restarted.sources,
+      testSources(),
       favoriteIds: restarted.favoriteSourceIds,
     );
     expect(groups.map((group) => group.id), contains('sorani'));

@@ -496,10 +496,21 @@ void main() {
     expect(store.isFavoriteSource('libretv:aaa'), isFalse);
     expect(store.isHiddenSource('libretv:aaa'), isFalse);
 
-    // 非运行时片源 ID 直接被忽略。
+    // [+155] 内置源也参与偏好同步：青空 / 韩小圈有出厂默认收藏，取消的墓碑
+    // 要能跨设备传播，否则对端会一直停在出厂默认上。
     expect(
       await store.applySourcePrefs({
         'hongguo': LanSourcePref(favorite: true, hidden: false, at: at + 2),
+      }),
+      1,
+    );
+    expect(store.isFavoriteSource('hongguo'), isTrue);
+
+    // 只有空 ID 被忽略。
+    expect(
+      await store.applySourcePrefs({
+        '': LanSourcePref(favorite: true, hidden: false, at: at + 3),
+        '   ': LanSourcePref(favorite: true, hidden: false, at: at + 3),
       }),
       0,
     );
