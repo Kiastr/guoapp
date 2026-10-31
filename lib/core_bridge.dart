@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'models.dart';
 import 'drpy.dart';
 import 'libretv.dart';
+import 'kazumi.dart';
 import 'danmaku_models.dart';
 import 'background_downloads.dart';
 import 'local_store.dart';
@@ -195,6 +196,21 @@ abstract class AppRepository {
 
   /// 删除已导入的 drpy 脚本源（连同其目录缓存）。
   Future<void> drpyRemove(String key) async {}
+
+  /// 已导入的 Kazumi 规则源（+155，原生核心 kazumi.json）。
+  Future<List<KazumiRuleSite>> kazumiSites() async => const [];
+
+  /// 导入 Kazumi 规则：粘贴规则 JSON 原文或填写规则地址。
+  Future<KazumiImportResult> kazumiImport(
+    String input, {
+    String ruleUrl = '',
+  }) async => throw AppFailure('当前环境不支持导入 Kazumi 规则源');
+
+  /// 删除已导入的 Kazumi 规则源（连同其规则快照与目录缓存）。
+  Future<void> kazumiRemove(String key) async {}
+
+  /// Kazumi 官方规则库索引（含每条的地址与是否废弃），用于在线选择导入。
+  Future<List<KazumiOfficialRule>> kazumiOfficialRules() async => const [];
   Future<List<String>> suggestions(String query) async => const [];
   Future<Map<String, dynamic>> storage() async => {};
   Future<String> downloadDirectory() async =>
@@ -659,6 +675,51 @@ class NativeRepository extends AppRepository {
   Future<void> drpyRemove(String key) async {
     _adminPermission('仅管理员可删除 drpy 脚本源');
     await _call({'action': 'drpyRemove', 'drpyKey': key});
+  }
+
+  @override
+  Future<List<KazumiRuleSite>> kazumiSites() async {
+    try {
+      final result = await _call({'action': 'kazumiSites'});
+      return (result['sites'] as List? ?? const [])
+          .whereType<Map>()
+          .map((row) => KazumiRuleSite.fromJson(Map<String, dynamic>.from(row)))
+          .toList();
+    } catch (_) {
+      // 旧版原生核心没有 Kazumi 动作（包还没替换）时按「无规则源」处理，
+      // 与 drpySites 的降级策略一致。
+      return const [];
+    }
+  }
+
+  @override
+  Future<KazumiImportResult> kazumiImport(
+    String input, {
+    String ruleUrl = '',
+  }) async {
+    _adminPermission('仅管理员可导入 Kazumi 规则源');
+    return KazumiImportResult.fromJson(
+      await _call({
+        'action': 'kazumiImport',
+        'subscription': input,
+        if (ruleUrl.trim().isNotEmpty) 'ruleUrl': ruleUrl.trim(),
+      }),
+    );
+  }
+
+  @override
+  Future<void> kazumiRemove(String key) async {
+    _adminPermission('仅管理员可删除 Kazumi 规则源');
+    await _call({'action': 'kazumiRemove', 'kazumiKey': key});
+  }
+
+  @override
+  Future<List<KazumiOfficialRule>> kazumiOfficialRules() async {
+    final result = await _call({'action': 'kazumiOfficialRules'});
+    return (result['rules'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => KazumiOfficialRule.fromJson(Map<String, dynamic>.from(row)))
+        .toList();
   }
 
   @override

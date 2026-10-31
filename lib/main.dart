@@ -25,6 +25,7 @@ import 'webdav_sync.dart';
 import 'diary_service.dart';
 import 'drpy.dart';
 import 'libretv.dart';
+import 'kazumi.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -114,16 +115,21 @@ class _AppBootstrapState extends State<AppBootstrap>
     setState(() => device = detected);
   }
 
-  /// 拉取已导入的 LibreTV 片源与 drpy 脚本源并注册为运行时站源。
-  /// 失败（旧版核心不支持等）时静默跳过，不影响内置站源。
+  /// 拉取已导入的 LibreTV 片源、drpy 脚本源与 Kazumi 规则源并注册为
+  /// 运行时站源。失败（旧版核心不支持等）时静默跳过，不影响内置站源。
   Future<void> _syncRuntimeSources() async {
-    // 两个注册表互不依赖，并行拉取：原来串行等两次 FFI，启动首屏要多花
+    // 三个注册表互不依赖，并行拉取：原来串行等两次 FFI，启动首屏要多花
     // 一个来回（长列表时是肉眼可见的延迟）。
     final sitesRequest = repository.libretvSites().catchError(
       (Object _) => const <LibreTVSite>[],
     );
     final scriptsRequest = repository.drpySites().catchError(
       (Object _) => const <DrpySite>[],
+    );
+    // [+155] Kazumi 规则源同样是原生核心持久化的（kazumi.json + kazumi/），
+    // 出厂自带两条 api 模式规则，启动即可用。
+    final rulesRequest = repository.kazumiSites().catchError(
+      (Object _) => const <KazumiRuleSite>[],
     );
     final sites = await sitesRequest;
     SourceSite.setRuntimeSources([
@@ -135,6 +141,12 @@ class _AppBootstrapState extends State<AppBootstrap>
       ...SourceSite.runtimeValues,
       for (final script in scripts)
         if (script.key.isNotEmpty) script.toSourceSite(),
+    ]);
+    final rules = await rulesRequest;
+    SourceSite.setRuntimeSources([
+      ...SourceSite.runtimeValues,
+      for (final rule in rules)
+        if (rule.key.isNotEmpty) rule.toSourceSite(),
     ]);
   }
 

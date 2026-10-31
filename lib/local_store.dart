@@ -260,25 +260,44 @@ class LocalStore extends ChangeNotifier {
 
   // ---- 运行时片源的收藏 / 隐藏 ----
 
-  /// 收藏的运行时片源 ID 集合（拷贝，避免外部改动内部状态）。
+  /// 本机显式收藏的片源 ID 集合（拷贝，避免外部改动内部状态）。
   /// 取消墓碑（on=false）不计入。
-  Set<String> get favoriteSourceIds =>
-      {for (final entry in _favoriteStamps.entries) if (entry.value.on) entry.key};
+  Set<String> get explicitFavoriteSourceIds => {
+    for (final entry in _favoriteStamps.entries)
+      if (entry.value.on) entry.key,
+  };
+
+  /// 收藏的片源 ID 集合 = 本机显式设置 + 出厂默认里「用户没动过」的那些。
+  ///
+  /// 出厂默认（[SourceSite.defaultFavoriteSourceIds]）只填坑不覆盖：一旦
+  /// 用户在本机对该源做过收藏 / 取消操作，`favoriteSources` 里就有了它的
+  /// 记录（含取消墓碑），默认值随即让位。这样既不用额外的初始化 key，
+  /// 又天然支持「取消收藏并跨设备传播」——墓碑的时间戳比默认值新。
+  Set<String> get favoriteSourceIds => {
+    ...explicitFavoriteSourceIds,
+    for (final id in SourceSite.defaultFavoriteSourceIds)
+      if (!_favoriteStamps.containsKey(id)) id,
+  };
 
   /// 隐藏的运行时片源 ID 集合（拷贝，不含取消墓碑）。
   Set<String> get hiddenSourceIds =>
       {for (final entry in _hiddenStamps.entries) if (entry.value.on) entry.key};
 
-  bool isFavoriteSource(String id) => _favoriteStamps[id]?.on == true;
+  bool isFavoriteSource(String id) => favoriteSourceIds.contains(id);
 
   bool isHiddenSource(String id) => _hiddenStamps[id]?.on == true;
 
-  /// 收藏 / 取消收藏运行时片源。收藏后首页把它从 LibreTV / drpy 大组
-  /// 里拆出来独占一组（与红果同级）。仅 `libretv:` / `drpy:` 源有效。
+  /// 收藏 / 取消收藏片源。
+  ///
+  /// 收藏后首页把它从大组（LibreTV / drpy / 动漫站源 / 预制源组合）里拆
+  /// 出来独占一组，与红果同级；取消收藏则回落到所属分组的子级。
+  /// [+155] 内置源（青空 / 韩小圈 / 鬼片 / Kazumi 规则源）同样可收藏：
+  /// 出厂默认收藏就是用「没有 explicit 记录」表达的，只有落到这里的 toggle
+  /// 才能把它改成用户意愿。
   Future<void> toggleFavoriteSource(String id) => _queue(() async {
     final source = id.trim();
-    if (!source.startsWith('libretv:') && !source.startsWith('drpy:')) {
-      throw StateError('只能收藏导入的 LibreTV / drpy 片源');
+    if (source.isEmpty) {
+      throw StateError('片源无效');
     }
     final next = Map.of(_favoriteStamps);
     next[source] = _SourceStamp(
@@ -341,8 +360,10 @@ class LocalStore extends ChangeNotifier {
       var changed = 0;
       var wrote = false;
       for (final entry in incoming.entries) {
-        final id = entry.key;
-        if (!id.startsWith('libretv:') && !id.startsWith('drpy:')) continue;
+        final id = entry.key.trim();
+        // [+155] 不再限制 libretv:/drpy:：内置源（青空 / 韩小圈）也有默认
+        // 收藏，取消的墓碑要能跨设备传播，否则对端会一直停在出厂默认上。
+        if (id.isEmpty) continue;
         final next = entry.value;
         final favoriteStamp = favorites[id];
         final hiddenStamp = hidden[id];

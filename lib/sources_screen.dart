@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'core_bridge.dart';
 import 'drpy.dart';
+import 'kazumi.dart';
 import 'libretv.dart';
 import 'local_store.dart';
 import 'models.dart';
@@ -50,6 +51,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
   /// 已导入的 drpy 脚本源（来自原生核心 drpy.json + scripts/）。
   List<DrpySite> _drpySites = const [];
+
+  /// 已导入的 Kazumi 规则源（来自原生核心 kazumi.json + kazumi/）。
+  List<KazumiRuleSite> _kazumiSites = const [];
 
   /// LibreTV 解析方式（订阅 parses + 当前选择）。
   LibreTVParseConfig _parseConfig = const LibreTVParseConfig();
@@ -120,6 +124,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     if (!widget.repository.supportsSourceManagement) return;
     var sites = _libretvSites;
     var scripts = _drpySites;
+    var rules = _kazumiSites;
     var parseConfig = _parseConfig;
     try {
       final fetched = await widget.repository.libretvSites();
@@ -136,6 +141,13 @@ class _SourcesScreenState extends State<SourcesScreen> {
       // 旧版核心没有 drpy 动作时静默跳过，LibreTV 片源不受影响。
     }
     try {
+      final fetched = await widget.repository.kazumiSites();
+      if (!mounted || epoch != widget.store.profileEpoch) return;
+      rules = fetched;
+    } catch (_) {
+      // 旧版核心没有 Kazumi 动作时静默跳过。
+    }
+    try {
       final fetched = await widget.repository.libretvParseConfig();
       if (!mounted || epoch != widget.store.profileEpoch) return;
       parseConfig = fetched;
@@ -145,10 +157,12 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final keys = {
       for (final site in sites) site.sourceId,
       for (final script in scripts) script.sourceId,
+      for (final rule in rules) rule.sourceId,
     };
     final previous = {
       for (final site in _libretvSites) site.sourceId,
       for (final script in _drpySites) script.sourceId,
+      for (final rule in _kazumiSites) rule.sourceId,
     };
     final changed =
         keys.length != previous.length ||
@@ -156,10 +170,12 @@ class _SourcesScreenState extends State<SourcesScreen> {
     SourceSite.setRuntimeSources([
       for (final site in sites) site.toSourceSite(),
       for (final script in scripts) script.toSourceSite(),
+      for (final rule in rules) rule.toSourceSite(),
     ]);
     setState(() {
       _libretvSites = sites;
       _drpySites = scripts;
+      _kazumiSites = rules;
       _parseConfig = parseConfig;
     });
     // 注册表发生变化才广播，避免每 10 秒轮询都惊动首页刷新。
@@ -259,22 +275,27 @@ class _SourcesScreenState extends State<SourcesScreen> {
                     ),
                   ),
                   _libretvCard(),
+                  _kazumiCard(),
                   if (sources.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
                       child: Text('当前用户没有可用站源'),
                     ),
                   for (final group in SourceGroup.fromSources(sources))
-                    if (group.id == 'huangguo')
+                    // 多源分组（黄果 / 动漫站源 / 预制源组合 / LibreTV / drpy）
+                    // 折叠成一层子级：收藏的源已经独占一组在首页与红果同级，
+                    // 未收藏的留在这一层，首页片源选择不至于被撑爆。
+                    if (group.sources.length > 1)
                       Card(
                         clipBehavior: Clip.antiAlias,
+                        margin: const EdgeInsets.only(bottom: 16),
                         child: ExpansionTile(
-                          key: const PageStorageKey('source-group-huangguo'),
+                          key: PageStorageKey('source-group-${group.id}'),
                           initiallyExpanded: group.sources.any(
                             (source) => source.id == widget.initialSource,
                           ),
-                          leading: const Icon(Icons.hub_outlined),
-                          title: const Text('黄果'),
+                          leading: Icon(_groupIcon(group.id)),
+                          title: Text(group.name),
                           subtitle: Text(
                             '${group.sources.length} 个入口 · ${group.sources.fold<int>(0, (count, source) => count + (_statuses[source.id]?.count ?? 0))} 部',
                           ),
@@ -295,6 +316,16 @@ class _SourcesScreenState extends State<SourcesScreen> {
       );
     },
   );
+
+  /// 分组图标：内置主题组给专属图标，运行时家族沿用各自数据形态。
+  IconData _groupIcon(String groupId) => switch (groupId) {
+    'huangguo' => Icons.hub_outlined,
+    'anime' => Icons.movie,
+    'preset' => Icons.grid_view,
+    'libretv' => Icons.subscriptions_outlined,
+    'drpy' => Icons.javascript_outlined,
+    _ => Icons.folder_outlined,
+  };
 
   /// LibreTV / 扩展片源导入入口卡片：说明支持的输入形态 + 已导入来源管理
   /// （LibreTV 片源与 drpy 脚本源同卡分两区）。
@@ -534,6 +565,269 @@ class _SourcesScreenState extends State<SourcesScreen> {
         ],
       ),
     );
+  }
+
+  /// Kazumi 动漫规则源卡片（+155）。
+  ///
+  /// Kazumi 规则是一份 JSON：描述「怎么搜、怎么取分集」。本项目用 Go 解释器
+  /// 跑官方规则库里的 api 模式规则，不跑 JS、不引 JVM。出厂自带两条可用状态
+  /// 的规则，这里支持继续粘贴 / 从官方库导入。
+  Widget _kazumiCard() {
+    final theme = Theme.of(context);
+    final rules = _kazumiSites;
+    final supported = widget.repository.supportsSourceManagement;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 16),
+      child: ExpansionTile(
+        key: const PageStorageKey('kazumi-import'),
+        leading: const Icon(Icons.movie),
+        title: const Text('Kazumi 动漫规则源'),
+        subtitle: Text(
+          rules.isEmpty
+              ? '导入 Kazumi 官方规则库的 api 模式规则'
+              : '已导入 ${rules.length} 条规则${rules.any((rule) => rule.webview) ? ' · 含需嗅探的规则' : ''}',
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          Text(
+            'Kazumi 开源动漫 App 的站源由一份 JSON 规则描述。这里只支持其中的'
+            '「api 模式」（搜索与分集都走 JSON 接口、按 JSON 路径取字段）——'
+            '依赖 XPath 页面解析的规则无法在本项目里运行，导入时会被明确拒绝，'
+            '不会静默失败。出厂内置 xfdmnext（1080p 优先，需内置浏览器嗅探）与'
+            'giriGiriLove（直链 mp4，可下载）两条；官方库其余规则多为已废弃或'
+            '需 XPath，导入前先看列表上的标记。',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              Tooltip(
+                message: supported
+                    ? '粘贴 Kazumi 规则 JSON 原文，或填写规则地址'
+                    : '当前环境不支持导入规则源',
+                child: FilledButton.icon(
+                  onPressed: supported && !_libretvBusy ? _importKazumi : null,
+                  icon: const Icon(Icons.add_link_rounded),
+                  label: Text(_libretvBusy ? '处理中…' : '粘贴规则 / 填写地址'),
+                ),
+              ),
+              Tooltip(
+                message: '拉取 Kazumi 官方规则库索引，选一条导入',
+                child: OutlinedButton.icon(
+                  key: const ValueKey('kazumi-official'),
+                  onPressed: supported && !_libretvBusy
+                      ? _openKazumiOfficial
+                      : null,
+                  icon: const Icon(Icons.explore),
+                  label: const Text('从官方规则库挑选'),
+                ),
+              ),
+            ],
+          ),
+          if (rules.isNotEmpty) ...[
+            const Divider(height: 24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('已导入规则', style: theme.textTheme.titleSmall),
+            ),
+            for (final rule in rules)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Tooltip(
+                  message: rule.hint,
+                  child: Icon(rule.webview ? Icons.public : Icons.rule),
+                ),
+                title: Row(
+                  children: [
+                    Flexible(child: Text(rule.name)),
+                    if (rule.webview) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '需嗅探',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSecondaryContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                subtitle: Text(
+                  '${rule.detailLabel}\n${rule.versionLabel} · ${rule.count} 部',
+                ),
+                isThreeLine: true,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      key: ValueKey('favorite-${rule.sourceId}'),
+                      tooltip: widget.store.isFavoriteSource(rule.sourceId)
+                          ? '取消收藏${rule.name}'
+                          : '收藏${rule.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _toggleFavoriteSource(
+                              rule.sourceId,
+                              rule.name,
+                            ),
+                      icon: Icon(
+                        widget.store.isFavoriteSource(rule.sourceId)
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '删除${rule.name}',
+                      onPressed: _libretvBusy
+                          ? null
+                          : () => _removeKazumiKey(rule.sourceId, rule.name),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 粘贴 / 地址导入 Kazumi 规则。
+  Future<void> _importKazumi() async {
+    final input = await showDialog<String>(
+      context: context,
+      builder: (_) => const _KazumiImportDialog(),
+    );
+    if (input == null || input.trim().isEmpty) return;
+    setState(() => _libretvBusy = true);
+    try {
+      await _importKazumiOrThrow(input.trim());
+      if (!mounted) return;
+      setState(() => _libretvBusy = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导入失败：$error')));
+      }
+    }
+  }
+
+  /// Kazumi 导入核心：成功返回，失败抛出。
+  Future<void> _importKazumiOrThrow(String input, {String ruleUrl = ''}) async {
+    final result = await widget.repository.kazumiImport(
+      input,
+      ruleUrl: ruleUrl,
+    );
+    if (!mounted) return;
+    final merged = <KazumiRuleSite>[
+      for (final rule in _kazumiSites)
+        if (rule.key != result.key) rule,
+      result.toSite(),
+    ];
+    SourceSite.setRuntimeSources([
+      ...SourceSite.runtimeValues.where(
+        (site) => !site.id.startsWith('kazumi:'),
+      ),
+      for (final rule in merged) rule.toSourceSite(),
+    ]);
+    setState(() => _kazumiSites = merged);
+    widget.store.notifySourceRegistryChanged();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${result.added ? '已导入' : '已更新'}「${result.name}」${result.webview ? ' · 需内置浏览器嗅探（不支持下载）' : ''}',
+        ),
+      ),
+    );
+  }
+
+  /// 官方规则库列表：点一条即按其地址导入（非 api 模式会由核心明确报错）。
+  Future<void> _openKazumiOfficial() async {
+    List<KazumiOfficialRule> rules;
+    setState(() => _libretvBusy = true);
+    try {
+      rules = await widget.repository.kazumiOfficialRules();
+      if (!mounted) return;
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('官方规则库读取失败：$error')),
+        );
+      }
+      return;
+    }
+    setState(() => _libretvBusy = false);
+    final picked = await showDialog<KazumiOfficialRule>(
+      context: context,
+      builder: (_) => _KazumiOfficialDialog(rules: rules),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _libretvBusy = true);
+    try {
+      await _importKazumiOrThrow(picked.url, ruleUrl: picked.url);
+      if (!mounted) return;
+      setState(() => _libretvBusy = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导入失败：$error')));
+      }
+    }
+  }
+
+  /// 删除 Kazumi 规则源：连同原生核心的规则快照与目录缓存一并清除，
+  /// 并同步注销运行时注册表。
+  Future<void> _removeKazumiKey(String sourceId, String name) async {
+    final key = sourceId.startsWith('kazumi:')
+        ? sourceId.substring('kazumi:'.length)
+        : sourceId;
+    setState(() => _libretvBusy = true);
+    try {
+      await widget.repository.kazumiRemove(key);
+      if (!mounted) return;
+      SourceSite.setRuntimeSources([
+        ...SourceSite.runtimeValues.where(
+          (site) => site.id != sourceId && !site.id.startsWith('kazumi:'),
+        ),
+        for (final rule in _kazumiSites)
+          if (rule.key != key) rule.toSourceSite(),
+      ]);
+      setState(() {
+        _kazumiSites = [
+          for (final rule in _kazumiSites)
+            if (rule.key != key) rule,
+        ];
+        _libretvBusy = false;
+      });
+      widget.store.notifySourceRegistryChanged();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已删除「$name」')));
+    } catch (error) {
+      if (mounted) {
+        setState(() => _libretvBusy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      }
+    }
   }
 
   Future<void> _importLibreTV() async {
@@ -859,6 +1153,23 @@ class _SourcesScreenState extends State<SourcesScreen> {
     }
   }
 
+  /// 单个站源的收藏开关（含 tooltip 说明收藏的可见性后果）。
+  Widget _favoriteButton(SourceSite source) {
+    final favorite = widget.store.isFavoriteSource(source.id);
+    return Tooltip(
+      message: favorite
+          ? '取消收藏「${source.name}」，首页回到「${source.groupName}」分组内'
+          : '收藏「${source.name}」，首页单独显示、与红果同级',
+      child: IconButton(
+        key: ValueKey('favorite-${source.id}'),
+        onPressed: () => _toggleFavoriteSource(source.id, source.name),
+        icon: Icon(
+          favorite ? Icons.star_rounded : Icons.star_border_rounded,
+        ),
+      ),
+    );
+  }
+
   Widget _sourceCard(SourceSite source) {
     final status = _statuses[source.id];
     final pending = _pending.contains(source.id);
@@ -889,6 +1200,10 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                 ),
                 Text('${status?.count ?? 0} 部'),
+                // [+155] 收藏按钮：收藏的源在首页独占一组、与红果同级；
+                // 取消收藏后回落到所属分组的子级（动漫站源 / 预制源组合 /
+                // LibreTV 片源 / drpy 脚本源）。内置源与导入源同按钮。
+                _favoriteButton(source),
               ],
             ),
             const SizedBox(height: 8),
@@ -1441,4 +1756,141 @@ class SourceDiagnosticsButton extends StatelessWidget {
     icon: const Icon(Icons.network_check),
     label: const Text('站源诊断'),
   );
+}
+
+/// Kazumi 规则导入对话框：粘贴规则 JSON 原文或填写规则地址。
+class _KazumiImportDialog extends StatefulWidget {
+  const _KazumiImportDialog();
+
+  @override
+  State<_KazumiImportDialog> createState() => _KazumiImportDialogState();
+}
+
+class _KazumiImportDialogState extends State<_KazumiImportDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('导入 Kazumi 规则源'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _controller,
+            maxLines: 8,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '规则 JSON 原文 / 规则地址',
+              hintText:
+                  '{"name":"xfdmnext","searchMode":"api","chapterMode":"api",'
+                  '"searchApiConfig":{...},"chapterApiConfig":{...}}\n'
+                  '或 https://raw.githubusercontent.com/Predidit/KazumiRules/main/xfdmnext.json',
+              helperText: '只支持 api 模式（搜索与分集都走 JSON 接口）',
+              helperMaxLines: 2,
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _controller.text.trim()),
+        child: const Text('导入'),
+      ),
+    ],
+  );
+}
+
+/// Kazumi 官方规则库列表：废弃 / 非 api 模式都标注清楚，避免盲选。
+class _KazumiOfficialDialog extends StatefulWidget {
+  const _KazumiOfficialDialog({required this.rules});
+
+  final List<KazumiOfficialRule> rules;
+
+  @override
+  State<_KazumiOfficialDialog> createState() => _KazumiOfficialDialogState();
+}
+
+class _KazumiOfficialDialogState extends State<_KazumiOfficialDialog> {
+  String _keyword = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final lowered = _keyword.trim().toLowerCase();
+    final filtered = [
+      for (final rule in widget.rules)
+        if (lowered.isEmpty || rule.name.toLowerCase().contains(lowered))
+          rule,
+    ];
+    return AlertDialog(
+      title: const Text('Kazumi 官方规则库'),
+      content: SizedBox(
+        width: 480,
+        height: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const ValueKey('kazumi-official-search'),
+              decoration: const InputDecoration(
+                labelText: '搜索规则名',
+                prefixIcon: Icon(Icons.search_rounded),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => setState(() => _keyword = value),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '官方库多数规则已废弃或依赖 XPath 页面解析，本项目跑不了——'
+              '导入失败时会给出明确原因，已有的规则不受影响。',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final rule = filtered[index];
+                  return ListTile(
+                    key: ValueKey('kazumi-official-${rule.name}'),
+                    dense: true,
+                    leading: Icon(
+                      rule.deprecated
+                          ? Icons.block
+                          : Icons.check_circle_outline,
+                    ),
+                    title: Text(rule.name),
+                    subtitle: Text(
+                      rule.deprecated ? '官方标记废弃' : '规则 v${rule.version}',
+                    ),
+                    trailing: const Icon(Icons.download_outlined),
+                    onTap: () => Navigator.pop(context, rule),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
 }

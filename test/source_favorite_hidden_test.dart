@@ -65,7 +65,10 @@ void main() {
     final store = await createStore(platform);
     expect(store.isFavoriteSource('libretv:mihua'), isFalse);
     await store.toggleFavoriteSource('libretv:mihua');
-    expect(store.favoriteSourceIds, {'libretv:mihua'});
+    // favoriteSourceIds 还包含出厂默认收藏的内置源（青空 / 韩小圈），
+    // 断言用户自己的设置时用 explicitFavoriteSourceIds。
+    expect(store.explicitFavoriteSourceIds, {'libretv:mihua'});
+    expect(store.favoriteSourceIds, contains('libretv:mihua'));
 
     final restarted = await createStore(platform);
     expect(restarted.isFavoriteSource('libretv:mihua'), isTrue);
@@ -99,12 +102,16 @@ void main() {
     expect(restarted.sources.map((site) => site.id), contains('libretv:mihua'));
   });
 
-  test('内置源不能收藏 / 隐藏（仅导入的 LibreTV / drpy 片源）', () async {
+  test('内置源可以收藏（出厂默认可取消），但不能隐藏', () async {
     final store = await createStore();
-    await expectLater(
-      store.toggleFavoriteSource('hongguo'),
-      throwsStateError,
-    );
+    // [+155] 内置源同样能收藏：青空 / 韩小圈出厂默认就在首页与红果同级，
+    // 取消收藏回落到所属分组的子级，所以这里不再抛错。
+    expect(store.isFavoriteSource('hongguo'), isFalse);
+    await store.toggleFavoriteSource('hongguo');
+    expect(store.isFavoriteSource('hongguo'), isTrue);
+    await store.toggleFavoriteSource('hongguo');
+    expect(store.isFavoriteSource('hongguo'), isFalse);
+    // 隐藏仍然只针对导入的片源：内置源隐藏会让首页无从选择。
     await expectLater(
       store.toggleSourceHidden('hongguo'),
       throwsStateError,

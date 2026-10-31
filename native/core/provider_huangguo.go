@@ -31,6 +31,9 @@ const (
 	sourceSorani        = "sorani"
 	sourceGuipian       = "guipian"
 	sourceHanxiaoquan   = "hanxiaoquan"
+	// sourceKazumi 运行时导入的 Kazumi 规则源家族名；完整源 ID 形如 kazumi:<规则名>。
+	sourceKazumi       = "kazumi"
+	sourceKazumiPrefix = sourceKazumi + ":"
 
 	providerMaxBodyBytes = 20 * 1024 * 1024
 	providerTimeout      = 12 * time.Second
@@ -91,7 +94,7 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 	// （libretv:<key>:<vodId>:<集键>），sourceID 末尾多带的集键不影响
 	// 调用方只比较 source 的用法。drpy 的 vodId 是 base64url（无冒号），
 	// 切分规则相同。
-	if source == sourceLibreTV || source == sourceDrpy {
+	if source == sourceLibreTV || source == sourceDrpy || source == sourceKazumi {
 		siteKey, vodID, found := strings.Cut(sourceID, ":")
 		siteKey, vodID = strings.TrimSpace(siteKey), strings.TrimSpace(vodID)
 		if !found || siteKey == "" || vodID == "" {
@@ -99,6 +102,9 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 		}
 		if source == sourceDrpy {
 			return drpySourceID(siteKey), vodID, true
+		}
+		if source == sourceKazumi {
+			return kazumiSourceID(siteKey), vodID, true
 		}
 		return libretvSourceID(siteKey), vodID, true
 	}
@@ -114,6 +120,9 @@ func isHuangguoProviderSource(source string) bool {
 		return true
 	}
 	if source == sourceDrpy || strings.HasPrefix(source, sourceDrpyPrefix) {
+		return true
+	}
+	if source == sourceKazumi || strings.HasPrefix(source, sourceKazumiPrefix) {
 		return true
 	}
 	switch source {

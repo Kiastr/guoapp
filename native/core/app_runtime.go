@@ -89,6 +89,9 @@ type Downloader struct {
 	// 由 newNativeEngine 从引擎目录 rules.json + rules/ 载入。
 	// 规则源仍是 libretv 站点（带 Engine 标签），这里只存规则正文。
 	rules *ruleStore
+	// kazumi 运行时导入的 Kazumi 规则源表（+155），
+	// 由 newNativeEngine 从引擎目录 kazumi.json + kazumi/ 载入。
+	kazumi *kazumiStore
 }
 
 func defaultConfig() Config { return Config{MaxPagesPerSort: 50, PageSize: 30, Retries: 2} }
@@ -144,6 +147,10 @@ type nativeInput struct {
 	// ScriptURL drpy 粘贴导入时记录的来源链接（脚本正文没有地址，
 	// 记下来源后 WebDAV 同步才能在对端重建该源）。
 	ScriptURL string `json:"scriptUrl"`
+	// KazumiKey Kazumi 规则源删除时的 key；RuleURL 为规则的来源链接
+	// （粘贴规则正文时记下来源，WebDAV 同步才能在对端重建该源）。
+	KazumiKey string `json:"kazumiKey"`
+	RuleURL   string `json:"ruleUrl"`
 	// Route 期望的起始线路（线路记忆用；越界或不存在时回落到 0）。
 	Route    int    `json:"route"`
 	Session  string `json:"session"`
@@ -334,6 +341,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	d.libretv = loadLibreTVStore(directory)
 	d.drpy = loadDrpyStore(directory)
 	d.rules = loadRuleStore(directory)
+	d.kazumi = loadKazumiStore(directory)
 	d.loadRankingCache()
 	engine.loadCatalogCache()
 	engine.loadSourceRecords()
@@ -556,6 +564,17 @@ func nativeDispatch(input nativeInput) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"removed": input.DrpyKey}, nil
+	case "kazumiSites":
+		return map[string]any{"sites": engine.kazumiSiteList()}, nil
+	case "kazumiImport":
+		return engine.importKazumiRule(ctx, input.Subscription, input.RuleURL)
+	case "kazumiRemove":
+		if err := engine.removeKazumiSite(input.KazumiKey); err != nil {
+			return nil, err
+		}
+		return map[string]any{"removed": input.KazumiKey}, nil
+	case "kazumiOfficialRules":
+		return engine.kazumiOfficialRules(ctx)
 	case "cover":
 		return engine.loadCover(ctx, input.Drama, input.Force)
 	case "prepareCover":
@@ -721,6 +740,19 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 			result.HasMore = more
 			return result, nil
 		}
+		if site, ok := engine.downloader.kazumiSite(source); ok {
+			// Kazumi 规则源只有一个搜索接口，在线搜索即搜索 ±keyword。
+			dramas, more, err := engine.downloader.kazumiSearch(ctx, site, query, 1)
+			if err != nil {
+				return result, err
+			}
+			for _, drama := range dramas {
+				result.Items = append(result.Items, nativeNormalize(drama))
+			}
+			result.HasMore = more
+			result.Page = 1
+			return result, nil
+		}
 		engine.mu.Lock()
 		items := append([]nativeDrama{}, engine.catalogs[source]...)
 		engine.mu.Unlock()
@@ -862,6 +894,10 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		}
 	} else if site, ok := engine.downloader.drpySite(source); ok {
 		items, result.HasMore, err = d.fetchDrpyCatalogPage(ctx, site, page, category, query)
+	} else if site, ok := engine.downloader.kazumiSite(source); ok {
+		// Kazumi 规则源没有分类维度：category 一律忽略，只认分页。
+		items, result.HasMore, err = d.kazumiSearch(ctx, site, "", page)
+		result.Page = page
 	} else if libretvKeyFromSource(source) != "" {
 		items, err = nil, errors.New("LibreTV 片源未导入或已删除，请在站源管理重新导入")
 	} else if drpyKeyFromSource(source) != "" {
@@ -870,7 +906,8 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	if err != nil && len(items) == 0 {
 		return result, err
 	}
-	if len(items) == 0 && page == 1 && libretvKeyFromSource(source) == "" && drpyKeyFromSource(source) == "" && source != sourceHuangju && source != sourceYeguo && source != sourceDSD && source != sourceSorani && source != sourceGuipian && source != sourceHanxiaoquan {
+	if len(items) == 0 && page == 1 && libretvKeyFromSource(source) == "" && drpyKeyFromSource(source) == "" &&
+		kazumiKeyFromSource(source) == "" && source != sourceHuangju && source != sourceYeguo && source != sourceDSD && source != sourceSorani && source != sourceGuipian && source != sourceHanxiaoquan {
 		return result, errors.New("站源暂未返回剧集，请稍后刷新")
 	}
 	if err != nil {
@@ -921,6 +958,8 @@ func (engine *nativeEngine) nativeDetail(ctx context.Context, drama nativeDrama)
 			raw, chapters, err = engine.downloader.fetchLibreTVDetail(ctx, site, sourceID)
 		} else if site, ok := engine.downloader.drpySite(source); ok {
 			raw, chapters, err = engine.downloader.fetchDrpyDetail(ctx, site, sourceID)
+		} else if site, ok := engine.downloader.kazumiSite(source); ok {
+			raw, chapters, err = engine.downloader.kazumiDetail(ctx, site, sourceID)
 		} else if libretvKeyFromSource(source) != "" {
 			err = errors.New("LibreTV 片源未导入或已删除，请在站源管理重新导入")
 		} else if drpyKeyFromSource(source) != "" {

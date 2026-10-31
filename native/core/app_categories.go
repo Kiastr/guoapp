@@ -79,6 +79,10 @@ func validNativeCategory(source, category string) bool {
 	case sourceHanxiaoquan:
 		return validHanxiaoquanCategory(category)
 	}
+	// Kazumi 规则源没有分类：只允许「全部」（空串），带 category 的请求会被拒。
+	if kazumiKeyFromSource(source) != "" {
+		return strings.TrimSpace(category) == ""
+	}
 	return false
 }
 
@@ -157,6 +161,11 @@ func (engine *nativeEngine) nativeCategories(ctx context.Context, source string,
 			if categories, err := d.fetchDrpyCategories(ctx, site); err == nil {
 				all = append(all, categories...)
 			}
+			break
+		}
+		if _, ok := d.kazumiSite(source); ok {
+			// Kazumi 规则没有分类维度（官方 App 也只有搜索），这里保留「全部」
+			// 而不是报错：厂商接口形态各异，硬凑分类只会得到一堆空页。
 			break
 		}
 		return nil, errors.New("请选择有效站源")

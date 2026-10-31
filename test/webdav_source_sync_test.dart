@@ -520,7 +520,8 @@ void main() {
     final again = await createStore(platform);
     expect(again.isFavoriteSource('libretv:aaa'), isFalse);
     expect(again.isHiddenSource('libretv:aaa'), isTrue);
-    expect(again.favoriteSourceIds, isEmpty);
+    // 用户自己的收藏记录已清空，favoriteSourceIds 里剩下的只是出厂默认值。
+    expect(again.explicitFavoriteSourceIds, isEmpty);
     expect(again.hiddenSourceIds, {'libretv:aaa'});
   });
 }

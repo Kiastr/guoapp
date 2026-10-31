@@ -149,6 +149,10 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 	if site, ok := d.drpySite(chapter.Source); ok {
 		return d.resolveDrpyMedia(ctx, task, site)
 	}
+	// Kazumi 规则源（+155）：直链走通用收尾，播放页走静态嗅探兜底。
+	if _, ok := d.kazumiSite(chapter.Source); ok {
+		return d.resolveKazumiMedia(ctx, task)
+	}
 	// LibreTV：直链直接播；非直链按站源管理里选择的解析方式处理。
 	if site, ok := d.libretvSite(chapter.Source); ok {
 		return d.resolveLibreTVMedia(ctx, task, site)

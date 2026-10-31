@@ -493,10 +493,14 @@ class LanSourceSub {
       a.at >= b.at ? a : b;
 }
 
-/// 校验运行时片源 ID（`libretv:` / `drpy:` 前缀 + 64 位以内 key）。
+/// 校验片源 ID（`libretv:` / `drpy:` / `kazumi:` 前缀，或内置源 ID）。
+///
+/// [+155] 前缀白名单放开到内置源：青空 / 韩小圈有出厂默认收藏，取消收藏的
+/// 墓碑要能通过 LAN / WebDAV 传到对端，否则对端永远停在出厂默认上。
+/// 只校验字符集：源 ID 里不能混进分隔符与控制字符，避免污染偏好表。
 String lanSourceId(Object? value) {
   final id = lanText(value, 96);
-  if (!id.startsWith('libretv:') && !id.startsWith('drpy:')) {
+  if (id.isEmpty || !RegExp(r'^[A-Za-z0-9_.:-]{1,96}$').hasMatch(id)) {
     throw const FormatException('片源身份无效');
   }
   return id;

@@ -18,17 +18,38 @@ class SourceSite {
       isRuntime;
   bool get searchSuggestions => id == 'hongguo';
 
-  /// 运行时导入的 LibreTV 片源（`libretv:<key>`）与 drpy 脚本源
-  /// （`drpy:<key>`），由导入注册。
-  bool get isRuntime => id.startsWith('libretv:') || id.startsWith('drpy:');
+  /// 运行时导入的 LibreTV 片源（`libretv:<key>`）、drpy 脚本源
+  /// （`drpy:<key>`）与 Kazumi 规则源（`kazumi:<key>`），由导入注册。
+  bool get isRuntime =>
+      id.startsWith('libretv:') ||
+      id.startsWith('drpy:') ||
+      id.startsWith('kazumi:');
+
+  /// 所属分组：内置源按主题合并（动漫 / 预制组合），运行时源按家族合并。
+  ///
+  /// 分组只决定「未收藏时的归属」——收藏的源会独占一组出现在首页
+  /// （见 [SourceGroup.fromSources] 的 favoriteIds）。
   String get groupId => switch (id) {
     'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
-    _ => isRuntime ? (id.startsWith('drpy:') ? 'drpy' : 'libretv') : id,
+    // [+155] 动漫站源：青空 + 所有 Kazumi 规则源。
+    'sorani' => 'anime',
+    // [+155] 预制源组合：韩小圈 + 鬼片。
+    'hanxiaoquan' || 'guipian' => 'preset',
+    _ =>
+      isRuntime
+          ? id.startsWith('drpy:')
+              ? 'drpy'
+              : id.startsWith('kazumi:')
+              ? 'anime'
+              : 'libretv'
+          : id,
   };
   String get groupName => switch (groupId) {
     'huangguo' => '黄果',
     'libretv' => 'LibreTV 片源',
     'drpy' => 'drpy 脚本源',
+    'anime' => '动漫站源',
+    'preset' => '预制源组合',
     _ => name,
   };
   String get entryName => switch (id) {
@@ -50,6 +71,17 @@ class SourceSite {
 
   /// 默认可见的站源：红果、韩小圈、鬼片网、青空次元。
   static const primaryValues = [hongguo, hanxiaoquan, guipian, sorani];
+
+  /// 出厂默认收藏的内置站源（+155）。
+  ///
+  /// 收藏的源在首页独占一组、与红果同级；取消收藏后回落到所属分组的子级
+  /// （青空 → 动漫站源，韩小圈 → 预制源组合，鬼片默认就在预制源组合里）。
+  /// 这里只是出厂偏好：用户一旦在本机改过某个源的收藏状态，就以用户的
+  /// 设置为准（见 [LocalStore.favoriteSourceIds]）。
+  static const defaultFavoriteSourceIds = <String>{
+    'sorani', // 青空 · 动漫站源
+    'hanxiaoquan', // 韩小圈 · 预制源组合
+  };
 
   /// 敏感站源：默认隐藏，输入解锁密码后才显示。
   static const restrictedValues = [
