@@ -103,6 +103,14 @@ abstract class AppRepository {
     required int durationMs,
   }) async => throw AppFailure('当前环境不支持弹幕');
   Future<void> cancelCatalog() async {}
+
+  /// 取消所有在途的「站源分类」请求。
+  ///
+  /// 和 [cancelCatalog] 分开是必要的：启动时目录加载与分类加载是并行的，
+  /// 目录侧每次刷新都会调 [cancelCatalog]，如果把分类请求一起取消，
+  /// 分类就永远加载不出来。分类的取消由 `CatalogBrowser.loadCategories`
+  /// 在自己的新一轮开始时触发。
+  Future<void> cancelCategories() async {}
   Future<void> cancelSuggestions() async {}
   Future<void> cancelRecommendations() async {}
   Future<Drama?> supplementMetadata(Drama drama) async => null;
@@ -425,6 +433,8 @@ class NativeRepository extends AppRepository {
 
   @override
   Future<void> cancelCatalog() => _cancelReads('catalog-');
+  @override
+  Future<void> cancelCategories() => _cancelReads('categories-');
   @override
   Future<void> cancelSuggestions() => _cancelReads('suggestions');
   @override

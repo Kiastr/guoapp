@@ -68,6 +68,12 @@ class CatalogBrowser {
   final _sessions = <String, _CatalogSession>{};
   int _generation = 0;
 
+  /// 分类加载的代际号：每次开一轮新的网络加载就 +1，旧轮据此停手。
+  ///
+  /// 分类请求不随 `cancelCatalog()` 取消（启动时与目录加载并行，取消会
+  /// 连分类一起掐掉），所以需要自己的取消通道，详见 [loadCategories]。
+  int _categoryGeneration = 0;
+
   // 分类聚合的缓存。
   //
   // `categories()` 在首页 build 里被访问（分类标签栏），而 `_choices()` 要扫
@@ -193,15 +199,19 @@ class CatalogBrowser {
   ///
   /// [onProgress] 在 visit 结束后**无论成功失败**都会调用：一个源挂了不该
   /// 拖住其他源的结果展示。
+  ///
+  /// [stopped] 为真时 worker 不再从队列里取新条目（正在跑的那一个仍会跑完），
+  /// 用于「本轮已被新一轮接管」的场景——见 [loadCategories] 的代际说明。
   Future<void> _each<T>(
     List<T> entries,
     Future<void> Function(T) visit, {
     void Function()? onProgress,
+    bool Function()? stopped,
   }) async {
     if (entries.isEmpty) return;
     var index = 0;
     Future<void> worker() async {
-      while (index < entries.length) {
+      while (index < entries.length && stopped?.call() != true) {
         final entry = entries[index++];
         try {
           await visit(entry);
@@ -221,36 +231,58 @@ class CatalogBrowser {
     bool force = false,
     bool cacheOnly = false,
   }) async {
+    // 分类加载是可以重入的：切分组、从源管理返回、下拉刷新、剧库更新后
+    // 都会再跑一轮。`cancelCatalog()` 只取消 `catalog-` 前缀（启动时目录
+    // 加载与分类加载是并行的，不能让目录加载把分类一起掐掉），所以旧一轮的
+    // `categories-` 请求会一直跑到几十个源全部处理完（单请求最长 60 秒）。
+    // 几十个源的组上反复切几次，在途请求就叠到几十个，把 Go 侧 48 个通用
+    // 读槽占满，别处就开始弹「正在处理的请求较多，请稍后重试」。
+    //
+    // 这里给每轮分类加载一个代际号：新一轮开始先把上一轮的在途分类请求
+    // 取消（槽位立刻归还），旧轮的 worker 看到代际变了也不再发新请求。
+    // 只读本机缓存的轮次（cacheOnly）不接管——它是剧库更新后的补读，
+    // 不该把正在跑的网络轮次打断。
+    final generation = cacheOnly ? null : ++_categoryGeneration;
+    if (generation != null) await repository.cancelCategories();
     final failures = <String>[];
-    await _each(group.sources, (source) async {
-      // 本机剧库已经读过这个源（目录加载先读的缓存）就不再回读一遍：
-      // 启动时 `_load` 与 `_loadCategories` 是并行的，两边都按源读整份缓存，
-      // 「全部站源」就是几十份全量 JSON 的重复传输。
-      if (_library[source.id]?.isNotEmpty != true) {
-        try {
-          final cached = await _readCache(source.id, '');
-          _remember(source.id, cached.items);
-        } catch (_) {}
-      }
-      // 分类已经加载过且不是强制刷新：省掉网络请求。
-      // 每次进软件 / 切分组都向几十个站源拉一遍分类是主要的性能黑洞。
-      // 注意只跳网络，上面的本地缓存读取保留——「按分类筛选本机剧库」
-      // 依赖 _library，不能一起跳过。
-      if (!force && _menus.containsKey(source.id)) return;
-      if (cacheOnly) return;
-      try {
-        _menus[source.id] = await repository.categories(
-          source.id,
-          force: force,
-        );
-        _menuRevision++;
-      } catch (_) {
-        // 请求失败时不要把空结果写进缓存，否则下次进来还是没有分类。
-        if (!_menus.containsKey(source.id)) {
-          failures.add(source.groupName);
+    await _each(
+      group.sources,
+      (source) async {
+        // 本机剧库已经读过这个源（目录加载先读的缓存）就不再回读一遍：
+        // 启动时 `_load` 与 `_loadCategories` 是并行的，两边都按源读整份缓存，
+        // 「全部站源」就是几十份全量 JSON 的重复传输。
+        if (_library[source.id]?.isNotEmpty != true) {
+          try {
+            final cached = await _readCache(source.id, '');
+            _remember(source.id, cached.items);
+          } catch (_) {}
         }
-      }
-    });
+        // 分类已经加载过且不是强制刷新：省掉网络请求。
+        // 每次进软件 / 切分组都向几十个站源拉一遍分类是主要的性能黑洞。
+        // 注意只跳网络，上面的本地缓存读取保留——「按分类筛选本机剧库」
+        // 依赖 _library，不能一起跳过。
+        if (!force && _menus.containsKey(source.id)) return;
+        if (cacheOnly) return;
+        try {
+          _menus[source.id] = await repository.categories(
+            source.id,
+            force: force,
+          );
+          _menuRevision++;
+        } catch (_) {
+          // 已经被新一轮接管：这轮的结果不会再更新界面，失败也不用记
+          // （否则旧轮会给新轮留下一条假错误）。
+          if (generation != null && generation != _categoryGeneration) return;
+          // 请求失败时不要把空结果写进缓存，否则下次进来还是没有分类。
+          if (!_menus.containsKey(source.id)) {
+            failures.add(source.groupName);
+          }
+        }
+      },
+      stopped: generation == null
+          ? null
+          : () => generation != _categoryGeneration,
+    );
     return failures.isEmpty ? null : '部分分类暂未加载，点击重试';
   }
 
