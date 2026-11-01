@@ -362,8 +362,12 @@ class _HomeScreenState extends State<HomeScreen> {
     //
     // 黄果组除外：它的三个源是同一站点的不同后端（视频 / AI / 旧版），
     // 聚合会让同一部剧重复出现，保持原行为（落到组内首个源）。
-    final aggregate =
-        group.id != 'all' && group.id != 'huangguo' && group.sources.length > 1;
+    // [+161] 不能拿「源数 > 1」当聚合条件：分组可能只剩一个源（Kazumi 规则
+    // 被删、启动时运行时注册表还没同步完，动漫源集合就只剩青空）。这时若因为
+    // length == 1 不记 groupId，集合会被「当前源」反推成青空的独占组——点
+    // 「动漫源集合」实际选中青空，标题和勾选都跑掉。只要不是「全部站源」和
+    // 「黄果」这两个特例，就记住分组 id；单源集合照常按集合展示。
+    final aggregate = group.id != 'all' && group.id != 'huangguo';
     _changeSource(
       group.sources.first,
       allSources: group.id == 'all',
