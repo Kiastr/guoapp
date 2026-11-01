@@ -38,10 +38,10 @@ class SourceSite {
     _ =>
       isRuntime
           ? id.startsWith('drpy:')
-              ? 'drpy'
-              : id.startsWith('kazumi:')
-              ? 'anime'
-              : 'libretv'
+                ? 'drpy'
+                : id.startsWith('kazumi:')
+                ? 'anime'
+                : 'libretv'
           : id,
   };
   String get groupName => switch (groupId) {
@@ -127,6 +127,7 @@ class SourceSite {
     ...(allSourcesEnabled ? knownValues : [hongguo]),
     ...runtimeValues,
   ];
+
   /// 站源 ID 集合缓存。
   ///
   /// `isAvailable` / `isPrimary` 会被 `allowsSource` **逐条**调用：首页
@@ -145,8 +146,9 @@ class SourceSite {
       (_availableCache ??= {for (final site in values) site.id}).contains(id);
   static bool isKnown(String id) =>
       allValues.any((site) => site.id == id) || _runtimeSources.containsKey(id);
-  static bool isPrimary(String id) =>
-      (_primaryCache ??= {for (final site in primaryValues) site.id}).contains(id);
+  static bool isPrimary(String id) => (_primaryCache ??= {
+    for (final site in primaryValues) site.id,
+  }).contains(id);
   static bool isRestricted(String id) =>
       restrictedValues.any((site) => site.id == id);
 
@@ -175,16 +177,17 @@ class SourceGroup {
   /// 运行时源（LibreTV / drpy / Kazumi）在后。一旦青空被隐藏或当前用户无权
   /// 访问它，「动漫源集合」就只剩 Kazumi 运行时源撑着，会掉到 drpy 脚本源
   /// 集合后面——同一个分组在不同机器上位置不一样。这里显式定序：动漫源集合
-  /// 与预制源集合始终排在 drpy 脚本源集合之前。
+  /// 紧跟青空，预制源集合紧随其后（两个多源集合连在一起），两者都排在
+  /// drpy 脚本源集合之前。
   ///
   /// 表里没有的分组（用户导入后被收藏的 `drpy:xxx`、未来新增的站源）按所属
   /// 分组排位，都不在则排在末尾、保持相对顺序。
   static const defaultGroupOrder = <String>[
     'hongguo', // 红果
     'hanxiaoquan', // 韩小圈（收藏时才独占一组）
-    'preset', // 预制源集合
     'sorani', // 青空（收藏时才独占一组）
     'anime', // 动漫源集合
+    'preset', // 预制源集合（排在动漫源集合之后）
     'huangdou',
     'huangju',
     'yeguo',
@@ -230,16 +233,18 @@ class SourceGroup {
 
     final keys = groups.keys.toList(growable: false);
     final natural = {for (var i = 0; i < keys.length; i++) keys[i]: i};
-    final sorted = keys.toList()..sort((a, b) {
-      final byOrder = rank(a).compareTo(rank(b));
-      if (byOrder != 0) return byOrder;
-      // 收藏独占组紧挨着它的所属分组、排在其前面（青空 → 动漫源集合）。
-      final byFavorite =
-          (favoriteGroup[a]! ? 0 : 1).compareTo(favoriteGroup[b]! ? 0 : 1);
-      if (byFavorite != 0) return byFavorite;
-      // 兜底保持「首次出现」的相对顺序，保证同一输入的输出稳定。
-      return natural[a]!.compareTo(natural[b]!);
-    });
+    final sorted = keys.toList()
+      ..sort((a, b) {
+        final byOrder = rank(a).compareTo(rank(b));
+        if (byOrder != 0) return byOrder;
+        // 收藏独占组紧挨着它的所属分组、排在其前面（青空 → 动漫源集合）。
+        final byFavorite = (favoriteGroup[a]! ? 0 : 1).compareTo(
+          favoriteGroup[b]! ? 0 : 1,
+        );
+        if (byFavorite != 0) return byFavorite;
+        // 兜底保持「首次出现」的相对顺序，保证同一输入的输出稳定。
+        return natural[a]!.compareTo(natural[b]!);
+      });
     return [
       for (final key in sorted)
         SourceGroup(

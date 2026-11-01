@@ -12,8 +12,9 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 import 'fixtures.dart';
 
 // 站源分组顺序（+157）：
-// - 出厂默认顺序 [SourceGroup.defaultGroupOrder]：动漫源集合与预制源集合
-//   始终排在 drpy 脚本源集合之前，不再取决于「分组由哪个源首次创建」
+// - 出厂默认顺序 [SourceGroup.defaultGroupOrder]：动漫源集合紧跟青空，
+//   预制源集合排在动漫源集合之后，两者都在 drpy 脚本源集合之前，不再取决于
+//   「分组由哪个源首次创建」
 //   （青空被隐藏 / 当前用户无权访问时，动漫源集合只剩 Kazumi 运行时源撑着，
 //   按旧逻辑会掉到 drpy 后面）；
 // - 收藏独占的源（青空 / 韩小圈 / 某个 drpy 脚本）跟着所属分组排位，并
@@ -58,25 +59,29 @@ void main() {
     final groups = SourceGroup.fromSources([
       SourceSite.hongguo,
       ...SourceSite.runtimeValues.where((site) => site.id.startsWith('drpy:')),
-      ...SourceSite.runtimeValues.where((site) => site.id.startsWith('kazumi:')),
+      ...SourceSite.runtimeValues.where(
+        (site) => site.id.startsWith('kazumi:'),
+      ),
     ]);
     final ids = groups.map((group) => group.id).toList();
     expect(ids, ['hongguo', 'anime', 'drpy']);
     expect(groups.firstWhere((group) => group.id == 'anime').name, '动漫源集合');
   });
 
-  test('出厂默认顺序：预制源集合排在 drpy 脚本源集合之前', () {
+  test('出厂默认顺序：预制源集合排在动漫源集合之后、drpy 之前', () {
     final groups = SourceGroup.fromSources([
       SourceSite.hongguo,
       ...SourceSite.runtimeValues.where((site) => site.id.startsWith('drpy:')),
       SourceSite.hanxiaoquan,
       SourceSite.guipian,
-      ...SourceSite.runtimeValues.where((site) => site.id.startsWith('kazumi:')),
+      ...SourceSite.runtimeValues.where(
+        (site) => site.id.startsWith('kazumi:'),
+      ),
     ]);
     expect(groups.map((group) => group.id).toList(), [
       'hongguo',
-      'preset',
       'anime',
+      'preset',
       'drpy',
     ]);
   });
@@ -97,9 +102,9 @@ void main() {
     expect(groups.map((group) => group.id).toList(), [
       'hongguo',
       'hanxiaoquan',
-      'preset',
       'sorani',
       'anime',
+      'preset',
       'drpy',
     ]);
   });
@@ -113,24 +118,20 @@ void main() {
 
     await store.setSourceOrder(['drpy', 'hongguo']);
     expect(store.explicitSourceOrder, ['drpy', 'hongguo']);
-    expect(
-      store.sourceOrder.take(2).toList(),
-      ['drpy', 'hongguo'],
-    );
+    expect(store.sourceOrder.take(2).toList(), ['drpy', 'hongguo']);
     // 出厂表里没排到的分组补在后面，保证新分组也有确定位置。
     expect(store.sourceOrder, contains('anime'));
 
-    final groups = SourceGroup.fromSources(
-      [
-        SourceSite.hongguo,
-        ...SourceSite.runtimeValues.where(
-          (site) => site.id.startsWith('drpy:'),
-        ),
-        SourceSite.sorani,
-      ],
-      groupOrder: store.sourceOrder,
-    );
-    expect(groups.map((group) => group.id).toList(), ['drpy', 'hongguo', 'anime']);
+    final groups = SourceGroup.fromSources([
+      SourceSite.hongguo,
+      ...SourceSite.runtimeValues.where((site) => site.id.startsWith('drpy:')),
+      SourceSite.sorani,
+    ], groupOrder: store.sourceOrder);
+    expect(groups.map((group) => group.id).toList(), [
+      'drpy',
+      'hongguo',
+      'anime',
+    ]);
 
     // 重启后仍在；传空列表即恢复出厂默认。
     final restarted = await createStore(platform);
