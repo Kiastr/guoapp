@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
 
 	"encoding/json"
 	"errors"
@@ -40,8 +39,14 @@ const (
 )
 
 var (
-	huangguoAIBaseURL     = "https://huangguoai.com"
-	huangguoAIBaseMirrors = []string{"https://huangguoai.com", "https://ttvoij.ediayikma.cc", "https://thu.ediayikma.cc", "https://pku.ediayikma.cc", "https://fdu.ediayikma.cc", "https://thu.agdkczeyx.cc"}
+	huangguoAIBaseURL = "https://huangguoai.com"
+	// 只留三个固定候选：官方域名 + 两个镜像族各一个。
+	//
+	// 曾经在官方之后插入 8 个按 URL 哈希生成的 `*.ediayikma.cc` 子域，再加
+	// 4 个固定镜像，单次请求最多要试 14 个域名。有梯子时官方本来就通，这些
+	// 候选全是死重量；官方偶尔抽风时反而要盲试十几个域名，每个 5 秒，搜索
+	// 直接转圈到超时。镜像只对「没梯子」有意义，留两个兜底即可。
+	huangguoAIBaseMirrors = []string{"https://huangguoai.com", "https://ttvoij.ediayikma.cc", "https://thu.agdkczeyx.cc"}
 	huangguoVideoBaseURL  = "https://huangguo.video"
 
 	huangguoAISlugs     = []string{"recommend", "newest", "ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai", "ranks/hot"}
@@ -516,7 +521,7 @@ func providerURLCandidates(rawURL string) []string {
 	if err != nil || u.Hostname() != "huangguoai.com" {
 		return []string{rawURL}
 	}
-	out := make([]string, 0, len(huangguoAIBaseMirrors)+8)
+	out := make([]string, 0, len(huangguoAIBaseMirrors))
 	seen := map[string]bool{}
 	add := func(candidate string) {
 		if candidate == "" || seen[candidate] {
@@ -525,12 +530,7 @@ func providerURLCandidates(rawURL string) []string {
 		seen[candidate] = true
 		out = append(out, candidate)
 	}
-	for i, mirror := range huangguoAIBaseMirrors {
-		if i == 1 {
-			for _, generated := range generatedHuangguoAIMirrors(rawURL, 8) {
-				add(rehostProviderURL(u, generated))
-			}
-		}
+	for _, mirror := range huangguoAIBaseMirrors {
 		add(rehostProviderURL(u, mirror))
 	}
 	if len(out) == 0 {
@@ -548,31 +548,6 @@ func rehostProviderURL(u *url.URL, mirror string) string {
 	copyURL.Scheme = mu.Scheme
 	copyURL.Host = mu.Host
 	return copyURL.String()
-}
-
-func generatedHuangguoAIMirrors(seed string, n int) []string {
-	if n <= 0 {
-		return nil
-	}
-	out := make([]string, 0, n)
-	seen := map[string]bool{}
-	for i := 0; len(out) < n && i < n*4; i++ {
-		sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", seed, i)))
-		hexText := fmt.Sprintf("%x", sum[:])
-		sub := strings.TrimLeft(hexText[:6], "0123456789")
-		if len(sub) < 4 {
-			sub = hexText[6:12]
-		}
-		if len(sub) > 6 {
-			sub = sub[:6]
-		}
-		if len(sub) < 3 || seen[sub] {
-			continue
-		}
-		seen[sub] = true
-		out = append(out, "https://"+sub+".ediayikma.cc")
-	}
-	return out
 }
 
 func providerRefererForURL(candidate, fallback string) string {

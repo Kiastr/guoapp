@@ -88,10 +88,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _error;
   int _generation = 0;
 
-  /// 软收工定时器。几十个源里总有一两个要挂满超时（单请求最长 60 秒），
-  /// 不能让「正在加载剧集」陪它一起转——到点先把已经回来的内容放出来。
-  Timer? _softLoadTimer;
-  static const _softLoadLimit = Duration(seconds: 20);
   int _tab = 0;
   String _submittedQuery = '';
   final _categorySelections = <String, String>{};
@@ -587,7 +583,6 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(_browser.cancel());
     unawaited(widget.repository.cancelSuggestions());
     _debounce?.cancel();
-    _softLoadTimer?.cancel();
     _heavyNoticeTimer?.cancel();
     _heavyNoticeHideTimer?.cancel();
     _search.dispose();
@@ -679,19 +674,8 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
     });
-    // 到点强制收工：即使还有源挂着重连，界面先回到可用状态。
-    _softLoadTimer?.cancel();
-    _softLoadTimer = Timer(_softLoadLimit, () {
-      if (!mounted || generation != _generation || !_loading) return;
-      setState(() {
-        _loading = false;
-        _stopHeavyNotice();
-        if (_items.isEmpty) _error = '部分站源响应超时，可下拉重试';
-      });
-    });
     void accept(CatalogPage result, {bool cached = false}) {
       if (!mounted || generation != _generation) return;
-      _softLoadTimer?.cancel();
       setState(() {
         _items = result.items;
         _itemsRevision++;
