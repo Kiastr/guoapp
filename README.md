@@ -2,13 +2,13 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+170**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+171**。
 
 如要使用多片源请使用真果鉴
 
 ## 在原项目基础上的主要升级
 
-> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+170（+83 ~ +169，共 87 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
+> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+171（+83 ~ +170，共 88 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
 
 ### 1. 运行时片源生态——支持纯用户端解析libretv需要后端解析的视频源（重要改动）
 
@@ -46,10 +46,11 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **卡顿修复**：轮询状态签名去重 + 首页分组缓存，消除周期性整页重建
 - **错误提示人话化**：接口返回网页、缺少函数、jar 包源等分别给出具体原因，不再统一显示「类型暂不支持」
 
-## 最近更新（0.2.74+170）
+## 最近更新（0.2.74+171）
 
 | 版本 | 变更 |
 | --- | --- |
+| +171 | **黄果家族单独并发池，AI 候选只留官方**。① **分池**：`requestLimiter` 从「内置源 3 / 第三方源 8」两档改成三档——其他内置源仍是 3，黄果家族（AI / 视频 / 旧版）单独 3，第三方 8。原来七个内置源抢同一个 3，黄果三源经常排到红果 / 野果 / 黄豆后面（明明自己的源没挂，却半天不出内容）。分池后三源各一条、不再看别人脸色；同一 source 内的目录与详情仍由 `gate.busy` 串行，所以配额只能到 3，给 4 也用不上。② **候选收敛**：`huangguoAIBaseMirrors` 从 3 个缩到 1 个，只留 `huangguoai.com`。实测官方通信成功率最高，两个镜像（`*.ediayikma.cc` / `*.agdkczeyx.cc`）明显更低，有梯子时反而更慢；官方抽风时盲试 3 个域名（每个 5 秒）会把「搜索后点剧集」拖成 15 秒。测试：`network_limiter_test.go` 新增 `TestRequestLimiterHuangguoFamilyHasOwnPool`（两个方向各验一次：内置源占满不挡黄果、黄果占满不挡内置源），`provider_huangguo_episodes_test.go` 新增 `TestProviderURLCandidatesOnlyOfficialDomain`。 |
 | +170 | **撤掉软收工，黄果候选缩回三个**。① **软收工删除**：+169 加的 20 秒强制收工只把 `_loading` 置 false、撤提示，`_browser.load` 仍在跑，**一个请求槽位都不还**——按「省线程」的理由不成立，真正回收槽位靠 `cancelCatalog()` / `cancelCategories()`。删掉定时器、`_softLoadLimit`、`'部分站源响应超时，可下拉重试'` 与对应用例，加载回到「内容回来才结束」。② **黄果候选从 14 个缩到 3 个固定**：`huangguoai.com` + `ttvoij.ediayikma.cc` + `thu.agdkczeyx.cc`。原实现会在官方之后插入 8 个按 URL 哈希生成的 `*.ediayikma.cc` 子域，再叠 4 个固定镜像；有梯子时官方本来就通，多出来的候选全是死重量，官方偶尔抽风时还要盲试十几个域名（每个 5 秒），把搜索拖成转圈。镜像只对「没梯子」有意义，留两个兜底足够。测试：`heavy_load_feedback_test.dart` 去掉软收工用例后 8 例全过；`provider_huangguo_episodes_test.go` 四例不变。 |
 | +169 | **黄果源四项修复**。① **集数混入推荐剧**：视频页全页的 `/video/<id>/` 链接里混着「相关推荐 / 猜你喜欢 / 排行榜」的其他剧，旧实现整页扫一遍，于是「集数超出实际集数，前后几集是无关视频」。现在先收窄到真正的选集容器（`data-web-play-ep-grid`），再按链接里的视频 ID 过滤，集数优先取 `data-ep-id`（比从标题抠数字准）；detail ID 与 video ID 不是同一套时退回旧的全页行为，不会给空选集。② **竖屏剧画面太小**：`LunaExoVideoView` 的 `fit` 参数此前是死参数——内部写死 `Center + AspectRatio`，传什么都不生效。改用 `FittedBox` 承载真实 fit，控制栏末尾加「填充」按钮：适应 → 裁剪铺满 → 拉伸铺满 循环（放末尾是为了不打断 TV 遥控器已有的左右键路径）。③ **连点卡片冒出多个播放窗口**：`repository.detail()` 要一两秒，期间界面静止，用户会反复点，每点一次多一个请求、多一层播放页，叠到限流就是 `context deadline exceeded`。现在同一部剧在打开过程中忽略后续点击，并立刻弹「正在打开「XX」…」。④ **搜索后一直转圈**：几十个源里总有一两个要挂满超时（单请求最长 60 秒），「正在加载剧集」跟着一起转。加 20 秒软收工——到点先放出已到的内容，仍空则提示「部分站源响应超时，可下拉重试」。测试：`provider_huangguo_episodes_test.go` 四例（含推荐剧过滤与 ID 不一致兜底）、`player_screen_test.dart` 填充按钮三档循环、`playback_open_guard_test.dart` 连点只发一次详情、`heavy_load_feedback_test.dart` 全源挂住 20 秒停止转圈。 |
 | +168 | **卡片「⋯」菜单加「收藏此站源」**。背景：收藏站源原先只有两个入口——站源管理页的星、详情页 / 播放页简介里的星；卡片菜单里没有，用户想收藏当前这部剧的源得先绕去别的页面。现在 `showDramaActions` 在「多选下载」之后固定加一项：未收藏时显示空心星 +「收藏此站源」，已收藏时显示实心星 +「取消收藏此站源」，点击后 SnackBar 提示「已收藏「XX」，首页将独立显示该片源」/「已取消收藏「XX」」。与另外两处入口共用 `LocalStore.toggleFavoriteSource`，三处状态实时同步；收藏后首页 `SourceGroup.fromSources` 把该源从大组拆出独占一组（红果这类本来就是独占组的源只变状态、不重复建组）。首页卡片与追剧页卡片共用同一次调用，两个列表都能用。测试：`test/drama_actions_favorite_source_test.dart`（菜单项出现 → 收藏 → 再开菜单变「取消收藏」→ 取消，含 SnackBar 文案）。 |
@@ -458,6 +459,9 @@ LibreTV 的解析层按采集格式分两个文件，新增格式时按同样方
 
 ### 黄果源镜像（已决定不做自适应）
 
-- **结论**：不引入发布页 / footer 动态镜像池。用户实测官方 `huangguoai.com` 通信成功率最高，两个镜像族更差；有梯子时官方直连最快，镜像绕路反而更卡。镜像只对「没梯子」有意义，因此候选池固定为三个：官方 + `ttvoij.ediayikma.cc` + `thu.agdkczeyx.cc`。
-- **历史记录**：发布页 `https://huangguoai.pages.dev/publish.js`（脚本版本 `?20261029`）里 `var urls=[...]` 是当前根域名池，另有 `otherUrls`、`foreverUrls`；任意成功响应页 footer 的 `hg-footer__addrs`（「备用入口 / 最新地址 / 永久地址发布页」）也能回填。真要重启这个方案，从这两处取域名，并同步改 `providerSourceForURL` 的后缀白名单（现在只认 `huangguoai.com`、`*.ediayikma.cc`、`*.agdkczeyx.cc`）——候选池重写域名与识别器认域名是两件事，必须一起改。
-- **`*.dsqqahhno.cc` 那批**：用户提醒随时过期，不写死、不接入。
+- **结论**：不引入发布页 / footer 动态镜像池。实际抓取后确认「永久地址」不是内容站：
+  - `https://huangguoai.ai`（发布页 `foreverUrls` 里的永久地址）是**导航页**，`/detail/10586/`、`/recommend/` 全部 404，页面只负责列出最新入口；
+  - 该导航页当前指向 `xvlp.dsqqahhno.cc` / `ajbcs.dsqqahhno.cc` / `j0176.dsqqahhno.cc`（沙箱实测均 200），这类 `*.cc` 域名会轮换，写死必然过期；
+  - 发布页 `https://huangguoai.pages.dev/publish.js` 的 `urls[]` 是 `jxqgmx5ga.cc` / `arj2ftl0.cc` / `40ygo615.cc`（同为临时域名），`otherUrls` 是两个 pages.dev 发布页，`foreverUrls` 只有 `huangguoai.com`、空 `JumpPage`、`huangguoai.ai`。
+- **所以**：唯一稳定的内容域名就是 `huangguoai.com`，候选池固定为它一个。镜像域名（`*.ediayikma.cc` / `*.agdkczeyx.cc`）通信成功率低于官方、有梯子时更慢，已从候选池移除；`providerSourceForURL` 里仍保留这两个后缀的识别，旧缓存里的图片 URL 还能正常带 Referer。
+- **真要做无梯子兜底**：只能在运行时抓 `huangguoai.ai` 导航页、解析 `href="https://xxx.dsqqahhno.cc"`，把命中的域名临时塞进候选池，并同步扩 `providerSourceForURL` 的白名单。不写死、不预置。

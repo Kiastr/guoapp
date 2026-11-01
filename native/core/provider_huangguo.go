@@ -40,13 +40,15 @@ const (
 
 var (
 	huangguoAIBaseURL = "https://huangguoai.com"
-	// 只留三个固定候选：官方域名 + 两个镜像族各一个。
+	// 黄果 AI 的内容域名只留官方一个。
 	//
-	// 曾经在官方之后插入 8 个按 URL 哈希生成的 `*.ediayikma.cc` 子域，再加
-	// 4 个固定镜像，单次请求最多要试 14 个域名。有梯子时官方本来就通，这些
-	// 候选全是死重量；官方偶尔抽风时反而要盲试十几个域名，每个 5 秒，搜索
-	// 直接转圈到超时。镜像只对「没梯子」有意义，留两个兜底即可。
-	huangguoAIBaseMirrors = []string{"https://huangguoai.com", "https://ttvoij.ediayikma.cc", "https://thu.agdkczeyx.cc"}
+	// 曾经带 4 个固定镜像 + 8 个按 URL 哈希生成的 `*.ediayikma.cc` 子域，
+	// 单次请求最多试 14 个域名。实测官方通信成功率最高，镜像（ediayikma /
+	// agdkczeyx）明显更低，有梯子时反而更慢；官方抽风时它们也未必救得回来，
+	// 只是把 5 秒超时乘上十几倍。发布页里的「永久地址」https://huangguoai.ai
+	// 是导航页（/detail/ 返回 404），不能当内容候选；`*.dsqqahhno.cc` 那批
+	// 是临时域名、随时轮换，不写死。
+	huangguoAIBaseMirrors = []string{"https://huangguoai.com"}
 	huangguoVideoBaseURL  = "https://huangguo.video"
 
 	huangguoAISlugs     = []string{"recommend", "newest", "ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai", "ranks/hot"}

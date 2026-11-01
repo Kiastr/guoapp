@@ -315,10 +315,12 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	cfg.dataDir = directory
 	router := &proxyRouter{}
 	d := &Downloader{cfg: cfg, providerHosts: map[string]string{}, proxyRouter: router,
-		// 内置源沿用原作者的并发 3（红果 / 黄果 / 野果等有账号与反爬风控，
-		// 不能因为「想快」去动它）；用户导入的第三方源另用 8。
-		// 每个 host 仍有 gate.busy + 250ms 间隔兜底，单个站点不会被打爆。
-		limiter:     newRequestLimiterWithExternal(3, 8, 250*time.Millisecond),
+		// 其他内置源沿用原作者的并发 3（红果 / 野果 / 黄豆等有账号与反爬
+		// 风控，不能因为「想快」去动它）；黄果家族（AI / 视频 / 旧版）
+		// 单独给 3——正好三源各一条。原来七个内置源抢同一个 3，黄果经常
+		// 只能拿到一两条；分池后它不再排在内置源队尾。用户导入的第三方源
+		// 另用 8。每个 host 仍有 gate.busy + 250ms 间隔兜底，单站不会被打爆。
+		limiter:     newRequestLimiterWithExternal(3, 3, 8, 250*time.Millisecond),
 		diagnostics: newDiagnosticLog(directory)}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}

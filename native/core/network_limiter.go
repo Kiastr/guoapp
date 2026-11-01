@@ -77,14 +77,25 @@ func (d *Downloader) catalogResponseError(request *http.Request, response *http.
 }
 
 type requestLimiter struct {
-	// concurrency 内置源（红果 / 黄果 / 野果…）的全局并发上限。
+	// concurrency 其他内置源（红果 / 野果 / 黄豆 / 剧果…）的全局并发上限。
 	// 沿用原作者的值，不要为了「快」去动它——那些源有账号与反爬风控。
 	concurrency int
+	// huangguoConcurrency 黄果家族（AI / 视频 / 旧版）的全局并发上限。
+	//
+	// 三个源是同一家的三条产品线，共享 CDN 与风控后台，所以不能按第三方源
+	// 放到 8；但它们又确实是三个站点、三条独立队列，塞进内置源的 3 个名额
+	// 会排到红果 / 野果 / 黄豆后面（七抢三）。单独给 3，等于三源各一条，
+	// 不再看其他内置源的脸色。
+	//
+	// 注意这里只能到 3：同一 source 名下的请求还要过 gate.busy 串行，
+	// 目录和详情都算同一条队，给 4 也用不上。
+	huangguoConcurrency int
 	// externalConcurrency 第三方源（用户导入的 libretv / drpy / 规则源）
 	// 的全局并发上限。这些是几十个互不相干的小站，各请求一次。
 	externalConcurrency int
-	// active / activeExternal 分别统计两类源当前在飞的数量。
+	// active / activeHuangguo / activeExternal 分别统计三类源当前在飞的数量。
 	active             int
+	activeHuangguo     int
 	activeExternal     int
 	foregroundWaiting  int
 	lastForeground     time.Time
@@ -99,27 +110,35 @@ type requestLimiter struct {
 type backgroundCatalogKey struct{}
 
 func newRequestLimiter(concurrency int, interval time.Duration) *requestLimiter {
-	return newRequestLimiterWithExternal(concurrency, concurrency, interval)
+	return newRequestLimiterWithExternal(concurrency, concurrency, concurrency, interval)
 }
 
-// newRequestLimiterWithExternal 内置源与第三方源使用不同的全局并发上限。
+// newRequestLimiterWithExternal 内置源 / 黄果家族 / 第三方源使用不同的全局并发上限。
 //
 // 为什么要分开：`concurrency` 是原作者为**内置源**（红果 / 黄果 / 野果等）
 // 定的保守值，那些站点有反爬与账号风控，并发必须压住。用户导入的
 // libretv / drpy / 规则源是几十个**互不相干**的第三方小站，各请求一次，
 // 沿用同一个全局上限就变成排队（表现：点开「全部站源」半天不出内容）。
 //
-// 两者仍然共享：同一 host 串行（gate.busy）+ 同 host 请求间隔 interval，
+// 黄果家族（AI / 视频 / 旧版）单独一档：它们是同一家、共享风控，不能按
+// 第三方源放到 8；但又是三个不同站点，挤在内置源的 3 个名额里会互相
+// 排队（三源各 1 条目录就把名额占满，详情只能等）。给 4 留一条给详情。
+//
+// 三者仍然共享：同一 host 串行（gate.busy）+ 同 host 请求间隔 interval，
 // 所以放宽的只是「不同站点之间」的并行度，单个站点不会被打爆。
-func newRequestLimiterWithExternal(concurrency, externalConcurrency int, interval time.Duration) *requestLimiter {
+func newRequestLimiterWithExternal(concurrency, huangguoConcurrency, externalConcurrency int, interval time.Duration) *requestLimiter {
 	if concurrency < 1 {
 		concurrency = 1
+	}
+	if huangguoConcurrency < 1 {
+		huangguoConcurrency = concurrency
 	}
 	if externalConcurrency < 1 {
 		externalConcurrency = concurrency
 	}
 	return &requestLimiter{
 		concurrency:         concurrency,
+		huangguoConcurrency: huangguoConcurrency,
 		externalConcurrency: externalConcurrency,
 		interval:            interval,
 		gates:               map[string]*requestGate{},
@@ -148,6 +167,10 @@ func (limiter *requestLimiter) acquire(ctx context.Context, request *http.Reques
 			builtin = true // 内置源的 CDN，同样保守对待
 		}
 	}
+	// huangguo = 黄果家族（AI / 视频 / 旧版）。三源同属一家、共享风控，
+	// 但不能和其他内置源挤同一个 3 名额池：七抢三时黄果经常只拿到一两条。
+	// 单独一档 3，正好三源各一条；同 source 的目录 / 详情仍由 gate 串行。
+	huangguo := source == sourceHuangguoAI || source == sourceHuangguoVideo || source == sourceCloudFront
 	limiter.mu.Lock()
 	if !background {
 		limiter.foregroundWaiting++
@@ -184,20 +207,27 @@ func (limiter *requestLimiter) acquire(ctx context.Context, request *http.Reques
 				delay = idleDelay
 			}
 		}
-		// 内置源与第三方源分别计数：内置源沿用原作者的保守上限（风控），
-		// 第三方源用更大的上限（几十个不同小站各请求一次，不该排队）。
+		// 三档分别计数：其他内置源沿用原作者的保守上限（风控），黄果家族
+		// 单独一档（三源各一条，不跟红果等七抢三），第三方源用更大的上限
+		// （几十个不同小站各请求一次，不该排队）。
 		limit := limiter.concurrency
 		active := limiter.active
-		if !builtin {
+		if huangguo {
+			limit = limiter.huangguoConcurrency
+			active = limiter.activeHuangguo
+		} else if !builtin {
 			limit = limiter.externalConcurrency
 			active = limiter.activeExternal
 		}
 		lowPriorityReady := !background ||
-			limiter.foregroundWaiting == 0 && limiter.active == 0 && limiter.activeExternal == 0
+			limiter.foregroundWaiting == 0 && limiter.active == 0 &&
+				limiter.activeHuangguo == 0 && limiter.activeExternal == 0
 		if lowPriorityReady && !gate.busy && active < limit && delay <= 0 {
 			gate.busy = true
 			gate.lastStart = time.Now()
-			if builtin {
+			if huangguo {
+				limiter.activeHuangguo++
+			} else if builtin {
 				limiter.active++
 			} else {
 				limiter.activeExternal++
@@ -226,7 +256,9 @@ func (limiter *requestLimiter) acquire(ctx context.Context, request *http.Reques
 	return func() {
 		once.Do(func() {
 			limiter.mu.Lock()
-			if builtin {
+			if huangguo {
+				limiter.activeHuangguo--
+			} else if builtin {
 				limiter.active--
 			} else {
 				limiter.activeExternal--

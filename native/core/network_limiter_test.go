@@ -27,7 +27,7 @@ func newTestRequest() *http.Request {
 // TestRequestLimiterAllowsConcurrentHosts 不同 host 可以并发到上限。
 func TestRequestLimiterAllowsConcurrentHosts(t *testing.T) {
 	const want = 8
-	limiter := newRequestLimiterWithExternal(3, want, time.Millisecond)
+	limiter := newRequestLimiterWithExternal(3, 3, want, time.Millisecond)
 	// 用 8 个不同的 host，每个都应当能立刻拿到令牌。
 	hosts := []string{
 		"a.example.com", "b.example.com", "c.example.com", "d.example.com",
@@ -70,7 +70,7 @@ func TestRequestLimiterAllowsConcurrentHosts(t *testing.T) {
 
 // TestRequestLimiterSerializesSameHost 同一 host 仍然串行（保护小站）。
 func TestRequestLimiterSerializesSameHost(t *testing.T) {
-	limiter := newRequestLimiterWithExternal(3, 8, time.Millisecond)
+	limiter := newRequestLimiterWithExternal(3, 3, 8, time.Millisecond)
 	var mu sync.Mutex
 	inFlight := 0
 	peak := 0
@@ -107,7 +107,7 @@ func TestRequestLimiterSerializesSameHost(t *testing.T) {
 // TestRequestLimiterSpacesSameHost 同一 host 的两次请求之间有最小间隔。
 func TestRequestLimiterSpacesSameHost(t *testing.T) {
 	const interval = 80 * time.Millisecond
-	limiter := newRequestLimiterWithExternal(3, 8, interval)
+	limiter := newRequestLimiterWithExternal(3, 3, 8, interval)
 	request, _ := http.NewRequest(http.MethodGet, "https://spaced.example.com/x", nil)
 	first, err := limiter.acquire(context.Background(), request)
 	if err != nil {
@@ -133,15 +133,16 @@ func TestRequestLimiterSpacesSameHost(t *testing.T) {
 // 封号；用户导入的第三方向才需要更高并行度。两者必须是两套计数。
 func TestRequestLimiterBuiltinSourcesKeepConservativeLimit(t *testing.T) {
 	const builtinLimit = 3
-	limiter := newRequestLimiterWithExternal(builtinLimit, 8, time.Millisecond)
-	// 用多个不同 host，但都映射到内置源（hongguoduanju.com 及其变体）。
+	limiter := newRequestLimiterWithExternal(builtinLimit, builtinLimit, 8, time.Millisecond)
+	// 用多个不同 host，但都映射到「其他内置源」（红果 / 黄豆 / 剧果 / 野果）。
+	// 黄果家族有独立的一档，不在这里测（见 TestRequestLimiterHuangguoFamilyHasOwnPool）。
 	hosts := []string{
 		"hongguoduanju.com",
 		"www.hongguoduanju.com",
-		"huangguoai.com",
-		"huangguo.video",
 		"tideember.cc",
 		"huangju.net",
+		"ygdj7.com",
+		"dsd.com.se",
 	}
 	var mu sync.Mutex
 	inFlight := 0
@@ -173,5 +174,80 @@ func TestRequestLimiterBuiltinSourcesKeepConservativeLimit(t *testing.T) {
 	wg.Wait()
 	if peak > builtinLimit {
 		t.Fatalf("内置源并发峰值 %d 超过上限 %d——红果等源可能被风控", peak, builtinLimit)
+	}
+}
+
+// TestRequestLimiterHuangguoFamilyHasOwnPool 黄果家族与「其他内置源」分开计数。
+//
+// 黄果三源（AI / 视频 / 旧版）都不该排到红果 / 野果 / 黄豆队尾，也不该
+// 因为自己占满就把其他内置源堵死——两个方向各验一次。
+func TestRequestLimiterHuangguoFamilyHasOwnPool(t *testing.T) {
+	limiter := newRequestLimiterWithExternal(3, 3, 8, time.Millisecond)
+	ctx := context.Background()
+
+	acquire := func(host string) (func(), error) {
+		request, err := http.NewRequest(http.MethodGet, "https://"+host+"/x", nil)
+		if err != nil {
+			return nil, err
+		}
+		return limiter.acquire(ctx, request)
+	}
+	mustAcquire := func(host string) func() {
+		release, err := acquire(host)
+		if err != nil {
+			t.Fatalf("%s acquire 失败：%v", host, err)
+		}
+		return release
+	}
+
+	// ① 先占满「其他内置源」的 3 个名额。
+	var others []func()
+	for _, host := range []string{"hongguoduanju.com", "ygdj7.com", "tideember.cc"} {
+		others = append(others, mustAcquire(host))
+	}
+	// 黄果 AI 必须立刻拿到名额，而不是排在内置源队尾。
+	type result struct {
+		release func()
+		err     error
+	}
+	got := make(chan result, 1)
+	go func() {
+		release, err := acquire("huangguoai.com")
+		got <- result{release, err}
+	}()
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("黄果 AI acquire 失败：%v", r.err)
+		}
+		r.release()
+	case <-time.After(time.Second):
+		t.Fatal("其他内置源占满后黄果 AI 仍被阻塞——两个池没有分开")
+	}
+	for _, release := range others {
+		release()
+	}
+
+	// ② 反向：占满黄果三源（三个不同 source），红果仍能立刻拿到名额。
+	var huangguo []func()
+	for _, host := range []string{"huangguoai.com", "huangguo.video", "a.cloudfront.net"} {
+		huangguo = append(huangguo, mustAcquire(host))
+	}
+	got = make(chan result, 1)
+	go func() {
+		release, err := acquire("hongguoduanju.com")
+		got <- result{release, err}
+	}()
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("红果 acquire 失败：%v", r.err)
+		}
+		r.release()
+	case <-time.After(time.Second):
+		t.Fatal("黄果三源占满后红果被阻塞——两个池没有分开")
+	}
+	for _, release := range huangguo {
+		release()
 	}
 }

@@ -88,3 +88,21 @@ func TestHuangguoEpisodesIndexFromTitle(t *testing.T) {
 		t.Fatalf("集数解析应为 11、12，实际 %d、%d", episodes[0].Index, episodes[1].Index)
 	}
 }
+
+// TestProviderURLCandidatesOnlyOfficialDomain 黄果 AI 只保留官方域名。
+//
+// 镜像（ediayikma / agdkczeyx）通信成功率低于官方，有梯子时反而更慢；
+// 官方抽风时盲试多个域名只会把 5 秒超时乘上十几倍。这条护栏防止以后
+// 又有人「顺手加两个备用域名」。
+func TestProviderURLCandidatesOnlyOfficialDomain(t *testing.T) {
+	d := &Downloader{}
+	raw := "https://huangguoai.com/detail/10586/"
+	if got := d.providerURLCandidates(raw); len(got) != 1 || got[0] != raw {
+		t.Fatalf("黄果 AI 只应保留官方候选，实际 %v", got)
+	}
+	// 黄果视频是独立站点，本来就不走候选池。
+	video := "https://huangguo.video/abc/"
+	if got := d.providerURLCandidates(video); len(got) != 1 || got[0] != video {
+		t.Fatalf("黄果视频不该走候选池，实际 %v", got)
+	}
+}
