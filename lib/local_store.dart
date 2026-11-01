@@ -307,15 +307,20 @@ class LocalStore extends ChangeNotifier {
   /// [ids] 为当前可见分组（含收藏独占组）的 id 列表，按想要的顺序排列。
   /// 传空列表即恢复出厂默认。
   Future<void> setSourceOrder(List<String> ids) => _queue(() async {
-    final next = [for (final id in ids) if (id.trim().isNotEmpty) id.trim()];
+    final next = [
+      for (final id in ids)
+        if (id.trim().isNotEmpty) id.trim(),
+    ];
     await _commit({_key('sourceOrder'): jsonEncode(next)});
     _loadLibrary();
     _notify();
   });
 
   /// 隐藏的运行时片源 ID 集合（拷贝，不含取消墓碑）。
-  Set<String> get hiddenSourceIds =>
-      {for (final entry in _hiddenStamps.entries) if (entry.value.on) entry.key};
+  Set<String> get hiddenSourceIds => {
+    for (final entry in _hiddenStamps.entries)
+      if (entry.value.on) entry.key,
+  };
 
   bool isFavoriteSource(String id) => favoriteSourceIds.contains(id);
 
@@ -334,17 +339,15 @@ class LocalStore extends ChangeNotifier {
       throw StateError('片源无效');
     }
     final next = Map.of(_favoriteStamps);
-    // 出厂默认收藏的源（青空 / 韩小圈）本机没有记录，取反要以「当前生效
-    // 状态」为准：直接对 _favoriteStamps 取反会把第一次取消点成「收藏」，
-    // 用户会觉得按钮没反应。
+    // 出厂默认收藏的源（现只剩青空；韩小圈 [+163] 已改为默认不收藏）本机
+    // 没有记录，取反要以「当前生效状态」为准：直接对 _favoriteStamps 取反会
+    // 把第一次取消点成「收藏」，用户会觉得按钮没反应。
     final current = next[source]?.on ?? favoriteSourceIds.contains(source);
     next[source] = _SourceStamp(
       at: DateTime.now().millisecondsSinceEpoch,
       on: !current,
     );
-    await _commit({
-      _key('favoriteSources'): _encodeSourceStamps(next),
-    });
+    await _commit({_key('favoriteSources'): _encodeSourceStamps(next)});
     _loadLibrary();
     _notify();
   });
@@ -362,9 +365,7 @@ class LocalStore extends ChangeNotifier {
       at: DateTime.now().millisecondsSinceEpoch,
       on: next[source]?.on != true,
     );
-    await _commit({
-      _key('hiddenSources'): _encodeSourceStamps(next),
-    });
+    await _commit({_key('hiddenSources'): _encodeSourceStamps(next)});
     _loadLibrary();
     _notify();
   });
@@ -592,11 +593,7 @@ class LocalStore extends ChangeNotifier {
     }
     _sourceHealthSavedAt = now;
     final raw = _sourceHealth.toJson();
-    unawaited(
-      _queue(
-        () => _commit({'sourceHealth': raw}, trackSync: false),
-      ),
-    );
+    unawaited(_queue(() => _commit({'sourceHealth': raw}, trackSync: false)));
   }
 
   /// 用户在站源管理里手动重试时清掉记录，避免「刚修好还被跳过」。
@@ -753,7 +750,9 @@ class LocalStore extends ChangeNotifier {
       await _commit({
         _key('source'): source,
         _key('catalogView'): jsonEncode(
-          catalogView.copyWith(allSources: allSources, groupId: groupId).toJson(),
+          catalogView
+              .copyWith(allSources: allSources, groupId: groupId)
+              .toJson(),
         ),
       });
       _notify();
@@ -929,7 +928,8 @@ class LocalStore extends ChangeNotifier {
       if (decoded is List) {
         return {
           for (final id in decoded.whereType<String>())
-            if (id.trim().isNotEmpty) id.trim(): const _SourceStamp(at: 0, on: true),
+            if (id.trim().isNotEmpty)
+              id.trim(): const _SourceStamp(at: 0, on: true),
         };
       }
       if (decoded is! Map) return {};
@@ -1212,11 +1212,8 @@ class LocalStore extends ChangeNotifier {
       final historyJson = historyChanged
           ? jsonEncode(history.values.map((entry) => entry.toJson()).toList())
           : '';
-      final statesJson = statesChanged
-          ? _encodeFollowStates(states)
-          : '';
-      final seriesCandidateJson =
-          cacheSeriesCandidates && seriesChanged
+      final statesJson = statesChanged ? _encodeFollowStates(states) : '';
+      final seriesCandidateJson = cacheSeriesCandidates && seriesChanged
           ? jsonEncode(
               (seriesCandidates.values.toList()
                     ..sort((a, b) => a.id.compareTo(b.id)))
