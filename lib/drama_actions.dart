@@ -16,6 +16,7 @@ Future<void> showDramaActions(
 }) async {
   final epoch = store.profileEpoch;
   final following = store.following(drama.id);
+  final favoriteSource = store.isFavoriteSource(drama.source);
   final choices = <(String, String, IconData)>[
     if (onContinue != null && store.watched(drama.id) != null)
       ('continue', '继续观看', Icons.play_arrow_rounded),
@@ -36,6 +37,15 @@ Future<void> showDramaActions(
       ('download', '下载选集', Icons.download_outlined),
     if (onSelect != null && store.canDownload)
       ('select', '多选下载', Icons.checklist_rounded),
+    // 源级操作：收藏的是「这部剧所在的站源」，不是这部剧本身。
+    // 与详情页片源行、播放页简介里的星共用 LocalStore.toggleFavoriteSource：
+    // 收藏后首页把该源从所属大组拆出、独占一组（+155 起内置源同样可收藏），
+    // 取消则只剩大组入口。状态用实心/空心星区分，与另外两处入口一致。
+    (
+      'favoriteSource',
+      favoriteSource ? '取消收藏此站源' : '收藏此站源',
+      favoriteSource ? Icons.star_rounded : Icons.star_border_rounded,
+    ),
     if (history && store.watched(drama.id) != null)
       ('removeHistory', '删除这条观看记录', Icons.history_toggle_off),
   ];
@@ -91,6 +101,23 @@ Future<void> showDramaActions(
       if (store.canDownload) onDownload?.call();
     case 'select':
       if (store.canDownload) onSelect?.call();
+    case 'favoriteSource':
+      // 与详情页 / 播放页同一套提示语，三处入口的表现保持一致。
+      final sourceName = SourceSite.byId(drama.source).name;
+      await saveUserChange(
+        context,
+        () => store.toggleFavoriteSource(drama.source),
+      );
+      if (context.mounted) {
+        final favorite = store.isFavoriteSource(drama.source);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              favorite ? '已收藏「$sourceName」，首页将独立显示该片源' : '已取消收藏「$sourceName」',
+            ),
+          ),
+        );
+      }
     case 'removeHistory':
       await saveUserChange(context, () => store.removeHistory(drama.id));
   }
