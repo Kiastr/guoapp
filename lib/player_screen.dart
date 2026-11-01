@@ -2206,8 +2206,10 @@ class _PlayerScreenState extends State<PlayerScreen>
   Widget _mobileSynopsis() {
     final drama = widget.detail.drama;
     final colors = Theme.of(context).colorScheme;
+    final source = SourceSite.byId(drama.source);
+    final favorite = widget.store.isFavoriteSource(drama.source);
     final meta = [
-      SourceSite.byId(drama.source).name,
+      source.name,
       if (drama.episodes > 0) '共 ${drama.episodes} 集',
       if (drama.releaseStatus.isNotEmpty && drama.releaseStatus != 'unknown')
         drama.releaseLabel,
@@ -2240,9 +2242,51 @@ class _PlayerScreenState extends State<PlayerScreen>
                     ),
                     if (meta.isNotEmpty) ...[
                       const SizedBox(height: 6),
-                      Text(
-                        meta.join(' · '),
-                        style: TextStyle(color: colors.onSurfaceVariant),
+                      // 片源行：源名 + 收藏星（所有源都可收藏）。
+                      //
+                      // 站源管理页对内置源和导入源用同一个收藏按钮（+155
+                      // 把收藏放开到内置源），详情页、播放页这里没必要再按
+                      // `libretv:` / `drpy:` 前缀限制——否则用户在播放页的
+                      // 「简介」里根本找不到收藏入口。
+                      //
+                      // 收藏后首页把该片源从所属大组拆出、独占一组（与红果
+                      // 同级）；取消后回落。与站源管理页共用同一份
+                      // `LocalStore.toggleFavoriteSource`。
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              meta.join(' · '),
+                              style: TextStyle(
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            key: const ValueKey('player-favorite-source'),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 34,
+                              height: 34,
+                            ),
+                            iconSize: 19,
+                            tooltip: favorite
+                                ? '取消收藏${source.name}'
+                                : '收藏${source.name}',
+                            onPressed: () => _toggleFavoriteSource(
+                              drama.source,
+                              source.name,
+                            ),
+                            icon: Icon(
+                              favorite
+                                  ? Icons.star_rounded
+                                  : Icons.star_border_rounded,
+                              color: favorite
+                                  ? Colors.amber
+                                  : colors.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                     if (drama.onlineDate.isNotEmpty ||
@@ -2284,6 +2328,33 @@ class _PlayerScreenState extends State<PlayerScreen>
             Text(widget.detail.warning, style: TextStyle(color: colors.error)),
           ],
         ],
+      ),
+    );
+  }
+
+  /// 收藏 / 取消收藏当前片源（与站源管理页、详情页同一入口）。
+  ///
+  /// 播放页只把 store 的通知用于权限检查（`_accessChanged`），收藏状态变化
+  /// 不会自动重建简介面板，所以这里手动 setState 刷新星标。
+  Future<void> _toggleFavoriteSource(String sourceId, String name) async {
+    if (_profileEpoch != widget.store.profileEpoch) return;
+    try {
+      await widget.store.toggleFavoriteSource(sourceId);
+    } catch (error) {
+      if (!mounted || _closed) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('操作失败：$error')));
+      return;
+    }
+    if (!mounted || _closed) return;
+    final favorite = widget.store.isFavoriteSource(sourceId);
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          favorite ? '已收藏「$name」，首页将独立显示该片源' : '已取消收藏「$name」',
+        ),
       ),
     );
   }

@@ -95,7 +95,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('简介里的收藏按钮：一键收藏片源，内置源不显示', (tester) async {
+  testWidgets('简介里的收藏按钮：一键收藏片源，内置源同样可收藏', (tester) async {
     tester.view.physicalSize = const Size(390, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -157,7 +157,8 @@ void main() {
     expect(store.isFavoriteSource('libretv:mihua'), isFalse);
     expect(find.text('已取消收藏「咪咕」'), findsOneWidget);
 
-    // 内置源（红果）没有收藏概念：不显示收藏按钮。
+    // 内置源（红果）同样可以收藏：+155 起站源管理页对内置源与导入源用的
+    // 是同一个按钮，详情页不再按 `libretv:` / `drpy:` 前缀限制。
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
     await tester.pumpWidget(
@@ -171,8 +172,42 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('片源：红果'), findsOneWidget);
-    expect(find.byIcon(Icons.star_border_rounded), findsNothing);
-    expect(find.byIcon(Icons.star_rounded), findsNothing);
+    expect(find.byTooltip('收藏红果'), findsOneWidget);
+    await tester.tap(find.byTooltip('收藏红果'));
+    await tester.pumpAndSettle();
+    expect(store.isFavoriteSource('hongguo'), isTrue);
+    expect(find.byTooltip('取消收藏红果'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('简介为空时也显示片源行与收藏按钮', (tester) async {
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    final store = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(store.dispose);
+
+    const drama = Drama(
+      id: 'hongguo:no-desc',
+      source: 'hongguo',
+      title: '无简介剧',
+      episodes: 2,
+    );
+    final repository = LibraryFeatureRepository()
+      ..details[drama.id] = LibraryFeatureRepository.makeDetail(drama, 2);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailScreen(drama: drama, repository: repository, store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('片源：红果'), findsOneWidget);
+    expect(find.byTooltip('收藏红果'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

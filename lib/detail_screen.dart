@@ -793,13 +793,15 @@ class _DetailScreenState extends State<DetailScreen> {
               ],
             ),
           ),
+        const SizedBox(height: 12),
+        // 简介块内注明片源：多片源合并展示时（LibreTV / drpy 收藏后与
+        // 内置源同级），用户需要知道这一部具体来自哪个站源。
+        // 标红处理：片源归属是排查「内容对不上」时的关键信息，需要醒目。
+        //
+        // 片源行不放在 `description.isNotEmpty` 分支里：简介为空的剧同样
+        // 需要显示归属，也才能在这里收藏片源。
+        _sourceLine(colors, drama.source),
         if (drama.description.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          // 简介块内注明片源：多片源合并展示时（LibreTV / drpy 收藏后与
-          // 内置源同级），用户需要知道这一部具体来自哪个站源。
-          // 标红处理：片源归属是排查「内容对不上」时的关键信息，需要醒目。
-          // 导入的 LibreTV / drpy 片源还带一颗收藏星，与站源管理页同一入口。
-          _sourceLine(colors, drama.source),
           const SizedBox(height: 4),
           Text(
             drama.description,
@@ -830,12 +832,16 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  /// 简介里的片源行：站名 + 收藏星（仅导入的 LibreTV / drpy 片源可收藏）。
+  /// 简介里的片源行：站名 + 收藏星。
   ///
   /// 与站源管理页的收藏按钮共用 [LocalStore.toggleFavoriteSource]：这里点
-  /// 一下等同于在站源管理里给对应片源点上收藏，收藏后首页把该片源从
-  /// LibreTV / drpy 大组拆出独占一组（与红果等内置源同级）。收藏状态由
-  /// store 广播驱动刷新（本页已在 initState 里监听），无需额外 setState。
+  /// 一下等同于在站源管理里给对应片源点上收藏，收藏后首页把该片源从所属
+  /// 大组拆出独占一组（与红果等内置源同级）。收藏状态由 store 广播驱动
+  /// 刷新（本页已在 initState 里监听），无需额外 setState。
+  ///
+  /// 所有源都显示星：+155 起收藏已放开到内置源，站源管理页对内置源与导入
+  /// 源用的是同一个按钮。早期这里按 `libretv:` / `drpy:` 前缀限制，导致
+  /// 青空、韩小圈这些默认可收藏的内置源在详情页反而没有入口。
   Widget _sourceLine(ColorScheme colors, String sourceId) {
     final name = SourceSite.byId(sourceId).name;
     final favorite = widget.store.isFavoriteSource(sourceId);
@@ -850,20 +856,18 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
           ),
         ),
-        // 内置源（红果 / 番茄等）没有收藏概念，核心侧也只认
-        // `libretv:` / `drpy:` 前缀，故只对运行时导入的片源显示。
-        if (sourceId.startsWith('libretv:') || sourceId.startsWith('drpy:'))
-          IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-            iconSize: 20,
-            tooltip: favorite ? '取消收藏$name' : '收藏$name',
-            onPressed: () => _toggleFavoriteSource(sourceId, name),
-            icon: Icon(
-              favorite ? Icons.star_rounded : Icons.star_border_rounded,
-              color: favorite ? Colors.amber : colors.error,
-            ),
+        IconButton(
+          key: const ValueKey('detail-favorite-source'),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          iconSize: 20,
+          tooltip: favorite ? '取消收藏$name' : '收藏$name',
+          onPressed: () => _toggleFavoriteSource(sourceId, name),
+          icon: Icon(
+            favorite ? Icons.star_rounded : Icons.star_border_rounded,
+            color: favorite ? Colors.amber : colors.error,
           ),
+        ),
       ],
     );
   }
