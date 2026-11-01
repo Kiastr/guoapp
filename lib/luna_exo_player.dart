@@ -599,15 +599,28 @@ class LunaExoVideoView extends StatelessWidget {
         final ratio = (rawRatio > 0 && !rawRatio.isNaN && !rawRatio.isInfinite)
             ? rawRatio
             : 16 / 9;
+        // 用视频原始分辨率给 VideoPlayer 一个确定的固有尺寸，交给 FittedBox 缩放。
+        // 未初始化时按比例造一个占位尺寸。
+        final rawSize = hasVideo ? c.value.size : Size.zero;
+        final videoWidth = rawSize.width > 0 ? rawSize.width : ratio * 720;
+        final videoHeight = rawSize.height > 0 ? rawSize.height : 720.0;
 
         return Stack(
           fit: StackFit.expand,
           children: [
             if (hasVideo)
-              Center(
-                child: AspectRatio(
-                  aspectRatio: ratio,
-                  child: VideoPlayer(c),
+              // fit 由此真正生效：`contain` 等比居中（留黑边，原行为不变），
+              // `cover` 裁掉溢出铺满，`fill` 拉伸铺满。竖屏剧在横屏容器里
+              // 用 contain 只会缩成中间一小块，cover / fill 才能撑起来。
+              SizedBox.expand(
+                child: FittedBox(
+                  fit: fit,
+                  clipBehavior: Clip.hardEdge,
+                  child: SizedBox(
+                    width: videoWidth,
+                    height: videoHeight,
+                    child: VideoPlayer(c),
+                  ),
                 ),
               )
             else

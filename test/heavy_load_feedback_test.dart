@@ -86,8 +86,6 @@ List<SourceSite> _manySources(int count) => [
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  tearDown(() => SourceSite.setRuntimeSources(const []));
-
   Future<LocalStore> storeFor(List<SourceSite> sources) async {
     SourceSite.setRuntimeSources(sources);
     SharedPreferences.setMockInitialValues({});
@@ -396,6 +394,45 @@ void main() {
     expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
     expect(tester.takeException(), isNull);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('源全部挂住时 20 秒后停止转圈，改成可重试的提示', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final store = await storeFor(_manySources(12));
+    addTearDown(store.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(
+          // 12 个源一个都不回，模拟搜索结果卡在「正在加载剧集」转圈。
+          repository: _StuckRepository(
+            stuck: {for (var i = 0; i < 12; i++) 'libretv:s$i'},
+            // 25 秒就放行：测试结束前把挂起的 timer 走完，免得报 pending timer。
+            stuckDelay: const Duration(seconds: 25),
+          ),
+          store: store,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsOneWidget);
+
+    // 12 秒：遮罩先到点撤掉，但列表还在等。
+    await tester.pump(const Duration(seconds: 13));
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
+
+    // 20 秒软收工：不再转圈，给一个能重试的提示。
+    await tester.pump(const Duration(seconds: 8));
+    expect(find.text('正在加载剧集'), findsNothing);
+    expect(find.textContaining('响应超时'), findsOneWidget);
+
+    // 放行挂住的源（8 并发分两批，第二批 t=25s 起跑），把排着的延时任务走完。
+    await tester.pump(const Duration(seconds: 45));
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

@@ -9,12 +9,31 @@ import 'models.dart';
 import 'player_screen.dart';
 import 'widgets.dart';
 
+/// 正在打开中的剧（`source/sourceId`）。
+///
+/// 「首页点卡片没反应，多点几次过一会冒出好几个播放窗口」的根因就在这里：
+/// `repository.detail()` 要走一次站源请求，1~3 秒内界面上没有任何变化，
+/// 用户以为没点上就会继续点；每点一次就多一个 detail 请求、多一层播放页。
+/// 并发叠上来之后请求排队超时，就是用户看到的 `context deadline exceeded`。
+/// 现在同一部剧在打开过程中直接忽略后续点击，配合下面的即时提示。
+final _openingPlayback = <String>{};
+
 Future<void> openPlaybackDirectly(
   BuildContext context, {
   required Drama drama,
   required AppRepository repository,
   required LocalStore store,
 }) async {
+  final key = '${drama.source}/${drama.sourceId}';
+  if (!_openingPlayback.add(key)) return;
+  final messenger = ScaffoldMessenger.of(context);
+  // 立刻给反馈：detail 请求没回来之前界面是完全静止的。
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text('正在打开「${drama.title}」…'),
+      duration: const Duration(seconds: 2),
+    ),
+  );
   final profileEpoch = store.profileEpoch;
   try {
     final detail = await repository.detail(drama);
@@ -61,6 +80,7 @@ Future<void> openPlaybackDirectly(
         ? watched!.position
         : 0.0;
     if (!context.mounted || profileEpoch != store.profileEpoch) return;
+    messenger.hideCurrentSnackBar();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => PlayerScreen(
@@ -79,9 +99,10 @@ Future<void> openPlaybackDirectly(
       retryCover: true,
     );
     final message = error is AppFailure ? error.message : '暂时无法播放，请重试';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  } finally {
+    _openingPlayback.remove(key);
   }
 }
 

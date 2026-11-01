@@ -300,6 +300,33 @@ void main() {
     expect(find.text('自动'), findsWidgets);
     await unmount(tester, player);
   });
+
+  testWidgets('fill mode button cycles contain, cover and fill', (
+    tester,
+  ) async {
+    final repository = RouteRepository();
+    final player = ScriptedPlayer();
+    await mount(tester, repository, player, size: const Size(390, 844));
+    final button = find.byKey(const ValueKey('player-fill-mode'));
+    expect(button, findsOneWidget);
+
+    IconData current() => tester
+        .widget<Icon>(find.descendant(of: button, matching: find.byType(Icon)))
+        .icon!;
+
+    // 竖屏剧在横屏容器里默认只占中间一条，第一档必须是「适应」。
+    expect(current(), Icons.fit_screen_rounded);
+    await tester.tap(button);
+    await tester.pump();
+    expect(current(), Icons.crop_rounded);
+    await tester.tap(button);
+    await tester.pump();
+    expect(current(), Icons.open_in_full_rounded);
+    await tester.tap(button);
+    await tester.pump();
+    expect(current(), Icons.fit_screen_rounded);
+    await unmount(tester, player);
+  });
 }
 
 /// plan 无画质档位的仓库（采集源 / 脚本源的形态）。

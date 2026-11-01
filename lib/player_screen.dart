@@ -145,6 +145,22 @@ class _PlayerScreenState extends State<PlayerScreen>
   double _holdSpeed = defaultHoldSpeed;
   double _aspectRatio = 9 / 16;
 
+  /// 画面填充方式：适应 → 裁剪铺满 → 拉伸铺满 循环。
+  /// 竖屏剧在横屏容器里默认 `contain` 只占中间一条，用户可用控制栏的
+  /// 「填充」按钮切到铺满。
+  BoxFit _fillMode = BoxFit.contain;
+
+  /// 依次切换 [_fillMode] 的三档。
+  void _cycleFillMode() {
+    setState(() {
+      _fillMode = switch (_fillMode) {
+        BoxFit.contain => BoxFit.cover,
+        BoxFit.cover => BoxFit.fill,
+        _ => BoxFit.contain,
+      };
+    });
+  }
+
   /// 自动检测到的片源像素尺寸（0 表示尚未检测到）。
   /// 来源：播放器解码后的 videoParams（mpv w/h），换集/换线路时重置。
   int _videoWidth = 0;
@@ -1957,6 +1973,8 @@ class _PlayerScreenState extends State<PlayerScreen>
             onSeek: _seekTo,
             speed: _speed,
             qualityLabel: _qualityLabel,
+            fillMode: _fillMode,
+            onFillMode: _cycleFillMode,
             showDanmaku: widget.detail.drama.source == 'hongguo',
             danmakuEnabled: _danmakuEnabled,
             danmakuStatus: _danmaku.status,
@@ -2008,14 +2026,14 @@ class _PlayerScreenState extends State<PlayerScreen>
                 widget.videoBuilder!(layeredControls)
               else if (_player is LunaExoPlayer)
                 LunaExoVideoView(
-                  player: _player as LunaExoPlayer,
-                  fit: BoxFit.contain,
+                  player: _player,
+                  fit: _fillMode,
                   controls: (_) => layeredControls,
                 )
               else
                 Video(
                   controller: _video!,
-                  fit: BoxFit.contain,
+                  fit: _fillMode,
                   controls: (_) => layeredControls,
                 ),
               if (_loading && !hideOverlayForPictureInPicture)

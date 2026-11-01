@@ -41,6 +41,8 @@ class PlayerControls extends StatefulWidget {
     this.onPush,
     this.onPictureInPicture,
     this.enhancement,
+    this.fillMode = BoxFit.contain,
+    this.onFillMode,
   });
 
   final Player player;
@@ -71,6 +73,13 @@ class PlayerControls extends StatefulWidget {
   final Future<void> Function()? onPush;
   final Future<void> Function()? onPictureInPicture;
   final VideoEnhancementController? enhancement;
+
+  /// 画面填充方式，与 [onFillMode] 配对。竖屏剧在横屏容器里用 `contain`
+  /// 只占中间一条，需要 `cover` / `fill` 撑满。
+  final BoxFit fillMode;
+
+  /// 点「填充」按钮时切到下一档；为 null 表示当前场景不提供该按钮。
+  final VoidCallback? onFillMode;
 
   @override
   State<PlayerControls> createState() => _PlayerControlsState();
@@ -682,6 +691,24 @@ class _PlayerControlsState extends State<PlayerControls> {
     );
   }
 
+  /// 「填充」按钮：适应 → 裁剪铺满 → 拉伸铺满 循环切换。
+  ///
+  /// 竖屏剧（9:16）在横屏容器里用 `contain` 只能占中间窄窄一条，
+  /// 上下全是黑边；`cover` 按高度铺满、裁掉左右，`fill` 直接拉伸铺满。
+  Widget _fillModeTool(Key key) {
+    final (icon, label) = switch (widget.fillMode) {
+      BoxFit.cover => (Icons.crop_rounded, '裁剪铺满'),
+      BoxFit.fill => (Icons.open_in_full_rounded, '拉伸铺满'),
+      _ => (Icons.fit_screen_rounded, '适应屏幕'),
+    };
+    return _toolIcon(
+      key: key,
+      tooltip: '画面：$label',
+      icon: icon,
+      onPressed: widget.enabled ? widget.onFillMode : null,
+    );
+  }
+
   Widget _toolIcon({
     required Key key,
     required String tooltip,
@@ -898,6 +925,10 @@ class _PlayerControlsState extends State<PlayerControls> {
               ? () => _panel(() => _openVolume(volume))
               : null,
         ),
+      // 「填充」放在工具行末尾：插在中间会改变遥控器左右键的遍历路径，
+      // TV 上「从倍速往右两下到选集」的习惯会被打断。
+      if (widget.onFillMode != null)
+        _fillModeTool(const ValueKey('player-fill-mode')),
       if (widget.onPictureInPicture != null)
         _toolIcon(
           key: const ValueKey('player-picture-in-picture'),
@@ -956,6 +987,8 @@ class _PlayerControlsState extends State<PlayerControls> {
               ? () => _panel(widget.onPictureInPicture!)
               : null,
         ),
+      if (widget.onFillMode != null)
+        _fillModeTool(const ValueKey('player-fill-mode')),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 0),
