@@ -23,7 +23,7 @@ import 'package:flutter/material.dart';
 /// 线性，是为了让 1080P 落在条中部而不是贴着左端，节点间距在视觉上更均匀。
 class ResolutionLevel {
   const ResolutionLevel(this.label, this.minHeight, this.major)
-      : assert(minHeight > 0);
+    : assert(minHeight > 0);
 
   /// 节点文案，如「1080P」「2K」。
   final String label;
@@ -135,16 +135,31 @@ class ResolutionMeter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final detected = width > 0 && height > 0;
     // 判档 / 填充 / 节点点亮都以短边为准（竖屏片源的高度会把档位抬高一级）。
     final side = resolutionReferenceSide(width, height);
     final progress = resolutionProgressOf(width, height);
     final level = resolutionLevelOf(width, height);
+    // 配色一律从 ColorScheme 派生，不写死白色：
+    // 这个组件放在播放器菜单里，菜单背景是 `colorScheme.surface`。
+    // 浅色主题下 surface 是纯白，原来的 white70 / white24 / white54 在
+    // 白底上几乎不可见（用户反馈「浅色模式看不清 1080P 节点」）。
+    // - muted：未达档 / 未检测到的节点与文字
+    // - strong：当前档位（最醒目）
+    // - active：已达到的档位
+    // - track：底槽，用 onSurface 低透明度，深浅主题都能看见
+    final mutedColor = scheme.onSurfaceVariant;
+    final strongColor = scheme.onSurface;
+    final activeColor = scheme.primary;
+    final trackColor = scheme.onSurface.withValues(alpha: .14);
+    // 节点描边取背景色，把圆点从底槽 / 填充段上「抠」出来；原来写死黑色
+    // 描边，在浅色主题的白底上会显出一圈脏边。
+    final outlineColor = scheme.surface;
     final textStyle = theme.textTheme.labelSmall?.copyWith(
-      color: Colors.white70,
+      color: mutedColor,
       letterSpacing: .3,
     );
-    final activeColor = theme.colorScheme.primary;
     const trackHeight = 6.0;
     final barHeight = compact ? 18.0 : 22.0;
     // 「1080P」在 11px labelSmall 下约 35px，再留大字号缩放余量；
@@ -176,9 +191,10 @@ class ResolutionMeter extends StatelessWidget {
                       right: 0,
                       top: barHeight / 2 - trackHeight / 2,
                       child: Container(
+                        key: const ValueKey('resolution-track'),
                         height: trackHeight,
                         decoration: BoxDecoration(
-                          color: Colors.white24,
+                          color: trackColor,
                           borderRadius: BorderRadius.circular(trackHeight / 2),
                         ),
                       ),
@@ -209,16 +225,14 @@ class ResolutionMeter extends StatelessWidget {
                           height: node.major ? 10 : 6,
                           decoration: BoxDecoration(
                             color: !detected
-                                ? Colors.white54
+                                ? mutedColor
                                 : level == node
-                                    ? Colors.white
-                                    : side >= node.minHeight
-                                        ? activeColor
-                                        : Colors.white54,
+                                ? strongColor
+                                : side >= node.minHeight
+                                ? activeColor
+                                : mutedColor,
                             shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.black.withValues(alpha: .35),
-                            ),
+                            border: Border.all(color: outlineColor),
                           ),
                         ),
                       ),
@@ -256,13 +270,14 @@ class ResolutionMeter extends StatelessWidget {
                             softWrap: false,
                             overflow: TextOverflow.visible,
                             style: textStyle?.copyWith(
-                              fontWeight:
-                                  detected && side >= node.minHeight
-                                      ? FontWeight.w700
-                                      : FontWeight.w400,
+                              fontWeight: detected && side >= node.minHeight
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                              // 已达档的节点用最醒目的前景色（浅色主题下是
+                              // 近黑、深色主题下是近白），未达档用次级色。
                               color: detected && side >= node.minHeight
-                                  ? Colors.white
-                                  : Colors.white54,
+                                  ? strongColor
+                                  : mutedColor,
                             ),
                           ),
                         ),
@@ -276,7 +291,7 @@ class ResolutionMeter extends StatelessWidget {
           if (showCaption)
             Text(
               resolutionCaption(width, height),
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70),
+              style: theme.textTheme.bodySmall?.copyWith(color: mutedColor),
             ),
         ],
       ),

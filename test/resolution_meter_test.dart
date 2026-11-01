@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:duanju_app/app_theme.dart';
 import 'package:duanju_app/resolution_meter.dart';
 
 // 清晰度自动检测进度条：按检测到的片源**短边**折算档位并填充进度。
@@ -27,10 +28,7 @@ void main() {
     expect(resolutionLevelOf(1080, 1920)?.label, '1080P');
     expect(resolutionLevelOf(1920, 1080)?.label, '1080P');
     // 同档位的横竖两版填充比例相同。
-    expect(
-      resolutionProgressOf(1080, 1920),
-      resolutionProgressOf(1920, 1080),
-    );
+    expect(resolutionProgressOf(1080, 1920), resolutionProgressOf(1920, 1080));
     // 竖屏 2K / 4K 同理。
     expect(resolutionLevelOf(1440, 2560)?.label, '2K');
     expect(resolutionLevelOf(2160, 3840)?.label, '4K');
@@ -91,9 +89,7 @@ void main() {
   testWidgets('检测到 1080P 时节点高亮并显示像素说明', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
-        home: Scaffold(
-          body: ResolutionMeter(width: 1920, height: 1080),
-        ),
+        home: Scaffold(body: ResolutionMeter(width: 1920, height: 1080)),
       ),
     );
     expect(find.text('已检测 1080P (1920×1080)'), findsOneWidget);
@@ -106,9 +102,7 @@ void main() {
   testWidgets('竖屏 1080×1920 仍判 1080P，说明行保留原始像素', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
-        home: Scaffold(
-          body: ResolutionMeter(width: 1080, height: 1920),
-        ),
+        home: Scaffold(body: ResolutionMeter(width: 1080, height: 1920)),
       ),
     );
     // 档位按短边（1080），像素仍按原始宽×高展示，不交换、不改写。
@@ -132,4 +126,57 @@ void main() {
     expect(find.byKey(resolutionNodeKey('4K')), findsOneWidget);
     expect(find.text('4K'), findsOneWidget);
   });
+
+  // [+163] 浅色主题下清晰度条曾整体写死白色系（white70 / white24 / white54），
+  // 而播放器菜单背景是 colorScheme.surface（浅色 = 纯白），节点数字与轨道
+  // 几乎看不见。这里用真实主题守着「文字对比度」这条底线，深浅两套都要过。
+  testWidgets('浅色主题：节点文字与说明行在白色背景上仍然清楚', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light,
+        home: const Scaffold(body: ResolutionMeter(width: 1920, height: 1080)),
+      ),
+    );
+    final surface = AppTheme.light.colorScheme.surface;
+    // 已达档（当前档位）与未达档都要有足够对比度，不能是白色。
+    expect(_contrast(_textColor(tester, '1080P'), surface), greaterThan(4.5));
+    expect(_contrast(_textColor(tester, '4K'), surface), greaterThan(4.5));
+    expect(
+      _contrast(_textColor(tester, '已检测 1080P (1920×1080)'), surface),
+      greaterThan(4.5),
+    );
+    // 底槽不是纯白：在白底上要能看出「条」的轮廓。
+    final track = tester.widget<Container>(
+      find.byKey(const ValueKey('resolution-track')),
+    );
+    final trackColor = (track.decoration! as BoxDecoration).color!;
+    expect(trackColor.a, lessThan(1));
+    expect(_contrast(trackColor, surface), greaterThan(1.05));
+  });
+
+  testWidgets('深色主题：配色同样来自主题，保持原有可读性', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: const Scaffold(body: ResolutionMeter(width: 1920, height: 1080)),
+      ),
+    );
+    final surface = AppTheme.dark.colorScheme.surface;
+    expect(_contrast(_textColor(tester, '1080P'), surface), greaterThan(4.5));
+    expect(_contrast(_textColor(tester, '4K'), surface), greaterThan(4.5));
+  });
+}
+
+/// 相对亮度对比度（WCAG）：(L1+0.05)/(L2+0.05)。
+double _contrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  final high = la > lb ? la : lb;
+  final low = la > lb ? lb : la;
+  return (high + 0.05) / (low + 0.05);
+}
+
+Color _textColor(WidgetTester tester, String text) {
+  final widget = tester.widget<Text>(find.text(text));
+  return widget.style!.color!;
 }
