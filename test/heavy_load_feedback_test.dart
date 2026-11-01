@@ -10,7 +10,8 @@ import 'fixtures.dart';
 // [+159] 重载分组的加载提示（有时间上限）：
 // - 「所有站源」/ 源数 ≥ 10 的集合，首次进入立刻给大半屏提示；
 // - 列表已经出内容后再刷新，延迟 300ms 才提示（秒开不闪），且遮罩更透；
-// - 提示最多活 12 秒——卡顿集中在开头十几秒，绝不能挡到最后一个慢源返回；
+// - 已响应源到 90% 就撤（+165）——一两个不响应的源不该白占遮罩；
+// - 提示最多活 12 秒——兜底，绝不能挡到最后一个慢源返回；
 // - 少量源的普通分组完全不弹。
 class _DelayedRepository extends FixtureRepository {
   _DelayedRepository({
@@ -32,6 +33,42 @@ class _DelayedRepository extends FixtureRepository {
   }) async {
     final wait = _calls++ == 0 ? firstDelay : delay;
     if (wait > Duration.zero) await Future<void>.delayed(wait);
+    return super.catalog(
+      source,
+      page: page,
+      query: query,
+      category: category,
+      force: force,
+    );
+  }
+}
+
+/// 指定的源一直不响应（挂到超时），其余源立刻返回。
+///
+/// 用来验证「大部分源已经回来」时遮罩会不会提前撤——真实环境里几十个源
+/// 总有一两个死源，连接会挂满超时。
+class _StuckRepository extends FixtureRepository {
+  _StuckRepository({
+    required this.stuck,
+    this.delay = Duration.zero,
+    this.stuckDelay = const Duration(seconds: 60),
+  });
+
+  final Set<String> stuck;
+  final Duration delay;
+  final Duration stuckDelay;
+
+  @override
+  Future<CatalogPage> catalog(
+    String source, {
+    int page = 1,
+    String query = '',
+    String category = '',
+    bool force = false,
+  }) async {
+    // 正常源也留一点延迟，让首帧先看到遮罩，再把「大部分已响应」推进到
+    // 下一次 pump——否则所有源在首帧前就返回，遮罩根本来不及出现。
+    await Future<void>.delayed(stuck.contains(source) ? stuckDelay : delay);
     return super.catalog(
       source,
       page: page,
@@ -173,6 +210,82 @@ void main() {
     expect(find.text('正在加载剧集'), findsOneWidget);
 
     // 收尾：把所有慢请求推进完，避免留下 pending timer。
+    await tester.pump(const Duration(minutes: 2));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('已响应源达到 90% 就撤掉提示，不等不响应的慢源', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final store = await storeFor(_manySources(12));
+    addTearDown(store.dispose);
+
+    // 12 个源里只有 s11 不响应（挂满 60 秒超时），其余 11 个立刻返回。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(
+          repository: _StuckRepository(
+            stuck: const {'libretv:s11'},
+            delay: const Duration(milliseconds: 100),
+          ),
+          store: store,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsOneWidget);
+
+    // 11/12 ≈ 92%，超过 90%：遮罩立刻收起，而不是等 12 秒上限。
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
+    // 请求其实还没结束（s11 还挂着），但已经回来的内容可以正常看了。
+    expect(find.text('测试短剧'), findsWidgets);
+
+    // 收尾：把挂住的源推进完，避免留下 pending timer。
+    await tester.pump(const Duration(minutes: 2));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('已响应源不到 90% 时保留提示，由 12 秒上限兜底', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final store = await storeFor(_manySources(12));
+    addTearDown(store.dispose);
+
+    // 两个源不响应：10/12 ≈ 83%，没到 90%，不能提前撤。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(
+          repository: _StuckRepository(
+            stuck: const {'libretv:s10', 'libretv:s11'},
+            delay: const Duration(milliseconds: 100),
+          ),
+          store: store,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsOneWidget);
+
+    // 之后仍由 12 秒上限收起。
+    await tester.pump(const Duration(seconds: 11));
+    expect(find.byKey(const ValueKey('heavy-load-overlay')), findsNothing);
+
     await tester.pump(const Duration(minutes: 2));
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);

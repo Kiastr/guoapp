@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'core_bridge.dart';
@@ -409,18 +410,45 @@ class CatalogBrowser {
       );
     }
 
-    // 流式发射器：首个源完成立即发，之后按间隔合并，避免几十次 setState。
+    // 流式发射器：首个源完成立即发，之后每个窗口最多发一次。
     var lastEmit = 0;
     var emitted = false;
+    Timer? trailing;
+    var trailingPending = false;
     void emitPartial() {
       final callback = onPartial;
       if (callback == null) return;
       final now = DateTime.now().millisecondsSinceEpoch;
-      if (emitted && now - lastEmit < _partialInterval.inMilliseconds) return;
+      if (emitted && now - lastEmit < _partialInterval.inMilliseconds) {
+        // 窗口内先只做标记，窗口结束时补发一次。
+        //
+        // 不能像早期那样直接丢弃：并发 8 个源常常在同一窗口里一起返回，
+        // 而之后可能再也没有源完成（剩下的挂着等超时）——只发第一批、
+        // 把后 7 个源的内容丢掉，列表就会停在第一批上一直不补齐。
+        trailingPending = true;
+        trailing ??= Timer(_partialInterval, () {
+          trailing = null;
+          if (!trailingPending) return;
+          trailingPending = false;
+          if (generation != session.generation) return;
+          emitted = true;
+          lastEmit = DateTime.now().millisecondsSinceEpoch;
+          onPartial?.call(snapshot());
+        });
+        return;
+      }
       emitted = true;
       lastEmit = now;
       if (generation != session.generation) return;
       callback(snapshot());
+    }
+
+    /// 本阶段结束：撤掉可能还在排队的补发，避免加载收尾后多推一帧旧快照，
+    /// 也避免把 Timer 留在测试 / 页面销毁之后。
+    void stopEmit() {
+      trailing?.cancel();
+      trailing = null;
+      trailingPending = false;
     }
 
     if ((useCache || cacheOnly) && !force && !more && query.isEmpty) {
@@ -448,6 +476,7 @@ class CatalogBrowser {
           if (cacheOnly) failures[source] = error.toString();
         }
       });
+      stopEmit();
       if (generation != session.generation) return snapshot();
       final cached = snapshot();
       if (cached.items.isNotEmpty) onCached?.call(cached);
@@ -520,6 +549,7 @@ class CatalogBrowser {
         }
       },
     );
+    stopEmit();
     final result = snapshot();
     if (result.items.isEmpty && failures.isNotEmpty) {
       throw AppFailure(result.warning);

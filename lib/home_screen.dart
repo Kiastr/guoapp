@@ -704,10 +704,23 @@ class _HomeScreenState extends State<HomeScreen> {
         onCached: (result) => accept(result, cached: true),
         onProgress: (done, total) {
           if (!mounted || generation != _generation) return;
-          if (done == _loadDone && total == _loadTotal) return;
+          // 绝大多数源已经响应 → 立刻撤掉提示，别让一两个不响应的源把界面
+          // 继续挡到 12 秒上限。延迟档的 300ms 计时器也一并取消：那种情况
+          // 下遮罩还没出现，不取消就会在撤掉之后再闪一下。
+          final releasing =
+              _heavyNoticeReached(done, total) &&
+              (_heavyNotice ||
+                  (_heavyNoticeTimer?.isActive ?? false) ||
+                  (_heavyNoticeHideTimer?.isActive ?? false));
+          if (done == _loadDone && total == _loadTotal && !releasing) return;
+          if (releasing) {
+            _heavyNoticeTimer?.cancel();
+            _heavyNoticeHideTimer?.cancel();
+          }
           setState(() {
             _loadDone = done;
             _loadTotal = total;
+            if (releasing) _heavyNotice = false;
           });
         },
         onPartial: (result) {
@@ -1415,6 +1428,15 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 是否还有慢源在返回，都把界面还给列表。
   static const _heavyNoticeLimit = Duration(seconds: 12);
 
+  /// 已响应的源占比到这里就把提示撤掉（不等 [_heavyNoticeLimit]）。
+  ///
+  /// 几十个源的组里总有一两个不响应的，连接会一直挂到超时（最长 60 秒），
+  /// 光靠 12 秒上限等于让这两个源白占十秒遮罩。实测 90% 之后该出的内容
+  /// 基本都在列表里了，剩下的源回来只是往尾部追加，没必要继续挡着。
+  /// 用向上取整判定：12 个源要 11 个、30 个源要 27 个；小组不会被
+  /// 「回来一个就撤」误伤。
+  static const _heavyNoticeReleaseRatio = 0.9;
+
   Timer? _heavyNoticeTimer;
   Timer? _heavyNoticeHideTimer;
   bool _heavyNotice = false;
@@ -1456,6 +1478,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _heavyNoticeHideTimer?.cancel();
     _heavyNotice = false;
   }
+
+  /// 本轮进度是否已经到 [_heavyNoticeReleaseRatio]。
+  bool _heavyNoticeReached(int done, int total) =>
+      total > 0 && done >= (total * _heavyNoticeReleaseRatio).ceil();
 
   Widget _catalogWithLoadFeedback({required bool selectionInBody}) {
     final overlay = _heavyNotice && _loading;
