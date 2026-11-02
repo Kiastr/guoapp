@@ -576,6 +576,15 @@ func (engine *nativeEngine) hongguoAccountSync(ctx context.Context) (hongguoAcco
 	if err != nil {
 		return snapshot, err
 	}
+	// 早期版本的匿名设备文件没有 cdid（后来才补的字段）。账号接口要求
+	// device_id / iid / cdid 三件套齐全，缺了直接换一台新设备——注册约 300ms，
+	// 只发生一次，比让用户为此重新扫码体验好。
+	if strings.TrimSpace(anon.CDID) == "" {
+		engine.downloader.hongguoAnonDeviceInvalidate(anon.DeviceID)
+		if renewed, renewErr := engine.downloader.hongguoAnonDevice(ctx); renewErr == nil {
+			anon = renewed
+		}
+	}
 	device := hongguoAccountDevice{DeviceID: anon.DeviceID, InstallID: anon.InstallID, CDID: anon.CDID}
 	cookie := hongguoAccountCookieHeader(session.Cookies)
 	favorites, favoritesErr := engine.downloader.hongguoAccountFavorites(ctx, device, cookie)
