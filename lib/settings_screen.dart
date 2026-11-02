@@ -19,6 +19,7 @@ import 'lan_screen.dart';
 import 'webdav_screen.dart';
 import 'diary_service.dart';
 import 'hongguo_login_dialog.dart';
+import 'hongguo_account_sync.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -44,6 +45,40 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _message;
+
+  /// 账号同步的进行态与一次性提示。手动按钮与启动自动同步共用
+  /// [syncHongguoAccount]，这里只负责把结果画出来。
+  bool _syncingAccount = false;
+  String _accountSyncNote = '';
+
+  Future<void> _syncAccount() async {
+    if (_syncingAccount) return;
+    setState(() {
+      _syncingAccount = true;
+      _accountSyncNote = '';
+    });
+    final outcome = await syncHongguoAccount(
+      widget.repository,
+      widget.store,
+    );
+    if (!mounted) return;
+    setState(() {
+      _syncingAccount = false;
+      _accountSyncNote = outcome.summary;
+    });
+  }
+
+  /// 同步条目的副标题：优先本次结果，其次上次同步时间。
+  String _accountSyncLabel() {
+    if (_syncingAccount) return '正在同步收藏与观看记录…';
+    if (_accountSyncNote.isNotEmpty) return _accountSyncNote;
+    final at = widget.store.hongguoAccountSyncAt;
+    if (at <= 0) return '把账号里的收藏与观看记录拉到本机';
+    final time = DateTime.fromMillisecondsSinceEpoch(at * 1000);
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '上次同步：${time.month}月${time.day}日 $hour:$minute';
+  }
 
   Future<void> _chooseTheme() async {
     final selected = await showDialog<String>(
@@ -209,10 +244,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   key: const ValueKey('hongguo-account'),
                   leading: const Icon(Icons.qr_code_2_rounded),
                   title: const Text('红果账号'),
-                  subtitle: const Text('扫码登录，用于收藏、观看历史与云端续播'),
+                  subtitle: const Text('扫码登录，用于同步账号收藏与观看记录'),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () =>
                       openHongguoLogin(context, widget.repository),
+                ),
+              if (widget.repository.supportsSourceManagement)
+                SwitchListTile(
+                  key: const ValueKey('hongguo-account-auto-sync'),
+                  secondary: const Icon(Icons.sync_rounded),
+                  title: const Text('打开应用时同步账号'),
+                  subtitle: const Text('启动后自动拉一次收藏与观看记录'),
+                  value: widget.store.hongguoAccountAutoSync,
+                  onChanged: (value) =>
+                      widget.store.setHongguoAccountAutoSync(value),
+                ),
+              if (widget.repository.supportsSourceManagement)
+                ListTile(
+                  key: const ValueKey('hongguo-account-sync-now'),
+                  leading: const Icon(Icons.cloud_download_outlined),
+                  title: const Text('立即同步'),
+                  subtitle: Text(_accountSyncLabel()),
+                  trailing: _syncingAccount
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chevron_right_rounded),
+                  onTap: _syncingAccount ? null : _syncAccount,
                 ),
               ListTile(
                 key: const ValueKey('diary-setting'),

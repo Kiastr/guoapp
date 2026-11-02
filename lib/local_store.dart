@@ -14,6 +14,7 @@ import 'catalog_sort.dart';
 import 'follow_state.dart';
 import 'source_health.dart';
 import 'hongguo_series.dart';
+import 'hongguo_account.dart';
 import 'lan_sync_models.dart';
 
 part 'local_store_sync.dart';
@@ -865,6 +866,23 @@ class LocalStore extends ChangeNotifier {
     return _setting(_key('downloadPreferences'), jsonEncode(value.toJson()));
   }
 
+  /// 打开应用时是否自动同步一次红果账号。
+  ///
+  /// 默认开：登录过的用户第一次升级就该看到账号里的收藏，不需要自己找按钮。
+  /// 没登录时同步是空操作，不会产生网络请求。
+  bool get hongguoAccountAutoSync =>
+      _string(_key('hongguoAccountAutoSync')) != 'false';
+
+  Future<void> setHongguoAccountAutoSync(bool value) =>
+      _setting(_key('hongguoAccountAutoSync'), value ? 'true' : 'false');
+
+  /// 上次成功同步的时间（Unix 秒），0 表示还没同步过。
+  int get hongguoAccountSyncAt =>
+      int.tryParse(_string(_key('hongguoAccountSyncAt')) ?? '') ?? 0;
+
+  Future<void> setHongguoAccountSyncAt(int value) =>
+      _setting(_key('hongguoAccountSyncAt'), value.toString());
+
   Future<void> toggleFavorite(Drama drama) {
     final epoch = _epoch;
     return _queue(() async {
@@ -1006,6 +1024,69 @@ class LocalStore extends ChangeNotifier {
       await _commit({_key('followStates'): _encodeFollowStates(states)});
       _loadLibrary();
       _notify();
+    });
+  }
+
+  /// 把账号同步结果并入本地收藏与观看记录。
+  ///
+  /// 三条规则，改之前先看：
+  /// 1. **只增不删**——账号里取消收藏不回删本地，本地可能是用户刻意留的；
+  /// 2. **收藏以本地为准**——同一部剧已在收藏里就保留本地元数据，不覆盖；
+  /// 3. **观看记录按时间戳判优**——只有云端更新的才覆盖，防止把本机进度改旧。
+  ///
+  /// 返回实际写入的条目数；0 表示没有变化（不写盘、不触发通知）。
+  Future<int> mergeHongguoAccount(HongguoAccountSnapshot snapshot) {
+    final epoch = _epoch;
+    return _queueResult(() async {
+      if (!snapshot.signedIn || epoch != _epoch || locked) return 0;
+      final entries = Map.of(_favorites);
+      final states = Map.of(_followStates);
+      final history = Map.of(_history);
+      var changed = 0;
+      for (final entry in snapshot.favorites) {
+        final drama = entry.toDrama();
+        if (!allowsSource(drama.source) || entries.containsKey(drama.id)) {
+          continue;
+        }
+        if (entries.length >= 20000) break;
+        entries[drama.id] = drama;
+        states.putIfAbsent(
+          drama.id,
+          () => FollowState.initial(drama, history[drama.id]),
+        );
+        changed++;
+      }
+      for (final entry in snapshot.history) {
+        if (entry.seriesId.isEmpty || entry.updatedAt <= 0) continue;
+        final drama = entry.toDrama();
+        if (!allowsSource(drama.source)) continue;
+        final updatedAt = DateTime.fromMillisecondsSinceEpoch(entry.updatedAt);
+        final current = history[drama.id];
+        if (current != null && !updatedAt.isAfter(current.updatedAt)) continue;
+        history[drama.id] = WatchEntry(
+          drama: current?.drama.merge(drama) ?? drama,
+          episode: entry.episode <= 0 ? 1 : entry.episode,
+          position: entry.position,
+          duration: entry.duration,
+          updatedAt: updatedAt,
+        );
+        changed++;
+      }
+      if (changed == 0) return 0;
+      final sorted = history.values.toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      await _commit({
+        _key('favorites'): jsonEncode(
+          entries.values.map((entry) => entry.toJson()).toList(),
+        ),
+        _key('followStates'): _encodeFollowStates(states),
+        _key('history'): jsonEncode(
+          sorted.take(300).map((entry) => entry.toJson()).toList(),
+        ),
+      }, syncUrgent: false);
+      _loadLibrary();
+      _notify();
+      return changed;
     });
   }
 

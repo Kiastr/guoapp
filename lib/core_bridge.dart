@@ -24,6 +24,7 @@ import 'catalog_updates.dart';
 import 'download_collections.dart';
 import 'resource_settings.dart';
 import 'hongguo_login.dart';
+import 'hongguo_account.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -152,6 +153,13 @@ abstract class AppRepository {
 
   /// 退出登录（只清本地，不调服务端登出）。
   Future<void> hongguoLoginLogout() async {}
+
+  /// 拉一次账号数据（收藏 + 观看记录）。
+  ///
+  /// 未登录返回 `signedIn=false`，不抛异常——设置页与启动自动同步都会调它，
+  /// 未登录不该变成一次错误弹窗。播放取流不依赖这个结果。
+  Future<HongguoAccountSnapshot> hongguoAccountSync() async =>
+      const HongguoAccountSnapshot();
   Future<SourceStatus> sourceStatus(String source) async =>
       SourceStatus.fromJson({'source': source});
 
@@ -514,6 +522,12 @@ class NativeRepository extends AppRepository {
   @override
   Future<void> hongguoLoginLogout() async {
     await _call({'action': 'hongguoLogin', 'command': 'logout'});
+  }
+
+  @override
+  Future<HongguoAccountSnapshot> hongguoAccountSync() async {
+    final result = await _call({'action': 'hongguoAccount'});
+    return HongguoAccountSnapshot.fromJson(result);
   }
 
   @override

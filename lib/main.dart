@@ -26,6 +26,7 @@ import 'diary_service.dart';
 import 'drpy.dart';
 import 'libretv.dart';
 import 'kazumi.dart';
+import 'hongguo_account_sync.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -177,6 +178,17 @@ class _AppBootstrapState extends State<AppBootstrap>
                 : 'phone',
           );
           LanController.current = link;
+          // 红果账号：登录过的用户启动后自动拉一次收藏与观看记录。
+          // 延后 5 秒是为了不跟首屏目录抢带宽；失败静默（设置页手动同步
+          // 会给出具体原因），未登录时 Go 侧直接返回，不发请求。
+          if (store!.hongguoAccountAutoSync) {
+            unawaited(
+              Future<void>.delayed(const Duration(seconds: 5), () async {
+                if (!mounted || store == null || store!.locked) return;
+                await syncHongguoAccount(repository, store!);
+              }).catchError((Object _) {}),
+            );
+          }
           final webDav = store!.webDavSettings;
           if (webDav.enabled && webDav.autoSync) {
             unawaited(

@@ -28,6 +28,10 @@ class LocalSnapshot {
     'hiddenSources',
     // [+157] 用户手动调整的站源分组顺序（仅本机生效，不参与同步）。
     'sourceOrder',
+    // 红果账号同步：启动自动同步开关与上次同步时间。跟 profile 走，
+    // 因为不同本地用户可能登录不同账号。
+    'hongguoAccountAutoSync',
+    'hongguoAccountSyncAt',
   };
   static const globalKeys = {
     'profiles',
@@ -53,7 +57,7 @@ class LocalSnapshot {
       globalKeys.contains(key) ||
       libraryKeys.contains(key) ||
       RegExp(
-        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|seriesCandidates|mediaHistory|source|hideVip|playback|downloadPreferences|catalogView|recentSearches|lanRecords|lanSettings|lanReceipts|favoriteSources|hiddenSources|sourceOrder)$',
+        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|seriesCandidates|mediaHistory|source|hideVip|playback|downloadPreferences|catalogView|recentSearches|lanRecords|lanSettings|lanReceipts|favoriteSources|hiddenSources|sourceOrder|hongguoAccountAutoSync|hongguoAccountSyncAt)$',
       ).hasMatch(key);
 
   Map<String, Object> get values => Map.of(_values);

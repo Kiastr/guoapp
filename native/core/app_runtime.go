@@ -490,6 +490,10 @@ func nativeDispatch(input nativeInput) (any, error) {
 		default:
 			return nil, errors.New("未知的登录操作")
 		}
+	case "hongguoAccount":
+		// 账号数据同步：收藏 + 观看记录。与登录分开是因为它只读、可重复调用，
+		// 设置页开关与手动按钮都直接打这个 action；未登录返回 signedIn=false。
+		return engine.hongguoAccountSync(ctx)
 	case "rankingBoards":
 		boards := []rankingBoard{}
 		for _, board := range rankingBoards {
