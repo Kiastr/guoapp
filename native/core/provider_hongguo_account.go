@@ -388,6 +388,12 @@ func hongguoAccountItemFromShelf(row map[string]any) (hongguoAccountItem, bool) 
 	if !hongguoNumericID.MatchString(id) || title == "" {
 		return hongguoAccountItem{}, false
 	}
+	collectedAt := hongguoAccountMillis(row, "collect_time")
+	if collectedAt == 0 {
+		// 部分账号把收藏时间挂在 video_data 里，补一次；列表顺序靠它排，
+		// 拿不到就只能退回接口原序。
+		collectedAt = hongguoAccountMillis(video, "collect_time", "collect_time_ms")
+	}
 	return hongguoAccountItem{
 		SeriesID:    id,
 		Title:       strings.TrimSpace(title),
@@ -395,7 +401,7 @@ func hongguoAccountItemFromShelf(row map[string]any) (hongguoAccountItem, bool) 
 		Description: firstNonEmpty(mapString(row, "series_intro", "abstract"), mapString(video, "video_desc", "description")),
 		Episodes:    hongguoAccountInt(video, "episode_cnt", "episode_count"),
 		Category:    hongguoAccountCategory(row, video),
-		CollectedAt: hongguoAccountMillis(row, "collect_time"),
+		CollectedAt: collectedAt,
 	}, true
 }
 

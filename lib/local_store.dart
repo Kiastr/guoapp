@@ -1029,10 +1029,11 @@ class LocalStore extends ChangeNotifier {
 
   /// 把账号同步结果并入本地收藏与观看记录。
   ///
-  /// 三条规则，改之前先看：
+  /// 四条规则，改之前先看：
   /// 1. **只增不删**——账号里取消收藏不回删本地，本地可能是用户刻意留的；
   /// 2. **收藏以本地为准**——同一部剧已在收藏里就保留本地元数据，不覆盖；
-  /// 3. **观看记录按时间戳判优**——只有云端更新的才覆盖，防止把本机进度改旧。
+  /// 3. **观看记录按时间戳判优**——只有云端更新的才覆盖，防止把本机进度改旧；
+  /// 4. **顺序按「旧 → 新」落库**——见下方顺序契约的说明。
   ///
   /// 返回实际写入的条目数；0 表示没有变化（不写盘、不触发通知）。
   Future<int> mergeHongguoAccount(HongguoAccountSnapshot snapshot) {
@@ -1043,12 +1044,44 @@ class LocalStore extends ChangeNotifier {
       final states = Map.of(_followStates);
       final history = Map.of(_history);
       var changed = 0;
-      for (final entry in snapshot.favorites) {
-        final drama = entry.toDrama();
-        if (!allowsSource(drama.source) || entries.containsKey(drama.id)) {
+
+      // 顺序契约：`_favorites` 的插入顺序代表「旧 → 新」，列表页用
+      // `favorites` getter 反转成「新 → 旧」再展示。账号快照按收藏时间
+      // 倒序下发（最新在前），照原样 append 会让最新收藏沉到「我的追剧」
+      // 最底，所以这里先整理成「旧 → 新」的顺序。
+      final ordered = _orderedAccountFavorites(snapshot.favorites);
+
+      // 同一批账号收藏要按账号顺序整体落到末尾。旧版本按倒序落过库，
+      // 这批条目会夹在本地其它收藏中间、内部次序还是反的，先摘出来再
+      // 按序追加——非本批条目保持原有相对顺序。
+      final batch = <String>{
+        for (final entry in ordered)
+          if (entry.seriesId.isNotEmpty)
+            '${SourceSite.hongguo.id}:${entry.seriesId}',
+      };
+      final before = entries.keys.toList();
+      final kept = <String, Drama>{};
+      for (final row in entries.entries) {
+        if (batch.contains(row.key) && allowsSource(row.value.source)) {
           continue;
         }
-        if (entries.length >= 20000) break;
+        kept[row.key] = row.value;
+      }
+      entries
+        ..clear()
+        ..addAll(kept);
+      for (final entry in ordered) {
+        final drama = entry.toDrama();
+        if (!allowsSource(drama.source)) continue;
+        final existing = _favorites[drama.id];
+        if (existing != null) {
+          // 规则 2：本地元数据不动，只把它按账号顺序重新排位。
+          entries[drama.id] = existing;
+          continue;
+        }
+        // 用 continue 而不是 break：后面可能还有「已存在、只是需要重排」
+        // 的条目，break 会把它们一起丢掉。
+        if (entries.length >= 20000) continue;
         entries[drama.id] = drama;
         states.putIfAbsent(
           drama.id,
@@ -1072,7 +1105,9 @@ class LocalStore extends ChangeNotifier {
         );
         changed++;
       }
-      if (changed == 0) return 0;
+      if (changed == 0 && _sameOrder(before, entries.keys.toList())) {
+        return 0;
+      }
       final sorted = history.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       await _commit({
@@ -1088,6 +1123,40 @@ class LocalStore extends ChangeNotifier {
       _notify();
       return changed;
     });
+  }
+
+  /// 账号收藏落库前的顺序整理。
+  ///
+  /// 本地 `_favorites` 的插入顺序是「旧 → 新」，列表页用 `favorites`
+  /// getter 反转成「新 → 旧」再展示。账号快照按收藏时间**倒序**下发，
+  /// 直接 append 会让最新收藏沉到最底，所以这里按时间升序重排。
+  ///
+  /// 接口一条时间都没给（`collect_time` 缺失、全为 0）时没法排序，只能
+  /// 按快照顺序反转兜底——服务端本来就是「新 → 旧」。
+  static List<HongguoAccountEntry> _orderedAccountFavorites(
+    List<HongguoAccountEntry> rows,
+  ) {
+    if (rows.length < 2) return List.of(rows);
+    if (!rows.any((entry) => entry.collectedAt > 0)) {
+      return rows.reversed.toList();
+    }
+    // 不能直接用 List.sort：同毫秒收藏很常见，快排不稳定会打乱同组内序。
+    final ranked = <(int, HongguoAccountEntry)>[
+      for (var index = 0; index < rows.length; index++) (index, rows[index]),
+    ];
+    ranked.sort((a, b) {
+      final byTime = a.$2.collectedAt.compareTo(b.$2.collectedAt);
+      return byTime != 0 ? byTime : a.$1.compareTo(b.$1);
+    });
+    return [for (final row in ranked) row.$2];
+  }
+
+  static bool _sameOrder(List<String> current, List<String> next) {
+    if (current.length != next.length) return false;
+    for (var index = 0; index < current.length; index++) {
+      if (current[index] != next[index]) return false;
+    }
+    return true;
   }
 
   Future<void> saveWatch(WatchEntry entry) {

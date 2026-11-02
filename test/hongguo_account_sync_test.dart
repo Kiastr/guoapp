@@ -212,4 +212,96 @@ void main() {
     expect(outcome.warning, contains('观看记录没同步成功'));
     expect(store.isFavorite('hongguo:7300000000000000005'), isTrue);
   });
+
+  test('账号收藏按「最新在前」落库，不随快照的倒序翻转', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final store = LocalStore(prefs);
+
+    // 快照按收藏时间倒序下发（最新在最前），本地要落成「旧 → 新」，
+    // 列表页反转后才是「新 → 旧」。
+    await store.mergeHongguoAccount(
+      const HongguoAccountSnapshot(
+        signedIn: true,
+        favorites: [
+          HongguoAccountEntry(
+            seriesId: '7300000000000000013',
+            title: '最新',
+            collectedAt: 1760000003000,
+          ),
+          HongguoAccountEntry(
+            seriesId: '7300000000000000012',
+            title: '中间',
+            collectedAt: 1760000002000,
+          ),
+          HongguoAccountEntry(
+            seriesId: '7300000000000000011',
+            title: '最早',
+            collectedAt: 1760000001000,
+          ),
+        ],
+      ),
+    );
+
+    expect(store.favorites.map((drama) => drama.title).toList(), [
+      '最新',
+      '中间',
+      '最早',
+    ]);
+  });
+
+  test('按倒序落过库的账号收藏会被重排回正确顺序', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final store = LocalStore(prefs);
+    // 旧版本留下的状态：倒序写入，列表里最早的在最上面。
+    for (final row in [
+      ('7300000000000000023', '最新', 1760000003000),
+      ('7300000000000000022', '中间', 1760000002000),
+      ('7300000000000000021', '最早', 1760000001000),
+    ]) {
+      await store.toggleFavorite(
+        Drama(
+          id: 'hongguo:${row.$1}',
+          source: 'hongguo',
+          sourceId: row.$1,
+          title: row.$2,
+        ),
+      );
+    }
+    expect(store.favorites.map((drama) => drama.title).toList(), [
+      '最早',
+      '中间',
+      '最新',
+    ]);
+
+    final merged = await store.mergeHongguoAccount(
+      const HongguoAccountSnapshot(
+        signedIn: true,
+        favorites: [
+          HongguoAccountEntry(
+            seriesId: '7300000000000000023',
+            title: '最新',
+            collectedAt: 1760000003000,
+          ),
+          HongguoAccountEntry(
+            seriesId: '7300000000000000022',
+            title: '中间',
+            collectedAt: 1760000002000,
+          ),
+          HongguoAccountEntry(
+            seriesId: '7300000000000000021',
+            title: '最早',
+            collectedAt: 1760000001000,
+          ),
+        ],
+      ),
+    );
+
+    // 没有新增条目，但顺序变了，也要写盘。
+    expect(merged, 0);
+    expect(store.favorites.map((drama) => drama.title).toList(), [
+      '最新',
+      '中间',
+      '最早',
+    ]);
+  });
 }

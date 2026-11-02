@@ -273,3 +273,32 @@ func TestHongguoAccountSnapshotJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestHongguoAccountFavoritesReadsNestedCollectTime 收藏时间挂在 video_data
+// 里时也要取到——本地「我的追剧」靠它排先后。
+func TestHongguoAccountFavoritesReadsNestedCollectTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"code": 0,
+			"data": {
+				"video_shelf_info": [
+					{
+						"book_id": "7300000000000000011",
+						"series_title": "嵌套时间",
+						"video_data": {"collect_time": 1750000000}
+					}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	ctx := context.WithValue(context.Background(), hongguoAccountBaseKey{}, server.URL)
+	items, err := hongguoAccountTestDownloader().hongguoAccountFavorites(ctx, hongguoAccountTestDevice(), "sessionid=fixture")
+	if err != nil {
+		t.Fatalf("拉收藏失败：%v", err)
+	}
+	if len(items) != 1 || items[0].CollectedAt != 1750000000000 {
+		t.Fatalf("嵌套收藏时间没取到：%+v", items)
+	}
+}
