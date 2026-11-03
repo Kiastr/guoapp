@@ -32,6 +32,13 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# flutter_inappwebview_windows 还在用已被弃用的 <experimental/coroutine>。
+# MSVC 14.51（随 Visual Studio 2026 发布）把这条弃用从警告升级成 error
+# C2338 静态断言，插件直接编不过；再加上本项目开了 /WX，旧工具链也会挂。
+# 这条宏是微软给的正规关闭开关，等插件升级到 C++20 <coroutine> 后可删。
+# 必须写在 add_subdirectory 之前，插件的 target 才继承得到。
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
