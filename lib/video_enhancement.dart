@@ -428,9 +428,18 @@ class VideoEnhancementController extends ChangeNotifier {
         },
         _ => null,
       };
+      // [Windows 串行落盘·+177] 原先用 Future.wait 并发 prepare 整条链：
+      // 上游只有单个 shader，链式化之后第一次加载会在同一目录里并发
+      // `create(recursive)` + `rename`。Windows 的 CreateDirectory /
+      // MoveFile 对同名并发不像 POSIX 那样幂等，容易抛 FileSystemException
+      // ——表现就是首集拿到「阶段:resource」，重进又好了（文件已落盘）。
+      // 一条链最多 7 个文件、合计不到 1MB，串行代价可忽略。
       final shaderPaths = shaders == null
           ? null
-          : await Future.wait(shaders.map(VideoEnhancementAssets.prepare));
+          : [
+              for (final name in shaders)
+                await VideoEnhancementAssets.prepare(name),
+            ];
       if (_closed || revision != _revision) return;
       _applied = null;
       _step = 'surface';
