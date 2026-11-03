@@ -178,21 +178,13 @@ class _AppBootstrapState extends State<AppBootstrap>
                 : 'phone',
           );
           LanController.current = link;
-          // 红果账号：登录过的用户启动后自动拉一次收藏与观看记录。
-          // 延后 5 秒是为了不跟首屏目录抢带宽；失败静默（设置页手动同步
-          // 会给出具体原因），未登录时 Go 侧直接返回，不发请求。
-          if (store!.hongguoAccountAutoSync) {
-            unawaited(
-              Future<void>.delayed(const Duration(seconds: 5), () async {
-                if (!mounted || store == null || store!.locked) return;
-                await syncHongguoAccount(repository, store!);
-              }).catchError((Object _) {}),
-            );
-          }
+          // WebDAV 自动同步：首屏之后 3 秒起跑。下面的账号同步要排在它后面。
           final webDav = store!.webDavSettings;
+          Future<void>? webDavDone;
           if (webDav.enabled && webDav.autoSync) {
-            unawaited(
-              Future<void>.delayed(const Duration(seconds: 3), () async {
+            final pending = Future<void>.delayed(
+              const Duration(seconds: 3),
+              () async {
                 if (store == null || store!.locked) return;
                 final transport = HttpWebDavTransport(
                   username: webDav.username,
@@ -207,6 +199,36 @@ class _AppBootstrapState extends State<AppBootstrap>
                 } finally {
                   transport.close();
                 }
+              },
+            );
+            // 自动同步失败不打扰用户，设置页会显示 lastError。
+            webDavDone = pending.catchError((Object _) {});
+            unawaited(webDavDone);
+          }
+          // 红果账号：登录过的用户启动后自动拉一次收藏与观看记录。
+          // 失败静默（设置页手动同步会给出具体原因），未登录时 Go 侧
+          // 直接返回，不发请求。
+          //
+          // 顺序很关键：WebDAV 的 applyLanRecords 会校验 lanRecords 哈希在
+          // 整个网络往返期间没变；账号同步若插在中间写收藏，哈希对不上，
+          // 这一轮 WebDAV 会整体作废且异常被静默吞掉。所以配了 WebDAV
+          // 自动同步时等它跑完再同步账号，没配才用原来的 5 秒延迟。
+          if (store!.hongguoAccountAutoSync) {
+            unawaited(
+              Future<void>(() async {
+                final waitFor = webDavDone;
+                if (waitFor != null) {
+                  // 90 秒上限：WebDAV 读响应没有整体超时，别把账号同步
+                  // 无限期挂住。
+                  await waitFor.timeout(
+                    const Duration(seconds: 90),
+                    onTimeout: () {},
+                  );
+                } else {
+                  await Future<void>.delayed(const Duration(seconds: 5));
+                }
+                if (!mounted || store == null || store!.locked) return;
+                await syncHongguoAccount(repository, store!);
               }).catchError((Object _) {}),
             );
           }
