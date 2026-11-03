@@ -1,0 +1,187 @@
+name: Build Windows package
+
+# 只手动触发。Android 的出包链路在 build.yml 里，Windows 单独一条，
+# 原因是 windows-latest 构建要 30~40 分钟，且 Flutter + VS + MinGW 的
+# 组合更容易受镜像环境影响，不适合跟着每次 push 一起跑。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要附加产物的 Release tag（留空 = 按 pubspec 版本推导，如 app-v0.2.74-176）'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# 同一时间只允许一个 Windows 构建，避免两个 job 同时改写同一个 Release
+# 的附件与 SHA256SUMS.txt。
+concurrency:
+  group: windows-build
+  cancel-in-progress: false
+
+env:
+  GOPROXY: https://proxy.golang.org,direct
+  GOSUMDB: sum.golang.org
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+
+      # Go 核心以 CGO 方式编译成 duanju_core.dll，需要 x86_64 的 MinGW。
+      # windows-latest 镜像有时自带、有时不带，检测不到就装一个。
+      - name: 准备 MinGW-w64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gcc = Get-Command x86_64-w64-mingw32-gcc -ErrorAction SilentlyContinue
+          if (-not $gcc) { $gcc = Get-Command gcc -ErrorAction SilentlyContinue }
+          if (-not $gcc) {
+            Write-Host '镜像未预装 MinGW，安装中…'
+            choco install mingw --no-progress -y
+            $bin = 'C:\ProgramData\chocolatey\bin'
+            $env:PATH = "$bin;$env:PATH"
+            $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $gcc = Get-Command gcc -ErrorAction Stop
+          }
+          Write-Host "使用 gcc：$($gcc.Source)"
+          gcc --version
+
+      # 产物名由 pubspec 的版本号决定，而 Release tag 也来自同一个版本号。
+      # 两者对不上说明 check 的不是对应版本的代码（例如在 main 上给旧
+      # Release 补包），直接失败，避免把 +176 的包传进 +175 的 Release。
+      - name: 解析目标 Release
+        id: target
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $match = Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)\s*$'
+          if (-not $match) { throw 'pubspec.yaml 缺少合法版本号' }
+          $version = $match.Matches[0].Groups[1].Value
+          $expected = 'app-v' + $version.Replace('+', '-')
+          $tag = "$env:INPUT_TAG".Trim()
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = $expected }
+          if ($tag -ne $expected) {
+            throw "源码版本为 $version（对应 $expected），与指定的 $tag 不一致。请切换到该 tag 对应的代码后再构建。"
+          }
+          gh release view $tag --json tagName | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Release 不存在：$tag" }
+          Write-Host "目标 Release：$tag（源码版本 $version）"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      # build_windows.ps1 内部依次执行：编译 duanju_core.dll → flutter pub get
+      # → flutter build windows --release → 打包成 dist/windows/*-windows-x64.zip。
+      # 两次构建共用 build/ 目录，产物 exe 固定叫 zhenguojian.exe，由打包脚本
+      # 按版本改名为 hongguojian.exe / zhenguojian.exe。
+      - name: 编译红果鉴
+        shell: pwsh
+        run: .\scripts\build_windows.ps1
+
+      - name: 编译真果鉴
+        shell: pwsh
+        run: .\scripts\build_windows.ps1 -AllSources
+
+      - name: 校验产物
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ steps.target.outputs.version }}'
+          $files = Get-ChildItem dist/windows/*.zip
+          if ($files.Count -ne 2) { throw "预期 2 个 ZIP，实际 $($files.Count) 个" }
+          foreach ($file in $files) {
+            if ($file.Name -notlike "*-$version-windows-x64.zip") {
+              throw "产物名与版本不符：$($file.Name)"
+            }
+            # ZIP 里必须带齐运行所需文件，缺一个解压后就起不来。
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($file.FullName)
+            try {
+              $names = $zip.Entries | ForEach-Object { $_.FullName }
+            } finally { $zip.Dispose() }
+            $required = @('duanju_core.dll', 'flutter_windows.dll', 'libmpv-2.dll',
+                          'libffmpegkit.dll', 'data/icudtl.dat', 'data/app.so')
+            $missing = $required | Where-Object { $names -notcontains $_ }
+            if ($missing) { throw "$($file.Name) 缺少：$($missing -join ', ')" }
+            $exe = if ($file.Name.StartsWith('hongguojian')) { 'hongguojian.exe' } else { 'zhenguojian.exe' }
+            if ($names -notcontains $exe) { throw "$($file.Name) 缺少 $exe" }
+            Write-Host "$($file.Name) 校验通过（$([math]::Round($file.Length/1MB,1)) MB）"
+          }
+
+      # 逐文件上传并重试：单个附件撞 502 不该拖垮整批（与 build.yml 同策略）。
+      - name: 上传到 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ steps.target.outputs.tag }}'
+          foreach ($file in Get-ChildItem dist/windows/*.zip) {
+            $attempt = 1
+            while ($true) {
+              gh release upload $tag $file.FullName --clobber
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -ge 5) { throw "上传失败（已重试 5 次）：$($file.Name)" }
+              Write-Host "第 $attempt 次失败，$($attempt * 5) 秒后重试：$($file.Name)"
+              Start-Sleep -Seconds ($attempt * 5)
+              $attempt++
+            }
+            Write-Host "已上传 $($file.Name)"
+          }
+
+      # SHA256SUMS.txt 由 build.yml 的 release job 统一生成。这里补上 Windows
+      # 两行：只下载校验文件本身（不拉 200MB+ 的 APK），替换掉同名旧行后
+      # 排序写回，保证一个 Release 里的清单始终是完整的。
+      - name: 更新 SHA256SUMS.txt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ steps.target.outputs.tag }}'
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          gh release download $tag -p SHA256SUMS.txt -D release --clobber 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'Release 里还没有校验文件，本次新建' }
+          $sums = 'release/SHA256SUMS.txt'
+          $rows = @()
+          if (Test-Path $sums) {
+            $rows = @(Get-Content $sums | Where-Object { $_.Trim() -ne '' })
+          }
+          $zips = Get-ChildItem dist/windows/*.zip
+          $names = $zips | ForEach-Object { $_.Name }
+          $rows = @($rows | Where-Object { $names -notcontains ($_ -split '\s+')[-1] })
+          foreach ($file in $zips) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
+            $rows += "$hash  $($file.Name)"
+          }
+          # 必须显式写 LF：Windows 上 Set-Content 会写 CRLF，而 sha256sum -c
+          # 会把 \r 当成文件名的一部分，导致校验全部失败。
+          $text = (($rows | Sort-Object) -join "`n") + "`n"
+          $full = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $sums))
+          [System.IO.File]::WriteAllText($full, $text, [System.Text.Encoding]::ASCII)
+          Get-Content $sums | Write-Host
+          gh release upload $tag $sums --clobber
+          if ($LASTEXITCODE -ne 0) { throw '校验文件上传失败' }

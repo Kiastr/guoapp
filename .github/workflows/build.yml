@@ -261,22 +261,6 @@ jobs:
           for file in dist/android/*.apk; do
             retry gh release upload "$tag" "$file" --clobber
           done
-  windows:
-    if: false
-    needs: checks
-    runs-on: windows-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - edition: hongguojian
-            arguments: ''
-          - edition: zhenguojian
-            arguments: '--all-sources'
-    steps:
-      - uses: actions/checkout@v4
-
   ios:
     if: false
     needs: checks
@@ -412,7 +396,13 @@ jobs:
           fi
           gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
           # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
+          # Windows ZIP 由独立的 Build Windows package 工作流管理（它自己
+          # --clobber 覆盖），这里不能删：两个工作流可能同时在线，本轮下载
+          # 快照里没有的 ZIP 正是另一个工作流刚传上去的。
           for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
+            case "$name" in
+              *-windows-x64.zip) continue ;;
+            esac
             if [ ! -e "release/$name" ]; then
               # 删除失败不阻断发布——附件多留一个比整版发不出去好。
               gh release delete-asset "$tag" "$name" --yes || echo "清理旧附件失败（忽略）：$name" >&2

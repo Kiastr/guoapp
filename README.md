@@ -324,15 +324,15 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 
 ### GitHub Actions
 
-推送 `main` / `master`、`v*` 标签、提交 PR，或手动运行 **Build app packages**，会先检查再构建两版（默认与 `--all-sources`）：
+推送 `main` / `master`、`v*` 标签、提交 PR，或手动运行 **Build app packages**，会先检查再构建两版（默认与 `--all-sources`）的 Android 包：
 
 | 产物 | 内容 |
 | --- | --- |
 | `*-android` | 三种架构 APK 和 SHA256 |
-| `*-windows` | 完整 ZIP 和 SHA256 |
-| `*-ios-unsigned` | 未签名 `.app` ZIP 和 SHA256，不能直接当已签名 IPA 安装 |
 
-推送 `main` 且 android / ios / windows 全部构建成功时，自动创建 / 更新 GitHub Release（tag `app-v{version}`）。发布新版本前需先在 `pubspec.yaml` 提升 `version`，否则会覆盖同名 tag 的 Release。
+推送 `main` 且 android 构建成功时，自动创建 / 更新 GitHub Release（tag `app-v{version}`）。发布新版本前需先在 `pubspec.yaml` 提升 `version`，否则会覆盖同名 tag 的 Release。
+
+**Windows 包由独立工作流 Build Windows package 构建**（仅手动触发）：在 `windows-latest` 上依次编译红果鉴 / 真果鉴，产出两个 `*-windows-x64.zip`，直接上传到 pubspec 版本对应的 Release，并把这两行补进该 Release 的 `SHA256SUMS.txt`（校验文件只下载自身，不重拉 APK）。单次约 30~40 分钟；要构建历史版本，在 GitHub 的「Use workflow from」里选对应 tag——源码版本与目标 Release 对不上会在解析阶段直接失败。iOS 暂未接入 CI。
 
 Android 正式发布使用同一签名并递增构建号，在仓库 Secrets 配置：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。未配置时生成 debug 签名预览包。
 
