@@ -334,6 +334,8 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 
 **Windows 包由独立工作流 Build Windows package 构建**（仅手动触发）：在 `windows-latest` 上依次编译红果鉴 / 真果鉴，产出两个 `*-windows-x64.zip`，直接上传到 pubspec 版本对应的 Release，并把这两行补进该 Release 的 `SHA256SUMS.txt`（校验文件只下载自身，不重拉 APK）。单次约 30~40 分钟；要构建历史版本，在 GitHub 的「Use workflow from」里选对应 tag——源码版本与目标 Release 对不上会在解析阶段直接失败。iOS 暂未接入 CI。
 
+Windows 构建要用的 libmpv 与 ANGLE 是固定日期的 7z，而 `shinchiro/mpv-winbuild-cmake` 只保留最近两周的 Release，pin 的版本很快就会 404（第一次跑 Build Windows package 就是这么挂的）。因此 `packages/media_kit_libs_windows_video/windows/CMakeLists.txt` 里 pin 的版本会镜像到本仓库的 `native-deps` Release，CMake 优先从那里下载、失败再回退上游。**升级 mpv / ANGLE pin 之后要跑一次 Mirror native deps 工作流**把新版本镜像上去，否则下次构建只能靠上游（上游删档即失败）。
+
 Android 正式发布使用同一签名并递增构建号，在仓库 Secrets 配置：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。未配置时生成 debug 签名预览包。
 
 本地不入库的 `android/key.properties`：

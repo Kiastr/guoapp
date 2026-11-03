@@ -1,0 +1,117 @@
+name: Mirror native deps
+
+# media_kit 的 Windows 原生依赖（libmpv、ANGLE）不是 vcpkg/nuget 这种稳定源，
+# 而是从 GitHub Release 上下固定日期的 7z。shinchiro/mpv-winbuild-cmake 是
+# 滚动仓库，只保留最近两周的 release，pin 的版本过几天就 404，Windows 构建
+# 直接倒在 CMake 的 file(DOWNLOAD)。
+#
+# 这个工作流把当前 pin 的两个包复制到本仓库的 native-deps Release 里，
+# CMakeLists 优先从那里拉，从此不依赖上游是否还在。
+#
+# 什么时候跑：升级 packages/media_kit_libs_windows_video 里的 mpv / ANGLE pin
+# 之后跑一次；上游删档导致 Windows 构建失败时也跑一次（前提是 pin 的版本还在，
+# 已经删了就只能先改 pin）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-deps-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # CMakeLists 是唯一真源：版本、sha256 都从那里读，避免两处各写一份对不上。
+      - name: 读取 pin 的版本与校验值
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=packages/media_kit_libs_windows_video/windows/CMakeLists.txt
+          get() {
+            local v
+            v=$(grep -oP "set\($1\s+\"\K[^\"]+" "$file" | head -1)
+            if [ -z "$v" ]; then echo "CMakeLists 里找不到 $1" >&2; exit 1; fi
+            printf '%s' "$v"
+          }
+          mpv_archive=$(get DUANJU_MPV_ARCHIVE)
+          mpv_sha=$(get DUANJU_MPV_SHA256)
+          angle_archive=$(get DUANJU_ANGLE_ARCHIVE)
+          angle_sha=$(get DUANJU_ANGLE_SHA256)
+          # shinchiro 的 release tag 就是包名里的日期，直接推出来省一次解析。
+          mpv_date=$(printf '%s' "$mpv_archive" | grep -oE '[0-9]{8}' | head -1)
+          if [ -z "$mpv_date" ]; then echo "无法从 $mpv_archive 推出日期" >&2; exit 1; fi
+          {
+            echo "mpv_archive=$mpv_archive"
+            echo "mpv_sha=$mpv_sha"
+            echo "mpv_date=$mpv_date"
+            echo "angle_archive=$angle_archive"
+            echo "angle_sha=$angle_sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "libmpv: $mpv_archive ($mpv_sha)"
+          echo "ANGLE:  $angle_archive ($angle_sha)"
+
+      - name: 下载并校验
+        shell: bash
+        env:
+          MPV_ARCHIVE: ${{ steps.pin.outputs.mpv_archive }}
+          MPV_SHA: ${{ steps.pin.outputs.mpv_sha }}
+          MPV_DATE: ${{ steps.pin.outputs.mpv_date }}
+          ANGLE_ARCHIVE: ${{ steps.pin.outputs.angle_archive }}
+          ANGLE_SHA: ${{ steps.pin.outputs.angle_sha }}
+        run: |
+          set -uo pipefail
+          mkdir -p deps
+          fetch() {  # fetch <文件名> <sha256> <url...>
+            local name=$1 sha=$2; shift 2
+            for url in "$@"; do
+              echo "下载 $name <- $url"
+              if curl -fsSL --retry 3 --retry-delay 5 --max-time 600 -o "deps/$name" "$url"; then
+                local actual
+                actual=$(sha256sum "deps/$name" | cut -d' ' -f1)
+                if [ "$actual" = "$sha" ]; then
+                  echo "校验通过：$name（$(stat -c%s "deps/$name") 字节）"
+                  return 0
+                fi
+                echo "校验不符：$actual，期望 $sha" >&2
+              fi
+              rm -f "deps/$name"
+            done
+            echo "$name 所有源均不可用" >&2
+            return 1
+          }
+          fetch "$MPV_ARCHIVE" "$MPV_SHA" \
+            "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$MPV_DATE/$MPV_ARCHIVE"
+          fetch "$ANGLE_ARCHIVE" "$ANGLE_SHA" \
+            "https://github.com/alexmercerind/flutter-windows-ANGLE-OpenGL-ES/releases/download/v1.0.1/ANGLE.7z"
+          ls -lh deps
+
+      - name: 上传到 native-deps Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MPV_ARCHIVE: ${{ steps.pin.outputs.mpv_archive }}
+          ANGLE_ARCHIVE: ${{ steps.pin.outputs.angle_archive }}
+        run: |
+          set -euo pipefail
+          tag=native-deps
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            # 不占用 app-v* 的 tag 命名空间，也不会触发 build.yml 的 tag 构建。
+            gh release create "$tag" \
+              --target main \
+              --title "native-deps" \
+              --prerelease \
+              --notes "media_kit 的 Windows 原生依赖镜像。libmpv 与 ANGLE 上游都是滚动 / 单版本 Release，随时可能被替换或删除，这里按 packages/media_kit_libs_windows_video/windows/CMakeLists.txt 里 pin 的版本存一份，供 CMake 优先下载。由 Mirror native deps 工作流维护，请勿手工改动。"
+          else
+            echo "Release $tag 已存在，直接覆盖上传"
+          fi
+          gh release upload "$tag" "deps/$MPV_ARCHIVE" "deps/$ANGLE_ARCHIVE" --clobber
+          echo "=== 当前资产 ==="
+          gh release view "$tag" --json assets --jq '.assets[] | "\(.name) \(.size) 字节"'
