@@ -422,6 +422,82 @@ void main() {
     );
     expect(transport.writes, isEmpty, reason: '非同步文件不应被改写');
   });
+
+  test('收藏次序以云端为准，两台设备收敛到同一份顺序', () async {
+    const dramaX = Drama(id: 'hongguo:11', source: 'hongguo', title: '最早');
+    const dramaY = Drama(id: 'hongguo:12', source: 'hongguo', title: '中间');
+    const dramaZ = Drama(id: 'hongguo:13', source: 'hongguo', title: '最新');
+
+    final a = await createStore();
+    await configure(a);
+    final transport = FakeWebDavTransport();
+    for (final drama in [dramaX, dramaY, dramaZ]) {
+      await a.toggleFavorite(drama);
+    }
+    // 本机按「旧 → 新」写入，展示时反转成「新 → 旧」。
+    expect(a.favorites.map((drama) => drama.title).toList(), [
+      '最新',
+      '中间',
+      '最早',
+    ]);
+    await run(a, transport);
+
+    // B 恰好用相反的顺序收藏过同样的三部——旧版本留下的错序就是这样固化的。
+    final b = await createStore();
+    await configure(b);
+    for (final drama in [dramaZ, dramaY, dramaX]) {
+      await b.toggleFavorite(drama);
+    }
+    expect(b.favorites.map((drama) => drama.title).toList(), [
+      '最早',
+      '中间',
+      '最新',
+    ]);
+
+    await run(b, transport);
+    expect(b.favorites.map((drama) => drama.title).toList(), [
+      '最新',
+      '中间',
+      '最早',
+    ]);
+  });
+
+  test('云端没有的本地收藏追加在后，不打乱云端次序', () async {
+    const remoteA = Drama(id: 'hongguo:21', source: 'hongguo', title: '云端早');
+    const remoteB = Drama(id: 'hongguo:22', source: 'hongguo', title: '云端晚');
+    const localOnly = Drama(id: 'hongguo:23', source: 'hongguo', title: '本机独有');
+
+    final a = await createStore();
+    await configure(a);
+    final transport = FakeWebDavTransport();
+    for (final drama in [remoteA, remoteB]) {
+      await a.toggleFavorite(drama);
+    }
+    await run(a, transport);
+
+    final b = await createStore();
+    await configure(b);
+    await b.toggleFavorite(localOnly);
+    await run(b, transport);
+
+    // 远端两部的相对次序原样保留，本机独有追加成「最新」。
+    expect(b.favorites.map((drama) => drama.title).toList(), [
+      '本机独有',
+      '云端晚',
+      '云端早',
+    ]);
+  });
+
+  test('同步记录次序跟随收藏次序，取消收藏的墓碑追加在后', () async {
+    final store = await createStore();
+    await store.toggleFavorite(dramaA);
+    await store.toggleFavorite(dramaB);
+    expect(store.lanDocument.records.keys.toList(), [dramaA.id, dramaB.id]);
+
+    // 取消收藏 A：A 的记录要留下当墓碑传播删除，但不能占着活跃收藏的位置。
+    await store.toggleFavorite(dramaA);
+    expect(store.lanDocument.records.keys.toList(), [dramaB.id, dramaA.id]);
+  });
 }
 
 class _FailingTransport implements WebDavTransport {

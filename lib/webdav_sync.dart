@@ -280,7 +280,11 @@ class WebDavSynchronizer {
     }
 
     final result = <String, LanRecord>{};
-    for (final id in {...localRecords.keys, ...remoteRecords.keys}) {
+    // 顺序**远端优先**：云端文件是上一次全体共识的快照，次序已经被各设备
+    // 对齐过；本地若与之不同（单机改动，或旧版本留下的错序），以远端为准
+    // 才能让两台设备收敛到同一份次序。本地有、云端没有的记录追加在后——
+    // 它们通常是本机新收藏，追加恰好等于「最新」。
+    for (final id in {...remoteRecords.keys, ...localRecords.keys}) {
       final local = localRecords[id];
       final remote = remoteRecords[id];
       result[id] = local == null
@@ -300,6 +304,7 @@ class WebDavSynchronizer {
       records: result.values,
       epoch: epoch,
       isCurrent: () => store.profileEpoch == epoch && !store.locked,
+      reorderAll: true,
     );
 
     // ---- 片源订阅与收藏 / 隐藏状态 ----

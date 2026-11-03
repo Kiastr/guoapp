@@ -137,6 +137,7 @@ extension LocalStoreSync on LocalStore {
     required Iterable<LanRecord> records,
     required int epoch,
     bool Function()? isCurrent,
+    bool reorderAll = false,
   }) {
     final incoming = records.toList();
     return _queue(() async {
@@ -186,6 +187,37 @@ extension LocalStoreSync on LocalStore {
           document.records.length > LanDocument.limit) {
         throw StateError('合并后的追剧记录超过本机上限，原记录已保留');
       }
+      // 收藏顺序 = 记录顺序。WebDAV 传的是**全量合并结果**（reorderAll），
+      // 它的次序代表双方上一次共识，本地若还留着旧版本写下的错序（红果块
+      // 反序、与本地块分裂），照它整表重排一次即可自愈，不必清库。
+      // 局域网同步只传变更子集，不能当顺序权威，跳过这一步。
+      if (reorderAll) {
+        final ordered = <String, Drama>{};
+        for (final record in incoming) {
+          if (!record.followed) continue;
+          final drama = favorites[record.id];
+          if (drama != null) ordered[record.id] = drama;
+        }
+        for (final entry in favorites.entries) {
+          ordered.putIfAbsent(entry.key, () => entry.value);
+        }
+        favorites
+          ..clear()
+          ..addAll(ordered);
+      }
+      // records 永远跟着 favorites 走，墓碑记录追加在后——下次上传时对端
+      // 收到的就是这份次序（reconcile 里也会做同样的事，这里提前对齐）。
+      final orderedRecords = <String, LanRecord>{};
+      for (final id in favorites.keys) {
+        final record = document.records[id];
+        if (record != null) orderedRecords[id] = record;
+      }
+      for (final entry in document.records.entries) {
+        orderedRecords.putIfAbsent(entry.key, () => entry.value);
+      }
+      document.records
+        ..clear()
+        ..addAll(orderedRecords);
       final sorted = history.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       final receipts = readJsonList(_string(_key('lanReceipts')))

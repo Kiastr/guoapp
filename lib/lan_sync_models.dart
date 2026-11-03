@@ -674,6 +674,27 @@ class LanDocument {
       }
       records[id] = next;
     }
+    // 记录顺序 = 收藏顺序（旧 → 新）。
+    //
+    // 同步只传 `records` 的序列，对端按收到的先后重建自己的收藏，所以这个
+    // 顺序就是「收藏时间」在设备之间的唯一载体。以前这里只增不改位置，一旦
+    // 某台设备写下过错误次序（红果账号同步早期版本就是把倒序原样 append 的），
+    // 它会被原封不动地传给所有设备并长期固化。
+    //
+    // 每次 reconcile 都按 `favorites` 的插入顺序重建一次：活跃收藏严格跟
+    // 收藏顺序走，已取消收藏的墓碑记录（member=false）不参与展示，保持原相对
+    // 顺序追加在后。
+    final ordered = <String, LanRecord>{};
+    for (final id in favorites.keys) {
+      final record = records[id];
+      if (record != null) ordered[id] = record;
+    }
+    for (final entry in records.entries) {
+      ordered.putIfAbsent(entry.key, () => entry.value);
+    }
+    records
+      ..clear()
+      ..addAll(ordered);
     if (records.length > limit) throw StateError('同步记录已达保存上限，请先整理设备记录');
   }
 
