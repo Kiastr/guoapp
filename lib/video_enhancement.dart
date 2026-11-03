@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -11,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'video_enhancement_assets.dart';
 import 'video_enhancement_mpv.dart';
 import 'video_enhancement_policy.dart';
+import 'video_enhancement_platform.dart';
 import 'video_enhancement_preferences.dart';
 import 'video_output_size.dart';
 
@@ -46,7 +46,9 @@ class VideoEnhancementController extends ChangeNotifier {
       return;
     }
     _mpv = VideoEnhancementMpv(native as NativePlayer);
-    _output = VideoOutputSizeAdapter(video!, onFailure: _outputFailed);
+    // [平台分流·+177] 表面怎么改、能不能上 d3d11vpp、detail 怎么写，全部
+    // 交给平台对象；控制器不再自己判断 Platform（见 video_enhancement_platform.dart）。
+    _platform = createVideoEnhancementPlatform(video!, onFailure: _outputFailed);
     _subscriptions.add(player.stream.log.listen(_onLog));
     _subscriptions.add(player.stream.videoParams.listen((_) => _schedule()));
     _subscriptions.add(
@@ -87,13 +89,13 @@ class VideoEnhancementController extends ChangeNotifier {
   /// 天然与 sizeMatches 一致；表面对不上当前源时（新源更大）expectsUpscale 也
   /// 会正确地不为真，与 mpv 跳过 Upscale 的实际行为对齐。
   Size? get _fixedSurfaceSize =>
-      fixedSurface == null ? null : _output?.actualSize;
+      fixedSurface == null ? null : _platform?.actualSize;
 
   late final bool supported;
   final bool _animationHint;
   VideoEnhancementPreferences _preferences;
   VideoEnhancementMpv? _mpv;
-  VideoOutputSizeAdapter? _output;
+  VideoEnhancementPlatform? _platform;
   Future<void>? _initialization;
   Future<void>? _monitoring;
   Future<void>? _closing;
@@ -150,6 +152,12 @@ class VideoEnhancementController extends ChangeNotifier {
   String _status = '画质增强已关闭';
   String _downgradeReason = '';
   String _lastFailure = '';
+  // [诊断·+177] 非 VideoEnhancementFailure 的异常此前被压成 'resource'，
+  // 具体类型、消息、出错步骤全部丢失——设置面板只剩「阶段:resource」，
+  // 等于给了个死胡同。Windows 首次接入后正撞上这条路径，故把异常本体与
+  // 出错环节一并留下（_step 由 _apply / beforeMedia 逐步写入）。
+  String _lastFailureCause = '';
+  String _step = '';
   // [诊断·2026-10] 最近一次增强失败的细节，经 detail 展示到设置面板。
   // 安卓端真机实测 anime 应用后确认失败（「增强不可用，已自动回退」），
   // 但失败可能来自三个不同环节（mpv 报错 / 渲染链未带上了 shader /
@@ -182,11 +190,11 @@ class VideoEnhancementController extends ChangeNotifier {
     // 的说明叠加仍容易被误读为未生效。按产品要求：安卓端神经增强（cost≥3）
     // 只呈现一句结果文案，不再展示尺寸对比与内部渲染说明；其余平台/后端
     // （桌面端放大、ravu 缩放等）维持原 dimensions 展示。
-    if (Platform.isAndroid && (_applied?.backend.cost ?? 0) >= 3) {
+    if ((_platform?.android ?? false) && (_applied?.backend.cost ?? 0) >= 3) {
       return [
         // 三档在安卓端默认都是同分辨率重建/降噪；固定大表面启用后 Upscale
         // 链参与渲染，但文案按 +88 的产品要求仍统一为这一句。
-        '已执行超分降噪',
+        _platform!.neuralDetail,
         if (_downgradeReason.isNotEmpty) _downgradeReason,
         // [诊断·2026-10] 最近一次增强失败的技术细节（阶段/尺寸比对/渲染链
         // pass 描述/mpv 日志）。空串时自动过滤，不影响正常态排版。
@@ -209,7 +217,7 @@ class VideoEnhancementController extends ChangeNotifier {
     try {
       await _mpv!.initialize();
       if (_closed) return;
-      await _output!.initialize();
+      await _platform!.initialize();
       if (_closed) return;
       _initialized = true;
       await _readPower();
@@ -230,6 +238,7 @@ class VideoEnhancementController extends ChangeNotifier {
     _rejected.clear();
     _downgradeReason = '';
     _lastFailure = '';
+    _lastFailureCause = '';
     // [诊断·2026-10] 用户主动改设置 = 新的一次尝试，旧失败现场全部作废。
     _lastFailureDetail = '';
     _monitorSnapshot = '';
@@ -274,6 +283,7 @@ class VideoEnhancementController extends ChangeNotifier {
     _tierOverride = null;
     _downgradeReason = '';
     _lastFailure = '';
+    _lastFailureCause = '';
     // [诊断·2026-10] 换集 = 全新播放会话，上一集的失败现场不带过来。
     _lastFailureDetail = '';
     _monitorSnapshot = '';
@@ -287,10 +297,12 @@ class VideoEnhancementController extends ChangeNotifier {
     await _enqueue(() async {
       await _initialization;
       if (_closed || !_initialized) return;
+      _step = 'release';
       _clearEffects();
-      await _output!.setTarget(null);
+      await _platform!.setSurface(null);
       _applied = null;
       _confirmed = false;
+      _step = '';
     });
   }
 
@@ -347,13 +359,14 @@ class VideoEnhancementController extends ChangeNotifier {
   Future<void> _apply(int revision) async {
     await _initialization;
     if (_closed || !_initialized || revision != _revision) return;
+    _step = 'decision';
     _readCapabilities();
     final decision = chooseVideoEnhancement(
       preferences: _preferences,
       parameters: player.state.videoParams,
       viewport: _viewport,
       ready: _ready && _foreground,
-      android: Platform.isAndroid,
+      android: _platform?.android ?? false,
       television: _television,
       gpu: _gpu,
       luma: _luma,
@@ -378,11 +391,15 @@ class VideoEnhancementController extends ChangeNotifier {
     final tierMatters = selected.backend == VideoEnhancementBackend.anime;
     if (selected == _applied &&
         (!tierMatters || _appliedTier == _effectiveTier)) {
+      _step = '';
       _publishStatus();
       return;
     }
     _applyingBackend = selected.backend;
     try {
+      // [诊断·+177] 逐个环节打标：非 mpv 异常（资源准备、平台通道）没有
+      // stage 可报，只能靠 _step 指明是哪一段炸的。
+      _step = 'assets';
       final shaders = switch (selected.backend) {
         VideoEnhancementBackend.ravu => <String>[
           _luma
@@ -416,10 +433,12 @@ class VideoEnhancementController extends ChangeNotifier {
           : await Future.wait(shaders.map(VideoEnhancementAssets.prepare));
       if (_closed || revision != _revision) return;
       _applied = null;
+      _step = 'surface';
       _clearEffects();
-      await _output!.setTarget(selected.output);
+      await _platform!.setSurface(selected.output);
       if (_closed || revision != _revision) return;
       if (selected.backend != VideoEnhancementBackend.original) {
+        _step = 'options';
         _setOption('scale', 'spline36');
         _setOption('dscale', 'mitchell');
         _setOption('cscale', 'bilinear');
@@ -435,23 +454,35 @@ class VideoEnhancementController extends ChangeNotifier {
         // 原值由 _setOption 记入 _originalOptions，增强关闭时自动恢复。
         _setOption('linear-downscaling', 'no');
         if (shaderPaths != null) {
+          _step = 'shaders';
           _setOption('fbo-format', 'rgba16f');
           final current = _shaderList();
           _ownedShaders.addAll(shaderPaths);
           _mpv!.setStrings('glsl-shaders', [...current, ...shaderPaths]);
         } else if (selected.backend == VideoEnhancementBackend.hardware) {
+          _step = 'filter';
           final parameters = player.state.videoParams;
-          final factor = math
-              .min(
-                selected.output!.width / parameters.w!,
-                selected.output!.height / parameters.h!,
-              )
-              .clamp(1.0, 2.0);
-          _mpv!.command([
-            'vf',
-            'add',
-            '@$_filterLabel:d3d11vpp=scale=${factor.toStringAsFixed(6)}:scaling-mode=$_vendor:format=nv12:deint=no',
-          ]);
+          final output = selected.output;
+          final sourceWidth = parameters.w ?? 0;
+          final sourceHeight = parameters.h ?? 0;
+          // [空值兜底·+177] 原先直接 `parameters.w!` / `h!`：硬件后端是
+          // Windows 独占路径，解码参数尚未回填时（切集瞬间、纯音频轨道）
+          // 这里会抛 Null check operator，被 _failBackend 记成 'resource'，
+          // 正是「阶段:resource」最典型的来源之一。参数不全就不注入滤镜，
+          // 交给 _monitor 下一轮重试，不把整条链判死。
+          if (output != null && sourceWidth > 0 && sourceHeight > 0) {
+            final factor = math
+                .min(
+                  output.width / sourceWidth,
+                  output.height / sourceHeight,
+                )
+                .clamp(1.0, 2.0);
+            _mpv!.command([
+              'vf',
+              'add',
+              '@$_filterLabel:d3d11vpp=scale=${factor.toStringAsFixed(6)}:scaling-mode=$_vendor:format=nv12:deint=no',
+            ]);
+          }
         }
       }
       _applied = selected;
@@ -460,6 +491,7 @@ class VideoEnhancementController extends ChangeNotifier {
       _confirmed = selected.backend == VideoEnhancementBackend.original;
       ignorePerformance();
       _publishStatus();
+      _step = '';
       if (!_closed) notifyListeners();
     } catch (error) {
       _failBackend(error, backend: selected.backend);
@@ -542,10 +574,12 @@ class VideoEnhancementController extends ChangeNotifier {
     final parameters = player.state.videoParams;
     final format = videoEnhancementPixelFormat(parameters);
     _luma =
-        !(Platform.isAndroid && hwdec == 'mediacodec') &&
+        !((_platform?.android ?? false) && hwdec == 'mediacodec') &&
         (format.startsWith('yuv') || format == 'nv12' || format == 'nv21');
     _opaque8Bit = false;
-    if (Platform.isAndroid && hwdec == 'mediacodec' && format == 'mediacodec') {
+    if ((_platform?.android ?? false) &&
+        hwdec == 'mediacodec' &&
+        format == 'mediacodec') {
       final tracks = native.read('track-list');
       if (tracks is List) {
         for (final track in tracks.whereType<Map>()) {
@@ -570,7 +604,7 @@ class VideoEnhancementController extends ChangeNotifier {
       }
     }
     _hardware =
-        Platform.isWindows &&
+        (_platform?.hardwareFilter ?? false) &&
         _gpu &&
         recentMpv &&
         (_vendor == 'nvidia' || _vendor == 'intel') &&
@@ -661,6 +695,9 @@ class VideoEnhancementController extends ChangeNotifier {
       _costLimit = 0;
     }
     _lastFailure = error is VideoEnhancementFailure ? error.stage : 'resource';
+    _lastFailureCause = error is VideoEnhancementFailure
+        ? ''
+        : _describeCause(error);
     _downgradeReason = '增强不可用，已自动回退';
     // [诊断·2026-10] 汇总「阶段 + 确认现场 + 最近渲染日志」三段，经 detail
     // 展示到设置面板。阶段告诉你从哪条路径失败的；现场快照区分尺寸/渲染链
@@ -672,6 +709,7 @@ class VideoEnhancementController extends ChangeNotifier {
         .join(' | ');
     final assembled = <String>[
       '阶段:$_lastFailure',
+      if (_lastFailureCause.isNotEmpty) '原因:$_lastFailureCause',
       if (_monitorSnapshot.isNotEmpty) _monitorSnapshot,
       if (logs.isNotEmpty) '日志:$logs',
     ].join(' ');
@@ -690,7 +728,7 @@ class VideoEnhancementController extends ChangeNotifier {
         _enqueue(() async {
           try {
             _clearEffects();
-            await _output?.setTarget(null);
+            await _platform?.setSurface(null);
             if (_closed) return;
             _applied = const VideoEnhancementDecision(
               VideoEnhancementBackend.original,
@@ -706,6 +744,19 @@ class VideoEnhancementController extends ChangeNotifier {
       return;
     }
     _schedule(immediate: true);
+  }
+
+  /// [诊断·+177] 把非 [VideoEnhancementFailure] 的异常整理成一行可读文本。
+  ///
+  /// 这类异常没有 mpv 属性名可当阶段，过去统一记成 'resource'，等于只说了
+  /// 「资源那一段出事了」——Windows 上既可能是 shader 落盘（权限/占用）、
+  /// 也可能是平台通道 setSize，还可能是解码参数缺失触发的空断言，修法完全
+  /// 不同。这里连同 [_step] 一起留下，下次复现就能直接定位。
+  String _describeCause(Object error) {
+    final text = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    final brief = text.length <= 150 ? text : '${text.substring(0, 150)}…';
+    final step = _step.isEmpty ? '' : '@$_step';
+    return '$step ${error.runtimeType}: $brief'.trim();
   }
 
   // [诊断·2026-10] 把一次「确认未通过」的现场整理成可读文本，供 detail 展示。
@@ -803,7 +854,7 @@ class VideoEnhancementController extends ChangeNotifier {
         parameters: player.state.videoParams,
         viewport: _viewport,
         ready: true,
-        android: Platform.isAndroid,
+        android: _platform?.android ?? false,
         television: _television,
         gpu: _gpu,
         luma: _luma,
@@ -841,7 +892,7 @@ class VideoEnhancementController extends ChangeNotifier {
           .whereType<Map>()
           .map((item) => item['desc']?.toString() ?? '')
           .join('\n');
-      final actual = _output!.actualSize;
+      final actual = _platform!.actualSize;
       final surface = _mpv!.read('osd-dimensions');
       final surfaceWidth = surface is Map ? surface['w'] : null;
       final surfaceHeight = surface is Map ? surface['h'] : null;
@@ -1103,7 +1154,7 @@ class VideoEnhancementController extends ChangeNotifier {
     await _initialization;
     await _tail;
     await _monitoring;
-    await _output?.close();
+    await _platform?.close();
     if (_mpv != null) _mpv!.closed = true;
     super.dispose();
   }

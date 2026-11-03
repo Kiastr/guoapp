@@ -109,6 +109,28 @@ class VideoEnhancementAssets {
     }
   }
 
+  static Future<Directory> _cacheDirectory() async {
+    try {
+      final support = await getApplicationSupportDirectory();
+      return Directory(path.join(support.path, 'video_enhancement', 'v1'));
+    } catch (_) {
+      // [Windows 兜底·+177] shader 只是运行期缓存，没必要绑死在
+      // path_provider 上：Dart 插件未注册（MissingPluginException）或
+      // shell 目录不可用（MissingPlatformDirectoryException）时，直接落到
+      // LOCALAPPDATA / 系统临时目录，mpv 同样能按绝对路径读取。
+      //
+      // 之所以加这条兜底：Windows 首包报「阶段:resource」，而资源本身经
+      // 核对 17 个文件齐全、manifest 与文件哈希 13/13 一致——剩下最可疑的
+      // 就是「取应用支持目录」这一步。失败时宁可换个目录，也不该让整条
+      // 增强链失效（熔断后本集再也回不来）。
+      final base =
+          Platform.environment['LOCALAPPDATA'] ??
+          Platform.environment['APPDATA'] ??
+          Directory.systemTemp.path;
+      return Directory(path.join(base, 'guoapp', 'video_enhancement', 'v1'));
+    }
+  }
+
   static Future<String> _prepare(String name) async {
     if (!RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(name)) {
       throw const FormatException('增强资源名称无效');
@@ -123,13 +145,7 @@ class VideoEnhancementAssets {
         length > 4 * 1024 * 1024) {
       throw const FormatException('增强资源清单无效');
     }
-    final directory = Directory(
-      path.join(
-        (await getApplicationSupportDirectory()).path,
-        'video_enhancement',
-        'v1',
-      ),
-    );
+    final directory = await _cacheDirectory();
     await directory.create(recursive: true);
     final destination = File(path.join(directory.path, '$digest-$name'));
     if (await destination.exists() && await destination.length() == length) {

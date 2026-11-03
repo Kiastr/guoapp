@@ -2,13 +2,13 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+176**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+177**。
 
 如要使用多片源请使用真果鉴
 
 ## 在原项目基础上的主要升级
 
-> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+176（+83 ~ +176，共 94 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
+> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+177（+83 ~ +177，共 95 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
 
 ### 1. 运行时片源生态——支持纯用户端解析libretv需要后端解析的视频源（重要改动）
 
@@ -38,7 +38,8 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 
 - 重构为**自动族**（省电增强 / 清晰优先）+ **高级六档**（极简 / 极简超分 / 均衡 / 标准 / 轻量 / 质量，按负载与效果取舍，弱 GPU 设备也能开启）
 - 全部 GPU 着色器执行，不用 NNAPI / NPU；修复 shader 注释被 mpv 误判导致的**安卓端增强静默空转**
-- **安卓端固定输出表面（+140，开发快照，未真机验证）**：fork `media_kit_video` 新增 `VideoFixedSurface` 策略，播放器创建时一次性把渲染表面放大到「源尺寸 × 倍率」（1080p → 2560×1440）并锁定，让 Anime4K 的 Upscale pass 真正参与渲染——这是安卓端从"同分辨率重建/降噪"走向 **1080p→2K 真超分**的唯一路径。默认不启用；命中条件（安卓 / 非电视 / 增强已开 / libmpv 后端 / 自建 VideoController）全部满足才开启，桌面行为与上游完全一致。详见下方 +140 条目与 `lib/video_output_size.dart` 注释
+- **安卓端固定输出表面（+140，开发快照，未真机验证）**：fork `media_kit_video` 新增 `VideoFixedSurface` 策略，播放器创建时一次性把渲染表面放大到「源尺寸 × 倍率」（1080p → 2560×1440）并锁定，让 Anime4K 的 Upscale pass 真正参与渲染——这是安卓端从"同分辨率重建/降噪"走向 **1080p→2K 真超分**的唯一路径。默认不启用；命中条件（安卓 / 非电视 / 增强已开 / libmpv 后端 / 自建 VideoController）全部满足才开启，桌面行为与上游完全一致。详见下方 +140 条目与 `lib/video_enhancement_platform.dart` 注释
+- **平台分流收口（+177）**：超分的平台差异全部收进 `lib/video_enhancement_platform.dart` —— Windows / macOS / Linux 走桌面实现（`VideoController.setSize` 放大表面，Windows 另有 `d3d11vpp` 硬件滤镜、成本上限 4），安卓走 `AndroidVideoEnhancementPlatform`（表面 no-op，固定表面在创建 VideoController 时锁定；成本上限 3；详情只给「已执行超分降噪」）。控制器不再自己判断 `Platform`。
 
 ### 5. 细节与性能
 
@@ -46,10 +47,11 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **卡顿修复**：轮询状态签名去重 + 首页分组缓存，消除周期性整页重建
 - **错误提示人话化**：接口返回网页、缺少函数、jar 包源等分别给出具体原因，不再统一显示「类型暂不支持」
 
-## 最近更新（0.2.74+176）
+## 最近更新（0.2.74+177）
 
 | 版本 | 变更 |
 | --- | --- |
+| +177 | **画质增强平台分流 + Windows 首包「阶段:resource」修复**。① **分流**：新增 `lib/video_enhancement_platform.dart`，把「表面怎么改 / 能不能上 d3d11vpp / detail 怎么写」从控制器里抽成平台对象——Windows、macOS/Linux 走 `DesktopVideoEnhancementPlatform`（`VideoController.setSize` 放大表面，与上游 Windows 独占版逐字一致；Windows 子类额外开 `hardwareFilter`），安卓走 `AndroidVideoEnhancementPlatform`（`setSurface` 只记录不下发，表面由 media_kit 或 +140 的 `VideoFixedSurface` 维护）。控制器里 5 处 `Platform.isAndroid/isWindows` 全部删除，安卓行为不变。② **Windows 失败兜底**：`阶段:resource` 是非 mpv 异常的统一标签，过去会丢掉原因。现在 ⑴ shader 缓存目录加兜底——`getApplicationSupportDirectory()` 抛 `MissingPluginException` / `MissingPlatformDirectoryException` 时退到 `%LOCALAPPDATA%\guoapp\video_enhancement\v1` 或系统临时目录；⑵ `d3d11vpp` 注入前的 `parameters.w!` / `h!` 改为取值校验，解码参数未回填时跳过而非抛空断言；⑶ 失败详情记录 `环节@runtimeType: message`（如 `阶段:resource@assets 原因:FormatException: ...`）。 |
 | +176 | **同步收藏次序修正（跨设备）**。前几版只修了本机 `_favorites` 的落库次序，`lanRecords` 的次序仍是旧版本固化的：同步只传记录序列，对端按收到的先后重建收藏，于是设备 A 上看着正确的顺序，传到设备 B 就变成反序、并和本地旧收藏分成两块。这次让记录序列始终跟着收藏走——`LanDocument.reconcile` 每次按 `favorites` 顺序重建 `records`（取消收藏的墓碑追加在后），WebDAV 合并改成**远端优先**并把全量结果当顺序权威做一次整表重排（`reorderAll`），云端没有的本地收藏追加成最新。局域网同步只传变更子集，不当顺序权威。仍是过渡方案：顺序靠位置传递，要彻底摆脱就得上收藏时间戳（`addedAt`）。 |
 | +175 | **启动同步串行化**。WebDAV 自动同步（首屏后 3 秒）与红果账号同步（5 秒）并行起跑，账号同步若在 WebDAV 的网络往返期间写入收藏，`applyLanRecords` 的 `lanRecords` 哈希校验就会失败——整轮 WebDAV 自动同步作废，异常还被静默吞掉。现在配了 WebDAV 自动同步时，账号同步等它跑完（上限 90 秒）再执行；没配 WebDAV 仍保持原来的 5 秒延迟。注意这只解决时序，**本地取消收藏仍会被账号同步拉回**（账号「只增不删」的语义决定），那个要另做「取消记忆」。 |
 | +174 | **账号收藏顺序修正**。账号快照按收藏时间倒序下发，原实现照序 append 进本地 `_favorites`，而本地约定是「插入顺序旧 → 新、展示时由 `favorites` getter 反转成新 → 旧」——两边叠加，最新收藏反而沉到「我的追剧」最底部。现在落库前统一按 `collectedAt` 升序（同毫秒用接口原序做稳定排序），并把已按倒序落过库的同一批条目整体摘出来重排，升级后不必手动清库即可自愈。Go 侧同时补一次 `video_data.collect_time` 兜底，接口把它挂在嵌套对象里也能拿到时间。 |
