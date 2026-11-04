@@ -25,17 +25,20 @@ class RecommendationsScreen extends StatefulWidget {
 }
 
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
-  // [+178] 推荐 tag 下的子项收敛为两路，都走 bookmall/tab/v1：
-  //   - feed_personal「个性推荐」：请求带红果账号 Cookie，服务端有机会按
-  //     账号画像出内容（Go 侧 hongguoPersonalFeedGenre）；**默认子项**。
-  //   - feed「公开推荐」：保持 +149 起的匿名请求，不带任何身份。
+  // 推荐 tag 下的三档子项（+178 收敛为两路，+179 新增第三路）：
+  //   - feed_personal「个性推荐」：tab/v1 + 红果账号 Cookie；**默认子项**。
+  //   - feed「公开推荐」：+149 起的匿名 tab/v1，不带任何身份。
+  //   - feed_behavior「行为推荐」：+179 的两段式 tab/v?cr=1028 +
+  //     cell/change/v，翻页回传已见剧集与最近曝光，无需登录。
   // 原「真人剧 / 漫剧 / AI 剧」三个子项走 landpage，对匿名设备返回空 body、
   // 只能靠官网兜底，且与分类页内容重复，故移除。
-  // 注意：'feed_personal' 必须与 Go 侧 hongguoPersonalFeedGenre 逐字一致，
-  // 它是跨 Dart / Go 的字符串协议，没有编译期检查。
+  // 注意：这几个 id 必须与 Go 侧 hongguoPersonalFeedGenre /
+  // hongguoFeedGenre / hongguoCellFeedGenre 逐字一致，它们是跨 Dart / Go
+  // 的字符串协议，没有编译期检查。
   static const _genres = [
     CatalogCategory('feed_personal', '个性推荐'),
     CatalogCategory('feed', '公开推荐'),
+    CatalogCategory('feed_behavior', '行为推荐'),
   ];
   final _scroll = ScrollController();
   String _genre = 'feed_personal';
@@ -153,11 +156,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   '$_genreLabel · 已加载 ${_items.length} 部',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                // [+178] app 内引导：个性推荐依赖登录态，未登录会退化成匿名流，
-                // 不说明的话用户会以为两栏内容没区别（Go 侧另有 warning 提示）。
+                // app 内引导：两档都依赖「用户做了什么」，不说明的话会被当成
+                // 又一个随机推荐。个性推荐依赖登录态，未登录退化成匿名流；
+                // 行为推荐不需要登录，靠会话内的曝光回传调序。
                 if (_genre == 'feed_personal')
                   Text(
                     '基于红果账号的推荐；未登录时与公开推荐相同',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  )
+                else if (_genre == 'feed_behavior')
+                  Text(
+                    '按浏览与换批行为调序，无需登录；翻页会回传已看过的剧',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

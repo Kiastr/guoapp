@@ -2,13 +2,13 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+178**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.74+179**。
 
 如要使用多片源请使用真果鉴
 
 ## 在原项目基础上的主要升级
 
-> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+178（+83 ~ +178，共 96 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
+> 原项目为**鱼佬的 0.2.50 基线「短剧库 APP」**；本仓库在其源码之上持续升级至 **0.2.74+179（+83 ~ +179，共 97 个版本）**。主要改动按主题精炼如下，逐版明细见下方「最近更新」。
 
 ### 1. 运行时片源生态——支持纯用户端解析libretv需要后端解析的视频源（重要改动）
 
@@ -47,10 +47,11 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 - **卡顿修复**：轮询状态签名去重 + 首页分组缓存，消除周期性整页重建
 - **错误提示人话化**：接口返回网页、缺少函数、jar 包源等分别给出具体原因，不再统一显示「类型暂不支持」
 
-## 最近更新（0.2.74+178）
+## 最近更新（0.2.74+179）
 
 | 版本 | 变更 |
 | --- | --- |
+| +179 | **推荐 tag 新增「行为推荐」：两段式信息流 + 曝光回传（路线二 / 第三档）**。① **新子项**：推荐 tag 在「个性推荐 / 公开推荐」之后新增 `feed_behavior`「行为推荐」，默认子项仍是「个性推荐」；三档共用一个推荐页，切档由 `_genres` 与 Go 侧伪分类键对齐（跨 Dart / Go 字符串协议）。② **两段式取流**：新增 `native/core/provider_hongguo_cell_feed.go`，端点与参数照 `it00021hot/hongguo-desktop` 的 `recommend/mod.rs`：首批 `GET /reading/bookapi/bookmall/tab/v?client_req_type=1028`（`sinfonlinec` 域）拿 `session_id` / `cell_id_str` / `bookstore_id` 与首批 3 张卡片；翻页 `GET /reading/bookapi/bookmall/cell/change/v?client_req_type=2` 解析 `data.cell_view.cell_data[].video_data[]`，按 `next_offset` 递进（实测 0→6→12，每批 6 张全新卡片）。**匿名直连 `code=0` SUCCESS，不需要 x-gorgon / x-medusa 签名**（2026-11-05 实测）。③ **曝光回传**：翻页带回 `filter_ids`（最近 200 个已见 series_id）、`rec_filter_info_list`（容量 8 的最近曝光环）与 `refresh_action_info.latest_impression_gids`，`recommend_extra` / `nps_insert_rank_json` / 会话状态族按参考实现补齐；曝光环、会话 UUID、服务端下发的双 id 全在内存按 genre 保存，**不进 `hongguoRecommendationQuery`、不落盘**（该结构会写进 `catalogs.json`），双 id 另带实测常量兜底，进程重启后仍能翻页。④ **实测差异与适配**：参考实现从 `cell_extra_data.rec_filter_info` 取曝光上下文，当前服务端已不下发该字段（实测恒 null），改由 `recommend_group_id` + `recommend_info`（`channel_id` / `request_id` / `rank`）+ `video_detail.content_type` 组装，服务端恢复该字段时自动切回原路径；`has_more` 恒 false 但翻页仍有新卡片，与 `tab/v1` 一样固定 `HasMore=true`、靠本地 seen 判停。⑤ **隔离与回退**：新档是 `fetchHongguoRecommendations` 里一条独立分流，`feed` / `feed_personal` 的 `tab/v1` 解析一行未动；`engine.recommendations` 按 genre 分 key，出问题时切回「公开推荐」即可。带账号 Cookie 在这套参数下未验证，默认匿名（`need_personal_recommend=1` 已带会话级画像），以后要接账号态只需改 `app_recommendations.go` 取 cookie 的那一段。⑥ **UI 引导**：推荐页在「行为推荐」下方补一行「按浏览与换批行为调序，无需登录；翻页会回传已看过的剧」。测试：新增 `provider_hongguo_cell_feed_test.go` 七例（genre 校验、首批/翻页响应解析、content_type 过滤、两种曝光形态、曝光环容量与去重、filter_ids、请求参数与回传）；`go build ./...` 通过。本地 `dart analyze` 的 `Future isn't a type` 报错用 `git show HEAD:` 基线对比确认是沙箱 Dart 2.17 与项目 `>=3.12.0` 不匹配导致的既有误报，改动文件相对基线无新增问题。 |
 | +178 | **推荐 tag 收口为「个性推荐 / 公开推荐」+ 红果默认打开推荐**。① **子项精简**：移除「真人剧 / 漫剧 / AI 剧」三个子项（走 landpage，对匿名设备返回空 body、只能靠官网兜底，且与分类页重复）；原「推荐」改名「公开推荐」并取消默认。② **个性推荐（第一条路）**：新增伪分类键 `feed_personal`，与 `feed` 共用 `bookmall/tab/v1` 的解析与分页（同一套 `session_id` / `offset` / `seen` 换批逻辑），唯一差别是请求头带红果账号 Cookie —— 登录态由 `engine.hongguoLoginLoad()` 实时读取、`hongguoAccountCookieHeader` 拼接，只作函数参数在内存里传递，**绝不写进 `hongguoRecommendationQuery`**（该结构会序列化进 `engine.recommendations` 并由 `writeCatalogDiskLocked` 落盘，等于把会话凭据写到磁盘）。未登录时 Cookie 为空，请求自动退化成匿名公开流，并在结果里给一条提示，不让默认子项开天窗。③ **默认项**：`RecommendationsScreen._genre` 默认 `feed_personal`；`HomeScreen.initState` 在红果分组下把 `_showRecommendations` 置 true，启动即落在「推荐」tag（原来默认「全部」），切到别的分组由 `_changeSource` 复位，不影响其他源。④ **UI 引导**：推荐页顶部标题随子项变化，个性推荐下方补一行「基于红果账号的推荐；未登录时与公开推荐相同」。⑤ **边界**：这是「只把 Cookie 接进 tab/v1」的最小方案，服务端是否按账号画像出内容不保证；参考 tsukiyo-zero/hongguoTV 的结论，带 Cookie 时不能塞固定 `device_id` / `iid`（本实现参数里本来就没有），若实测返回 110 ILLEGAL_ACCESS 需再去掉设备指纹。要做到「推荐跟着点击走」需换 `cell/change/v` 两段式 + 曝光回传，属另一档改造。测试：`TestHongguoPersonalFeedGenreValidation`（新 genre 校验放行、越界仍拒绝、不混入 landpage 分类）；`go build ./...` 通过，`dart analyze lib test` 零 error。 |
 | +177 | **画质增强平台分流 + Windows 首包「阶段:resource」修复**。① **分流**：新增 `lib/video_enhancement_platform.dart`，把「表面怎么改 / 能不能上 d3d11vpp / detail 怎么写」从控制器里抽成平台对象——Windows、macOS/Linux 走 `DesktopVideoEnhancementPlatform`（`VideoController.setSize` 放大表面，与上游 Windows 独占版逐字一致；Windows 子类额外开 `hardwareFilter`），安卓走 `AndroidVideoEnhancementPlatform`（`setSurface` 只记录不下发，表面由 media_kit 或 +140 的 `VideoFixedSurface` 维护）。控制器里 5 处 `Platform.isAndroid/isWindows` 全部删除，安卓行为不变。② **Windows 失败兜底**：`阶段:resource` 是非 mpv 异常的统一标签，过去会丢掉原因。现在 ⑴ shader 缓存目录加兜底——`getApplicationSupportDirectory()` 抛 `MissingPluginException` / `MissingPlatformDirectoryException` 时退到 `%LOCALAPPDATA%\guoapp\video_enhancement\v1` 或系统临时目录；⑵ `d3d11vpp` 注入前的 `parameters.w!` / `h!` 改为取值校验，解码参数未回填时跳过而非抛空断言；⑶ 失败详情记录 `环节@runtimeType: message`（如 `阶段:resource@assets 原因:FormatException: ...`）。 |
 | +176 | **同步收藏次序修正（跨设备）**。前几版只修了本机 `_favorites` 的落库次序，`lanRecords` 的次序仍是旧版本固化的：同步只传记录序列，对端按收到的先后重建收藏，于是设备 A 上看着正确的顺序，传到设备 B 就变成反序、并和本地旧收藏分成两块。这次让记录序列始终跟着收藏走——`LanDocument.reconcile` 每次按 `favorites` 顺序重建 `records`（取消收藏的墓碑追加在后），WebDAV 合并改成**远端优先**并把全量结果当顺序权威做一次整表重排（`reorderAll`），云端没有的本地收藏追加成最新。局域网同步只传变更子集，不当顺序权威。仍是过渡方案：顺序靠位置传递，要彻底摆脱就得上收藏时间戳（`addedAt`）。 |
@@ -156,7 +157,7 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 | --- | --- |
 | 浏览 | 标题栏依次提供排序与筛选、榜单、多选下载和展开搜索。分类保持独立一行，内容区左右滑动切类；支持默认、名称、自然季号、上线日期、热度、播放量排序及连载状态筛选。列表下滑接近底部自动加载下一页，底部「加载更多」为兜底 |
 | 搜索 | 红果合并官网与名称索引，输入停顿 300 毫秒显示最多 10 条联想；韩小圈、剧果、野果、鬼片调用各自的在线搜索并按分页继续加载。部分失败保留有效结果；最近 20 次搜索按用户保存 |
-| 推荐 | 红果分类栏在「全部」后显示「推荐」，且为红果源默认打开项；内含「个性推荐」（带红果账号 Cookie，默认）与「公开推荐」（匿名）两档，点「继续推荐」或下拉换一批 |
+| 推荐 | 红果分类栏在「全部」后显示「推荐」，且为红果源默认打开项；内含三档：「个性推荐」（带红果账号 Cookie，默认）、「公开推荐」（匿名 `tab/v1`）、「行为推荐」（两段式 `tab/v` + `cell/change/v`，翻页回传已见剧集与曝光，无需登录），点「继续推荐」或下拉换一批 |
 | 详情 | 普通点剧直接进入播放；下载和兜底入口保留详情页。详情页浏览封面、资料、追剧状态与可展开简介；底部固定「立即播放 / 继续播放」和下载入口。选集默认折叠，展开后每组 50 集，可切换范围、定位当前或输入集数跳转；宽屏与电视采用资料、选集分栏 |
 | 追剧与历史 | 按想看 / 在看 / 已看 / 有更新筛选；红果已追剧发现新季后进入「有更新」。追剧和历史均可搜索。每个用户独立保存，每 5 秒及退出播放时记录真实进度 |
 | 卡片与批量下载 | 卡片「更多」提供收藏、状态和下载选集；电脑右键，电视菜单键。发现页长按卡片或点标题栏「多选下载」，一次最多 50 部 |

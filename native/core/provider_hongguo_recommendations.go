@@ -25,9 +25,11 @@ type hongguoRecommendationPage struct {
 
 func (query hongguoRecommendationQuery) validate() error {
 	// [feed] 推荐流是独立的一路：它没有 genre 维度（返回的是混排信息流），
-	// 用伪分类键 feed / feed_personal 与三个真实分类区分。前者匿名公开流，
-	// 后者带账号 Cookie 的个性流，共用 provider_hongguo_feed.go 的解析。
-	if isHongguoFeedGenre(query.Genre) {
+	// 用伪分类键 feed / feed_personal / feed_behavior 与三个真实分类区分。
+	// 前两者共用 provider_hongguo_feed.go 的 tab/v1 解析（匿名 / 账号 Cookie），
+	// feed_behavior 走 provider_hongguo_cell_feed.go 的 tab/v + cell/change
+	// 两段式（+179）。三者都按同一套分页参数校验，避免缓存恢复时被判无效。
+	if isHongguoFeedGenre(query.Genre) || isHongguoCellFeedGenre(query.Genre) {
 		if query.Offset < 0 || query.Offset > 1_000_000 || len(query.SessionID) > 4096 || strings.ContainsAny(query.SessionID, "\r\n\x00") || len(query.Seen) > 540 {
 			return errors.New("推荐分页参数无效，请重新获取")
 		}
@@ -57,6 +59,12 @@ func (downloader *Downloader) fetchHongguoRecommendations(ctx context.Context, q
 	page := hongguoRecommendationPage{Dramas: []Drama{}}
 	if err := query.validate(); err != nil {
 		return page, err
+	}
+	// [+179] 行为推荐走两段式 tab/v?cr=1028 + cell/change/v，与下面两档
+	// 的 tab/v1 单端点完全隔离：它有自己的会话、双 id 与曝光环（内存态），
+	// 出问题时切回「公开推荐」即可，不影响另外两档。
+	if isHongguoCellFeedGenre(query.Genre) {
+		return downloader.fetchHongguoCellFeed(ctx, query, cookie)
 	}
 	// [feed] 推荐流走 bookmall/tab/v1，与 landpage 分类推荐不是同一条链路：
 	// 后者对匿名设备空 body，前者可用且 offset 递增即「换一批」。cookie

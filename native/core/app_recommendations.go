@@ -58,7 +58,9 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	// [feed] 推荐流的「刷新」= 换一批，不是回到头部。若照搬分类页的
 	// 「force 即重置游标」，用户下拉刷新拿到的永远是首批那 3 部——这正是
 	// 「刷新后还是原来的剧」的复现。这里保留 offset/session/seen 继续往后取。
-	feed := isHongguoFeedGenre(genre)
+	// [+179] 行为推荐也是「流」：刷新语义同样是换一批而不是回到头部，
+	// 与 tab/v1 两档共用这段游标保留逻辑。唯一的差别在取流函数分流。
+	feed := isHongguoFeedGenre(genre) || isHongguoCellFeedGenre(genre)
 	if (input.Force || !found) && !(feed && found) {
 		state = nativeRecommendationState{Query: hongguoRecommendationQuery{Genre: genre}, HasMore: true}
 	}
