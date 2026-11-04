@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 行为推荐（+179）的两段式解析、曝光环与参数构造。
+// 个性推荐（原行为推荐，+179）的两段式解析、曝光环与参数构造。
 // 端点实测结论见 provider_hongguo_cell_feed.go 顶部注释；这里只跑离线
 // fixture，不发网络请求。
 
@@ -22,13 +22,13 @@ func clearCellTestState(genre string) {
 func TestHongguoCellFeedGenreValidation(t *testing.T) {
 	base := hongguoRecommendationQuery{Genre: hongguoCellFeedGenre, Offset: 6, SessionID: "sess-1", Seen: []string{"hongguo:123456"}}
 	if err := base.validate(); err != nil {
-		t.Fatalf("行为推荐 genre 应放行: %v", err)
+		t.Fatalf("个性推荐 genre 应放行: %v", err)
 	}
 	if !isHongguoCellFeedGenre(hongguoCellFeedGenre) {
 		t.Fatal("分流判定失效")
 	}
 	if isHongguoFeedGenre(hongguoCellFeedGenre) || isHongguoCellFeedGenre(hongguoFeedGenre) || isHongguoCellFeedGenre(hongguoPersonalFeedGenre) {
-		t.Fatal("行为推荐不得与 tab/v1 两档串线")
+		t.Fatal("个性推荐不得与 tab/v1 两档串线")
 	}
 	bad := []hongguoRecommendationQuery{
 		{Genre: hongguoCellFeedGenre, Offset: -1},

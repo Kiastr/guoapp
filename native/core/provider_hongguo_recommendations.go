@@ -60,7 +60,7 @@ func (downloader *Downloader) fetchHongguoRecommendations(ctx context.Context, q
 	if err := query.validate(); err != nil {
 		return page, err
 	}
-	// [+179] 行为推荐走两段式 tab/v?cr=1028 + cell/change/v，与下面两档
+	// [+179] feed_behavior「个性推荐」走两段式 tab/v?cr=1028 + cell/change/v，与下面两档
 	// 的 tab/v1 单端点完全隔离：它有自己的会话、双 id 与曝光环（内存态），
 	// 出问题时切回「公开推荐」即可，不影响另外两档。
 	if isHongguoCellFeedGenre(query.Genre) {
@@ -68,7 +68,7 @@ func (downloader *Downloader) fetchHongguoRecommendations(ctx context.Context, q
 	}
 	// [feed] 推荐流走 bookmall/tab/v1，与 landpage 分类推荐不是同一条链路：
 	// 后者对匿名设备空 body，前者可用且 offset 递增即「换一批」。cookie
-	// 非空时由 feed_personal 一路带上账号 Cookie（个性推荐）。
+	// 非空时由 feed_personal 一路带上账号 Cookie（账号推荐实验档）。
 	if isHongguoFeedGenre(query.Genre) {
 		return downloader.fetchHongguoFeed(ctx, query, cookie)
 	}

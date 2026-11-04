@@ -36,7 +36,7 @@ const (
 	hongguoFeedUserAgent = "com.dragon.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C)"
 	// hongguoFeedGenre 是推荐流在查询/缓存里的伪分类键，不参与官网兜底映射。
 	hongguoFeedGenre = "feed"
-	// hongguoPersonalFeedGenre 是「个性推荐」的伪分类键：与 feed 共用
+	// hongguoPersonalFeedGenre 是「账号推荐（实验）」的伪分类键：与 feed 共用
 	// tab/v1 的解析与分页，区别只在请求是否带红果账号 Cookie（+178）。
 	hongguoPersonalFeedGenre = "feed_personal"
 	// 实测响应 0.6~1.4 MB，给 16 MB 上限留足余量又不至于被异常响应拖死。
@@ -58,7 +58,7 @@ func isHongguoFeedGenre(genre string) bool {
 }
 
 // fetchHongguoFeed 连取若干批推荐流，攒到目标条数或连续无新增为止。
-// cookie 非空时每批请求都带账号 Cookie（个性推荐），为空即匿名公开流。
+// cookie 非空时每批请求都带账号 Cookie（账号推荐实验档），为空即匿名公开流。
 //
 // 返回的 NextOffset/SessionID 是最后一批的游标，可直接用于下一次调用。
 // 中途某一批失败时：只要前面已经取到剧集就正常返回（网络抖动不该把整屏打掉），
@@ -164,7 +164,7 @@ func (downloader *Downloader) fetchHongguoFeedPage(ctx context.Context, query ho
 	request.Header.Set("X-XS-From-Web", "0")
 	request.Header.Set("Sdk-Version", "2")
 	if cookie != "" {
-		// [+178] 个性推荐把落盘的账号 Cookie 送进 tab/v1。Cookie 只在内存里
+		// [+178] 账号推荐实验档把落盘的账号 Cookie 送进 tab/v1。Cookie 只在内存里
 		// 流动：绝不能塞进 hongguoRecommendationQuery —— 那个结构会被序列化
 		// 进 engine.recommendations 并由 writeCatalogDiskLocked 落盘，等于把
 		// 会话凭据写进磁盘缓存。

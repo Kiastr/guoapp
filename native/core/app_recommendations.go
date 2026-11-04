@@ -58,16 +58,16 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	// [feed] 推荐流的「刷新」= 换一批，不是回到头部。若照搬分类页的
 	// 「force 即重置游标」，用户下拉刷新拿到的永远是首批那 3 部——这正是
 	// 「刷新后还是原来的剧」的复现。这里保留 offset/session/seen 继续往后取。
-	// [+179] 行为推荐也是「流」：刷新语义同样是换一批而不是回到头部，
+	// [+179] feed_behavior「个性推荐」也是「流」：刷新语义同样是换一批而不是回到头部，
 	// 与 tab/v1 两档共用这段游标保留逻辑。唯一的差别在取流函数分流。
 	feed := isHongguoFeedGenre(genre) || isHongguoCellFeedGenre(genre)
 	if (input.Force || !found) && !(feed && found) {
 		state = nativeRecommendationState{Query: hongguoRecommendationQuery{Genre: genre}, HasMore: true}
 	}
-	// [+178] 个性推荐把账号 Cookie 送进 tab/v1。这里实时读登录态：Cookie
+	// [+178] 账号推荐实验档（feed_personal）把账号 Cookie 送进 tab/v1。这里实时读登录态：Cookie
 	// 只作为函数参数在内存里传递，绝不进入 state.Query（那个结构会落盘，
 	// 见 provider_hongguo_feed.go 里的说明）。未登录时 cookie 为空，请求
-	// 退化成匿名公开流，并在结果里给一条提示，不让默认子项开天窗。
+	// 退化成匿名公开流，并在结果里给一条提示，不让实验档看起来像已生效。
 	cookie := ""
 	if genre == hongguoPersonalFeedGenre {
 		session := engine.hongguoLoginLoad()
@@ -172,7 +172,7 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	engine.catalogStates[key] = nativeCatalogState{UpdatedAt: time.Now(), Page: state.Page, HasMore: state.HasMore}
 	result := nativeCatalogResult{Items: append([]nativeDrama{}, items...), Page: state.Page, HasMore: state.HasMore, Fresh: true}
 	if genre == hongguoPersonalFeedGenre && cookie == "" {
-		result.Warning = joinNativeWarnings(result.Warning, "未登录红果账号，当前是公开推荐；在设置里扫码登录后可启用个性化")
+		result.Warning = joinNativeWarnings(result.Warning, "实验档未登录红果账号，当前按公开推荐取流")
 	}
 	if err := engine.writeCatalogDiskLocked(); err != nil {
 		result.Fresh, result.Warning, result.saveError = false, err.Error(), err

@@ -25,23 +25,27 @@ class RecommendationsScreen extends StatefulWidget {
 }
 
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
-  // 推荐 tag 下的三档子项（+178 收敛为两路，+179 新增第三路）：
-  //   - feed_personal「个性推荐」：tab/v1 + 红果账号 Cookie；**默认子项**。
+  // 推荐 tag 下的三档子项（+178 收敛为两路，+179 新增第三路，+180 调整命名与默认）：
+  //   - feed_behavior「个性推荐」：+179 的两段式 tab/v?cr=1028 + cell/change/v，
+  //     翻页回传已见剧集与最近曝光，无需登录。**默认子项**。
   //   - feed「公开推荐」：+149 起的匿名 tab/v1，不带任何身份。
-  //   - feed_behavior「行为推荐」：+179 的两段式 tab/v?cr=1028 +
-  //     cell/change/v，翻页回传已见剧集与最近曝光，无需登录。
+  //   - feed_personal「账号推荐（实验）」：tab/v1 + 红果账号 Cookie。+178 实测
+  //     服务端未按账号画像调序，与公开推荐内容一致，故降级为实验档并置于末位。
+  // 【+180 改名沿革】feed_behavior 原显示「行为推荐」，现改叫「个性推荐」并设为
+  // 默认；「个性推荐」这个旧名原属 feed_personal，现改为「账号推荐（实验）」。
+  // 两个 id 与 Go 侧常量一律不变——它们是跨 Dart / Go 的字符串协议，没有编译期
+  // 检查，改名只动显示名与默认项，不动 id、不动取流逻辑。
   // 原「真人剧 / 漫剧 / AI 剧」三个子项走 landpage，对匿名设备返回空 body、
-  // 只能靠官网兜底，且与分类页内容重复，故移除。
+  // 只能靠官网兜底，且与分类页内容重复，故移除（+178）。
   // 注意：这几个 id 必须与 Go 侧 hongguoPersonalFeedGenre /
-  // hongguoFeedGenre / hongguoCellFeedGenre 逐字一致，它们是跨 Dart / Go
-  // 的字符串协议，没有编译期检查。
+  // hongguoFeedGenre / hongguoCellFeedGenre 逐字一致。
   static const _genres = [
-    CatalogCategory('feed_personal', '个性推荐'),
+    CatalogCategory('feed_behavior', '个性推荐'),
     CatalogCategory('feed', '公开推荐'),
-    CatalogCategory('feed_behavior', '行为推荐'),
+    CatalogCategory('feed_personal', '账号推荐（实验）'),
   ];
   final _scroll = ScrollController();
-  String _genre = 'feed_personal';
+  String _genre = 'feed_behavior';
   List<Drama> _items = [];
   bool _loading = false;
   bool _more = false;
@@ -156,19 +160,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   '$_genreLabel · 已加载 ${_items.length} 部',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                // app 内引导：两档都依赖「用户做了什么」，不说明的话会被当成
-                // 又一个随机推荐。个性推荐依赖登录态，未登录退化成匿名流；
-                // 行为推荐不需要登录，靠会话内的曝光回传调序。
-                if (_genre == 'feed_personal')
+                // [+180] app 内引导：只说明当前档位，不写实现细节。默认档
+                // feed_behavior 已改名「个性推荐」，实验档 feed_personal 改名
+                // 「账号推荐（实验）」；两档文案都必须跟 _genres 的显示名对应。
+                if (_genre == 'feed_behavior')
                   Text(
-                    '基于红果账号的推荐；未登录时与公开推荐相同',
+                    '按浏览与换批行为调序，无需登录',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   )
-                else if (_genre == 'feed_behavior')
+                else if (_genre == 'feed_personal')
                   Text(
-                    '按浏览与换批行为调序，无需登录；翻页会回传已看过的剧',
+                    '实验档：带红果账号 Cookie 取流，效果未验证',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

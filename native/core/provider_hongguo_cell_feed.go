@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// 红果「行为推荐」：两段式首页信息流（路线二 / 第三档）。
+// 红果「个性推荐」（+180 前叫「行为推荐」）：两段式首页信息流。
 //
 // 【为什么单独开一个文件】现有 feed / feed_personal 走 bookmall/tab/v1 单端点，
 // offset+1 就是「换一批」，服务端没有任何行为回传。本文件是另一条完整链路：
@@ -49,13 +49,13 @@ import (
 // 磁盘缓存里。所以这里用包级 sync.Mutex 状态，进程退出即清空；双 id 另外带
 // 实测常量兜底，重启后即使 query 里恢复了旧 session_id 也能继续翻页。
 //
-// 【为什么不需要 Cookie】本档定位「无需登录的行为推荐」：cr=1028 自带
+// 【为什么不需要 Cookie】本档定位「无需登录的个性推荐」：cr=1028 自带
 // need_personal_recommend=1，会话级画像由 session_id + 曝光回传建立。带账号
 // Cookie 在这套参数下未验证（tab/v1 那边有 110 ILLEGAL_ACCESS 的先例），
 // 因此 cookie 参数保留但默认由调用方传空；要接账号态时只改 app_recommendations.go
 // 里取 cookie 的那一段即可，本文件不用动。
 const (
-	// hongguoCellFeedGenre 是「行为推荐」的伪分类键，Dart 侧
+	// hongguoCellFeedGenre 是「个性推荐」的伪分类键，Dart 侧
 	// recommendations_screen.dart 的 _genres 必须用同一字符串（+179）。
 	hongguoCellFeedGenre = "feed_behavior"
 
@@ -324,7 +324,7 @@ func hongguoCellChangeValues(values url.Values, config hongguoCellConfig, sessio
 // 是参考实现 reading_headers() 的三件套，实测缺了也能通，保留对齐官方。
 func (downloader *Downloader) hongguoCellRequest(ctx context.Context, path string, values url.Values, cookie string) (map[string]any, error) {
 	if len(path) == 0 || path[0] != '/' {
-		return nil, errors.New("红果行为推荐请求路径无效")
+		return nil, errors.New("红果个性推荐请求路径无效")
 	}
 	values.Set("_rticket", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, hongguoCellOrigin+path+"?"+values.Encode(), nil)
@@ -353,7 +353,7 @@ func (downloader *Downloader) hongguoCellRequest(ctx context.Context, path strin
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("红果行为推荐请求失败：HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("红果个性推荐请求失败：HTTP %d", response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, hongguoFeedBodyLimit))
 	if err != nil {
@@ -364,10 +364,10 @@ func (downloader *Downloader) hongguoCellRequest(ctx context.Context, path strin
 	}
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, errors.New("红果行为推荐数据格式异常")
+		return nil, errors.New("红果个性推荐数据格式异常")
 	}
 	if code := mapString(result, "code"); code != "" && code != "0" {
-		return nil, errors.New("红果行为推荐暂不可用（错误码 " + code + "）")
+		return nil, errors.New("红果个性推荐暂不可用（错误码 " + code + "）")
 	}
 	return result, nil
 }
@@ -522,11 +522,11 @@ func (downloader *Downloader) fetchHongguoCellFirstPage(ctx context.Context, gen
 	}
 	tab, rows := hongguoCellTabRows(result)
 	if len(tab) == 0 {
-		return page, errors.New("红果行为推荐未返回推荐 tab")
+		return page, errors.New("红果个性推荐未返回推荐 tab")
 	}
 	dramas, impressions := hongguoCellDramas(rows)
 	if len(rows) > 0 && len(dramas) == 0 {
-		return page, errors.New("红果行为推荐未返回可播放的剧集")
+		return page, errors.New("红果个性推荐未返回可播放的剧集")
 	}
 	// tab 顶层给 bookstore_id，cell_id_str 在带卡片的内层 cell 上（实测
 	// 2026-11-05 响应如此），两处都试；两者是 cell/change 翻页必需的双 id。
@@ -564,11 +564,11 @@ func (downloader *Downloader) fetchHongguoCellChangePage(ctx context.Context, ge
 	}
 	data, rows := hongguoCellChangeRows(result)
 	if len(data) == 0 {
-		return page, errors.New("红果行为推荐数据格式异常")
+		return page, errors.New("红果个性推荐数据格式异常")
 	}
 	dramas, impressions := hongguoCellDramas(rows)
 	if len(rows) > 0 && len(dramas) == 0 {
-		return page, errors.New("红果行为推荐未返回可播放的剧集")
+		return page, errors.New("红果个性推荐未返回可播放的剧集")
 	}
 	hongguoCellRecordImpressions(genre, impressions)
 	page.Dramas = dramas
