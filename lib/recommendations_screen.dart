@@ -25,17 +25,20 @@ class RecommendationsScreen extends StatefulWidget {
 }
 
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
+  // [+178] 推荐 tag 下的子项收敛为两路，都走 bookmall/tab/v1：
+  //   - feed_personal「个性推荐」：请求带红果账号 Cookie，服务端有机会按
+  //     账号画像出内容（Go 侧 hongguoPersonalFeedGenre）；**默认子项**。
+  //   - feed「公开推荐」：保持 +149 起的匿名请求，不带任何身份。
+  // 原「真人剧 / 漫剧 / AI 剧」三个子项走 landpage，对匿名设备返回空 body、
+  // 只能靠官网兜底，且与分类页内容重复，故移除。
+  // 注意：'feed_personal' 必须与 Go 侧 hongguoPersonalFeedGenre 逐字一致，
+  // 它是跨 Dart / Go 的字符串协议，没有编译期检查。
   static const _genres = [
-    // 首屏默认走 App 推荐流（bookmall/tab/v1）：真实个性化信息流，
-    // 「换一批」= offset+1，每次都能拿到新剧。下面三个分类仍走 landpage，
-    // 该接口对匿名设备返回空 body，失败时由 core 兜底到官网分类页。
-    CatalogCategory('feed', '推荐'),
-    CatalogCategory('short_play', '真人剧'),
-    CatalogCategory('comic_series', '漫剧'),
-    CatalogCategory('ai_series', 'AI 剧'),
+    CatalogCategory('feed_personal', '个性推荐'),
+    CatalogCategory('feed', '公开推荐'),
   ];
   final _scroll = ScrollController();
-  String _genre = 'feed';
+  String _genre = 'feed_personal';
   List<Drama> _items = [];
   bool _loading = false;
   bool _more = false;
@@ -105,6 +108,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  String get _genreLabel {
+    for (final genre in _genres) {
+      if (genre.id == _genre) return genre.name;
+    }
+    return '推荐';
+  }
+
   void _select(String genre) {
     if (_genre == genre) return;
     setState(() {
@@ -136,9 +146,23 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Text(
-              '公开推荐 · 已加载 ${_items.length} 部',
-              style: Theme.of(context).textTheme.bodySmall,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$_genreLabel · 已加载 ${_items.length} 部',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                // [+178] app 内引导：个性推荐依赖登录态，未登录会退化成匿名流，
+                // 不说明的话用户会以为两栏内容没区别（Go 侧另有 warning 提示）。
+                if (_genre == 'feed_personal')
+                  Text(
+                    '基于红果账号的推荐；未登录时与公开推荐相同',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+              ],
             ),
           ),
         ),

@@ -25,8 +25,9 @@ type hongguoRecommendationPage struct {
 
 func (query hongguoRecommendationQuery) validate() error {
 	// [feed] 推荐流是独立的一路：它没有 genre 维度（返回的是混排信息流），
-	// 用伪分类键 feed 与三个真实分类区分。见 provider_hongguo_feed.go。
-	if query.Genre == hongguoFeedGenre {
+	// 用伪分类键 feed / feed_personal 与三个真实分类区分。前者匿名公开流，
+	// 后者带账号 Cookie 的个性流，共用 provider_hongguo_feed.go 的解析。
+	if isHongguoFeedGenre(query.Genre) {
 		if query.Offset < 0 || query.Offset > 1_000_000 || len(query.SessionID) > 4096 || strings.ContainsAny(query.SessionID, "\r\n\x00") || len(query.Seen) > 540 {
 			return errors.New("推荐分页参数无效，请重新获取")
 		}
@@ -52,15 +53,16 @@ func (query hongguoRecommendationQuery) validate() error {
 	return nil
 }
 
-func (downloader *Downloader) fetchHongguoRecommendations(ctx context.Context, query hongguoRecommendationQuery) (hongguoRecommendationPage, error) {
+func (downloader *Downloader) fetchHongguoRecommendations(ctx context.Context, query hongguoRecommendationQuery, cookie string) (hongguoRecommendationPage, error) {
 	page := hongguoRecommendationPage{Dramas: []Drama{}}
 	if err := query.validate(); err != nil {
 		return page, err
 	}
 	// [feed] 推荐流走 bookmall/tab/v1，与 landpage 分类推荐不是同一条链路：
-	// 后者对匿名设备空 body，前者可用且 offset 递增即「换一批」。
-	if query.Genre == hongguoFeedGenre {
-		return downloader.fetchHongguoFeed(ctx, query)
+	// 后者对匿名设备空 body，前者可用且 offset 递增即「换一批」。cookie
+	// 非空时由 feed_personal 一路带上账号 Cookie（个性推荐）。
+	if isHongguoFeedGenre(query.Genre) {
+		return downloader.fetchHongguoFeed(ctx, query, cookie)
 	}
 	scene, category := "", ""
 	for _, genre := range hongguoAppGenres {

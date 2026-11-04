@@ -126,3 +126,23 @@ func feedIDs(items []Drama) []string {
 	}
 	return out
 }
+
+// [+178] 个性推荐 genre 与公开流共用 tab/v1：校验必须放行，但越界参数仍拒绝，
+// 且绝不能被误当成 landpage 分类（否则会走到对匿名设备空 body 的老链路）。
+func TestHongguoPersonalFeedGenreValidation(t *testing.T) {
+	query := hongguoRecommendationQuery{Genre: hongguoPersonalFeedGenre, Offset: 2, SessionID: "abc"}
+	if err := query.validate(); err != nil {
+		t.Fatalf("个性推荐 genre 应通过校验: %v", err)
+	}
+	if err := (hongguoRecommendationQuery{Genre: hongguoPersonalFeedGenre, Offset: -1}).validate(); err == nil {
+		t.Fatal("个性推荐的负 offset 也应被拒绝")
+	}
+	if !isHongguoFeedGenre(hongguoFeedGenre) || !isHongguoFeedGenre(hongguoPersonalFeedGenre) {
+		t.Fatal("两个 feed genre 都应走 tab/v1")
+	}
+	for _, genre := range []string{"short_play", "comic_series", "ai_series", "unknown", ""} {
+		if isHongguoFeedGenre(genre) {
+			t.Fatalf("分类 genre %q 不应被当成 feed", genre)
+		}
+	}
+}

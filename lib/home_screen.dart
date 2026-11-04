@@ -549,6 +549,16 @@ class _HomeScreenState extends State<HomeScreen> {
     // [+160] 冷启动重载的基线：首轮加载还没跑，先按当前分组要请求的源记，
     // 避免初始加载前收到一次注册表广播就被误判成"分组多了源"。
     _loadedGroupIds = {for (final site in _group.sources) site.id};
+    // [+178] 红果源默认打开「推荐」tag（原来默认「全部」）。推荐页内默认
+    // 子项是「个性推荐」，见 recommendations_screen.dart。切到别的分组时
+    // _changeSource 会把它复位为 false，回到该分组的「全部」，不影响其他源。
+    // 同时把目录态的加载标记收干净：下面 _load() 在 _showRecommendations
+    // 下会直接返回，不会重置 _loading / _hasMore。
+    if (_group.id == 'hongguo') {
+      _showRecommendations = true;
+      _loading = false;
+      _hasMore = false;
+    }
     _browser = CatalogBrowser(
       widget.repository,
       health: widget.store.sourceHealth,
