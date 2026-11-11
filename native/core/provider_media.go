@@ -49,6 +49,8 @@ func (d *Downloader) providerBaseURL(source string) string {
 		configured, fallback = d.cfg.GuipianURL, guipianSiteBaseURL
 	case sourceHanxiaoquan:
 		configured, fallback = d.cfg.HanxiaoquanURL, hanxiaoquanSiteBaseURL
+	case sourceHanime:
+		configured, fallback = d.cfg.HanimeURL, hanimeBaseURL
 	default:
 		fallback = "https://d2pypzndaqisk.cloudfront.net"
 	}
@@ -85,6 +87,8 @@ func providerSourceForURL(raw string) string {
 		return sourceGuipian
 	case host == "jennyhow.com" || host == "www.jennyhow.com":
 		return sourceHanxiaoquan
+	case host == "hanime1.me" || host == "www.hanime1.me":
+		return sourceHanime
 	default:
 		return ""
 	}
@@ -145,6 +149,9 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 	}
 	if chapter.Source == sourceHanxiaoquan {
 		return d.resolveHanxiaoquanMedia(ctx, task)
+	}
+	if chapter.Source == sourceHanime {
+		return d.resolveHanimeMedia(ctx, task)
 	}
 	if site, ok := d.drpySite(chapter.Source); ok {
 		return d.resolveDrpyMedia(ctx, task, site)

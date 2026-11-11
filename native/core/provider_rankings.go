@@ -38,6 +38,14 @@ var rankingBoards = []rankingBoard{
 	{ID: "huangju-new", Source: sourceHuangju, Name: "最新榜", Description: "剧果最新目录顺序，按源站返回顺序展示。", path: huangjuNewestCategory},
 	{ID: "yeguo-recommend", Source: sourceYeguo, Name: "目录榜", Description: "野果默认目录顺序，按源站返回顺序展示。"},
 	{ID: "dsd-catalog", Source: sourceDSD, Name: "目录榜", Description: "帝果分类目录聚合顺序，按源站返回顺序展示。"},
+	// [+181] Han1me 的榜单直接复用站点的 sort 枚举（path 存排序键），
+	// 与 Han1meViewer 的高级搜索排序一一对应，不再自己造榜单口径。
+	{ID: "hanime-daily", Source: sourceHanime, Name: "本日排行", Description: "Han1me 本日热度排行。", path: "本日排行"},
+	{ID: "hanime-weekly", Source: sourceHanime, Name: "本週排行", Description: "Han1me 本週热度排行。", path: "本週排行"},
+	{ID: "hanime-monthly", Source: sourceHanime, Name: "本月排行", Description: "Han1me 本月热度排行。", path: "本月排行"},
+	{ID: "hanime-views", Source: sourceHanime, Name: "观看次数", Description: "Han1me 按累计观看次数排序。", path: "觀看次數"},
+	{ID: "hanime-likes", Source: sourceHanime, Name: "点赞比例", Description: "Han1me 按点赞比例排序。", path: "讚好比例"},
+	{ID: "hanime-watching", Source: sourceHanime, Name: "他们也在看", Description: "Han1me「他們在看」实时热度。", path: "他們在看"},
 }
 
 type rankingItem struct {
@@ -181,6 +189,8 @@ func (d *Downloader) fetchRankingPage(ctx context.Context, board rankingBoard, p
 			return rankingPage{}, err
 		}
 		return parseHuangguoRanking(body, board)
+	case sourceHanime:
+		return d.fetchHanimeRankingPage(ctx, board, page)
 	case sourceHuangju, sourceYeguo, sourceDSD:
 		return d.fetchCatalogRankingPage(ctx, board, page)
 	default:

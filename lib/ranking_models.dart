@@ -28,6 +28,13 @@ class RankingBoard {
     'huangju-hot' || 'huangju-new' => 'huangju',
     'yeguo-recommend' => 'yeguo',
     'dsd-catalog' => 'dsd',
+    // [+181] Han1me 的 6 个站点排行榜（sort 枚举）。
+    'hanime-daily' ||
+    'hanime-weekly' ||
+    'hanime-monthly' ||
+    'hanime-views' ||
+    'hanime-likes' ||
+    'hanime-watching' => 'hanime',
     _ => '',
   };
   factory RankingBoard.fromJson(Map<String, dynamic> json) => RankingBoard(

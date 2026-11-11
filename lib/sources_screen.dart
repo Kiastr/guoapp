@@ -1323,6 +1323,19 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 _favoriteButton(source),
               ],
             ),
+            // [+181] 站源描述原先只存在数据里、界面上完全没用到。放到标题
+            // 下面一行，新加的 Han1me 才能在这里说明「默认隐藏、有地区限制」，
+            // 已有站源也顺带露出各自的定位（短剧 / 番剧 / 排行榜）。
+            if (source.description.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  source.description,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
             const SizedBox(height: 8),
             Text('最近更新：${sourceTimestamp(status?.updatedAt)}'),
             if (status != null && status.count > 0)

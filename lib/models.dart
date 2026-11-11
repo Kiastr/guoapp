@@ -15,6 +15,8 @@ class SourceSite {
       id == 'sorani' ||
       id == 'guipian' ||
       id == 'hanxiaoquan' ||
+      // [+181] Han1me 的列表/搜索/排行榜共用 /search 的分页，支持在线搜索。
+      id == 'hanime' ||
       isRuntime;
   bool get searchSuggestions => id == 'hongguo';
 
@@ -94,6 +96,9 @@ class SourceSite {
     SourceSite('huangguo-video', '黄果视频', '视频剧集'),
     SourceSite('huangguoai', '黄果 AI', 'AI 短剧'),
     SourceSite('cloudfront', '黄果旧版', '旧 API 剧库'),
+    // [+181] 移植自 Han1meViewer 的 Han1me 源：与黄果同属敏感站源，
+    // 默认隐藏，输入解锁密码后才出现在片源选择里。
+    SourceSite('hanime', 'Han1me', '里番 · 排行榜 · 默认隐藏，部分地区需代理'),
   ];
   static const knownValues = [...primaryValues, ...restrictedValues];
   static const allValues = [...primaryValues, ...restrictedValues];
@@ -195,6 +200,7 @@ class SourceGroup {
     'yeguo',
     'dsd',
     'huangguo', // 黄果
+    'hanime', // Han1me（敏感站源，默认隐藏）
     'drpy', // drpy 脚本源集合
     'libretv', // 扩展片源集合
   ];

@@ -30,6 +30,8 @@ const (
 	sourceSorani        = "sorani"
 	sourceGuipian       = "guipian"
 	sourceHanxiaoquan   = "hanxiaoquan"
+	// sourceHanime 移植自 Han1meViewer 的 hanime1.me 源（敏感站源，默认隐藏）。
+	sourceHanime = "hanime"
 	// sourceKazumi 运行时导入的 Kazumi 规则源家族名；完整源 ID 形如 kazumi:<规则名>。
 	sourceKazumi       = "kazumi"
 	sourceKazumiPrefix = sourceKazumi + ":"
@@ -137,7 +139,7 @@ func isHuangguoProviderSource(source string) bool {
 		return true
 	}
 	switch source {
-	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD, sourceCloudFront, sourceSorani, sourceGuipian, sourceHanxiaoquan:
+	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD, sourceCloudFront, sourceSorani, sourceGuipian, sourceHanxiaoquan, sourceHanime:
 		return true
 	default:
 		return false
@@ -168,6 +170,8 @@ func canonicalProviderSource(source string) string {
 		return sourceGuipian
 	case "hanxiaoquan", "jennyhow.com", "www.jennyhow.com":
 		return sourceHanxiaoquan
+	case "hanime", "hanime1", "hanime1.me", "www.hanime1.me":
+		return sourceHanime
 	default:
 		return strings.TrimSpace(source)
 	}
@@ -291,6 +295,9 @@ func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID s
 		return drama.DisplayTitle(), chapters, err
 	case sourceHanxiaoquan:
 		drama, chapters, err := d.fetchHanxiaoquanDetail(ctx, sourceID)
+		return drama.DisplayTitle(), chapters, err
+	case sourceHanime:
+		drama, chapters, err := d.fetchHanimeDetailChapters(ctx, sourceID)
 		return drama.DisplayTitle(), chapters, err
 	case sourceCloudFront:
 		return d.fetchLegacyChapters(ctx, sourceID)

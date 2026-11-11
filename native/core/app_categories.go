@@ -78,6 +78,8 @@ func validNativeCategory(source, category string) bool {
 		return validGuipianCategory(category)
 	case sourceHanxiaoquan:
 		return validHanxiaoquanCategory(category)
+	case sourceHanime:
+		return validHanimeCategory(category)
 	}
 	// Kazumi 规则源没有分类：只允许「全部」（空串），带 category 的请求会被拒。
 	if kazumiKeyFromSource(source) != "" {
@@ -99,6 +101,9 @@ func (engine *nativeEngine) nativeCategories(ctx context.Context, source string,
 		return append(all, nativeAICategories...), nil
 	case sourceHuangdou:
 		return all, nil
+	case sourceHanime:
+		// Han1me 的分类是站点固定的 genre 枚举，没有远端探测的必要。
+		return engine.downloader.fetchHanimeCategories(), nil
 	}
 	engine.mu.Lock()
 	cached := append([]nativeCategory{}, engine.categoryOptions[source]...)
