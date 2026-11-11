@@ -212,7 +212,8 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
         const SizedBox(height: 6),
         Text(
           '部分站源用 Cloudflare 挑战页拦截脚本请求。用内置浏览器验证一次后，'
-          '凭据只保存在本机，不进配置备份；换代理节点或换域名后需要重新验证。',
+          '凭据只保存在本机，不进配置备份；换代理节点或换域名后需要重新验证。'
+          '如果站点直接返回 1020 封禁页，验证无效，只能换节点。',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
@@ -239,7 +240,14 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
                           Text(
                             entry == null
                                 ? '未验证'
+                                : entry.stale
+                                ? '验证已失效（UA 变更）· 请重新验证'
                                 : '已验证 · ${_verifiedAt(entry.updatedAt)} · ${entry.host}',
+                            style: entry?.stale == true
+                                ? TextStyle(
+                                    color: Theme.of(context).colorScheme.error,
+                                  )
+                                : null,
                           ),
                           if (target.note.isNotEmpty)
                             Text(

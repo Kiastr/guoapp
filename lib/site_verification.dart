@@ -43,6 +43,7 @@ class SiteVerification {
     required this.userAgent,
     required this.cookie,
     required this.updatedAt,
+    this.stale = false,
   });
 
   final String source;
@@ -53,6 +54,10 @@ class SiteVerification {
   /// Unix 秒。只用于显示「验证于 …」。
   final int updatedAt;
 
+  /// 凭据里的 UA 与当前构建的 UA 对不上（版本升级换过 UA），此时
+  /// cf_clearance 必然失效，UI 要提示重新验证。由 Go 侧运行时计算。
+  final bool stale;
+
   factory SiteVerification.fromJson(Map<String, dynamic> json) =>
       SiteVerification(
         source: json['source'] as String? ?? '',
@@ -60,6 +65,7 @@ class SiteVerification {
         userAgent: json['userAgent'] as String? ?? '',
         cookie: json['cookie'] as String? ?? '',
         updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+        stale: json['stale'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {

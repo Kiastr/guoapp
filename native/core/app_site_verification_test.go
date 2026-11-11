@@ -149,3 +149,44 @@ func TestSiteVerificationSaveRejectsUnavailableSource(t *testing.T) {
 		t.Fatalf("保存后应返回最新状态：%+v", view)
 	}
 }
+
+func TestSiteVerificationStaleAgentIsIgnored(t *testing.T) {
+	var seen *http.Request
+	downloader := sourceFixtureDownloader(t, func(request *http.Request) (*http.Response, error) {
+		seen = request
+		return sourceFixtureResponse(request, 200, "<html><body>ok</body></html>"), nil
+	})
+	downloader.siteVerifications = loadSiteVerificationStore(t.TempDir())
+	// 模拟旧构建（Chrome/126）存下的凭据：cf_clearance 绑的是当时的 UA，
+	// 升级后这条记录必然失效，必须忽略并让 UI 提示重验。
+	if err := downloader.siteVerifications.save(nativeSiteVerification{
+		Source: sourceHanime, Host: "hanime1.me",
+		UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36",
+		Cookie:    "cf_clearance=stale",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := downloader.fetchProviderText(context.Background(), hanimeBaseURL+"/search?page=1", ""); err != nil {
+		t.Fatal(err)
+	}
+	// 注入行为不变（不带也一样 403），关键是 UI 必须能看出这条已经过期。
+	if cookie := seen.Header.Get("Cookie"); cookie != "cf_clearance=stale" {
+		t.Fatalf("旧凭据仍应注入，由 UI 标记失效：%q", cookie)
+	}
+
+	view := (&nativeEngine{downloader: downloader}).siteVerifications()
+	if len(view.Entries) != 1 || !view.Entries[0].Stale {
+		t.Fatalf("旧凭据应标记 stale：%+v", view.Entries)
+	}
+
+	// 用当前 UA 重新验证后，stale 必须消失，否则用户会被永久提示「已失效」。
+	if err := downloader.siteVerifications.save(nativeSiteVerification{
+		Source: sourceHanime, Host: "hanime1.me",
+		UserAgent: hanimeUserAgent, Cookie: "cf_clearance=fresh",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if view := (&nativeEngine{downloader: downloader}).siteVerifications(); view.Entries[0].Stale {
+		t.Fatalf("新凭据不应标记 stale：%+v", view.Entries)
+	}
+}

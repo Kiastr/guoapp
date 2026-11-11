@@ -42,8 +42,12 @@ import (
 // 默认隐藏，解锁密码后才出现在片源选择里。
 
 const (
-	hanimeBaseURL   = "https://hanime1.me"
-	hanimeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+	hanimeBaseURL = "https://hanime1.me"
+	// hanimeUserAgent 必须与 network_browser.go 的 Chrome profile 同一个主版本
+	// （150），否则 UA ↔ JA4 对不上，Cloudflare 反而更容易判定为伪装。这个
+	// 字符串同时用于：Go 请求头、站点验证 WebView 的 UA、cf_clearance 绑定。
+	// 三处只要有一处不同，验证就白做——改之前先确认另外两处。
+	hanimeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 	// hanimeDefaultSort 列表默认排序。参考实现的首页「最新上市」就是它，
 	// 分类浏览没有单独的时间维度，换排序靠排行榜那几档。
@@ -235,16 +239,24 @@ func (d *Downloader) hanimeGet(ctx context.Context, address string) (string, err
 	return body, nil
 }
 
-// hanimeRequestError 给 Cloudflare 的地区封锁补一句可执行的提示。
-// 站点对日本等地区直接回 403 "you have been blocked"，笼统的「请求失败」
-// 会让人以为是解析坏了。
+// hanimeRequestError 把 Cloudflare 的两类拒绝翻译成可执行的建议。
+//
+// 站点的拦截分两种，用户能做的事完全不同，所以不能给一句笼统的「请开代理」：
+//
+//   - Error 1020（IP/ASN 封禁）：节点整段被拉黑，站点验证拿不到 cf_clearance，
+//     等 60 秒也不会好，唯一出路是换节点。日本 IP 尤其容易命中。
+//   - 挑战页：走「设置 → 站点验证 → Han1me」用内置浏览器解一次，cookie 会被
+//     复用；换节点/换域名后要重验。
 func hanimeRequestError(err error) error {
 	if err == nil {
 		return nil
 	}
 	text := err.Error()
-	if strings.Contains(text, "Cloudflare") || strings.Contains(text, "浏览器验证") {
-		return fmt.Errorf("Han1me 拒绝了当前网络的请求（站点按 IP 地区限制）。请开启代理后重试：%w", err)
+	switch {
+	case strings.Contains(text, "封禁"):
+		return fmt.Errorf("Han1me 判定当前节点 IP 为高风险并直接拒绝（Cloudflare Error 1020），站点验证救不了。请更换代理节点后重试，不要使用日本节点：%w", err)
+	case strings.Contains(text, "浏览器验证") || strings.Contains(text, "Cloudflare"):
+		return fmt.Errorf("Han1me 要求浏览器验证。请到「设置 → 站点验证 → Han1me」完成一次验证（换节点后需重验）：%w", err)
 	}
 	return err
 }

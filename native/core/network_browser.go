@@ -14,11 +14,48 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 )
 
-const huangguoBrowserProfile = "Chrome 150"
-
 type browserHTTPClient interface {
 	Do(*fhttp.Request) (*fhttp.Response, error)
 	CloseIdleConnections()
+}
+
+// browserFingerprintProfile 是「伪装成哪个浏览器」的一组常量。
+//
+// UA / Client Hints / TLS profile 三者必须指向同一个 Chrome 主版本：CF 会
+// 做 UA ↔ JA4 的一致性检查，Chrome/126 的 UA 配 Chrome/150 的握手反而更
+// 可疑。tlsclient 侧统一用 profiles.Chrome_150，所以这里也只写 150。
+type browserFingerprintProfile struct {
+	// label 只用于诊断日志，方便对照是哪个身份发出的请求。
+	label      string
+	userAgent  string
+	platform   string
+	clientHint string
+}
+
+var huangguoFingerprintProfile = browserFingerprintProfile{
+	label:      "Chrome 150 macOS",
+	userAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+	platform:   "macOS",
+	clientHint: `"Chromium";v="150", "Google Chrome";v="150", "Not_A Brand";v="24"`,
+}
+
+// browserFingerprintSources 是需要「浏览器级 TLS/HTTP2 指纹」的源。
+//
+// 为什么必须按源登记而不是全站打开：这里的 UA 会被写进请求，而 cf_clearance
+// 绑 (IP, UA)。站点验证页用的也是同一份 UA，两边只要差一个字，验证就白做。
+//
+// 为什么 hanime 非走这里不可：裸 Go Transport 的 ClientHello 是公认的非
+// 浏览器指纹（JA3/JA4 一望即知），Cloudflare 对它不发挑战页，而是直接
+// 403 + "you have been blocked"。没有挑战页 = 站点验证永远拿不到
+// cf_clearance，那条路是死的。只有把 TLS 层也伪装成 Chrome，请求才会落进
+// 「正常访客」分支：要么直接放行，要么给一个能解的挑战。
+var browserFingerprintSources = map[string]browserFingerprintProfile{
+	sourceHanime: {
+		label:      "Chrome 150 Windows",
+		userAgent:  hanimeUserAgent,
+		platform:   "Windows",
+		clientHint: `"Chromium";v="150", "Google Chrome";v="150", "Not_A Brand";v="24"`,
+	},
 }
 
 type huangguoBrowserTransport struct {
@@ -44,9 +81,32 @@ func newHuangguoBrowserTransport(base http.RoundTripper, downloader *Downloader)
 }
 
 func (transport *huangguoBrowserTransport) matches(request *http.Request) bool {
-	return (request.Method == http.MethodGet || request.Method == http.MethodHead) &&
-		(request.URL.Scheme == "http" || request.URL.Scheme == "https") &&
-		(strings.EqualFold(request.URL.Host, transport.host) || strings.EqualFold(request.URL.Hostname(), "huangguo.video"))
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		return false
+	}
+	if request.URL.Scheme != "http" && request.URL.Scheme != "https" {
+		return false
+	}
+	if strings.EqualFold(request.URL.Host, transport.host) || strings.EqualFold(request.URL.Hostname(), "huangguo.video") {
+		return true
+	}
+	_, registered := transport.profileFor(request)
+	return registered
+}
+
+// profileFor 返回该请求要伪装的浏览器身份。黄果家族走默认 identity，
+// 其他登记在 browserFingerprintSources 的源各用各的 UA。
+func (transport *huangguoBrowserTransport) profileFor(request *http.Request) (browserFingerprintProfile, bool) {
+	profile, ok := browserFingerprintSources[providerSourceForURL(request.URL.String())]
+	return profile, ok
+}
+
+// profileName 取诊断日志用的身份标签。
+func (transport *huangguoBrowserTransport) profileName(request *http.Request) string {
+	if profile, ok := transport.profileFor(request); ok {
+		return profile.label
+	}
+	return huangguoFingerprintProfile.label
 }
 
 func (transport *huangguoBrowserTransport) createClient(proxy string) (browserHTTPClient, error) {
@@ -101,12 +161,26 @@ func (transport *huangguoBrowserTransport) client(request *http.Request) (browse
 }
 
 func huangguoBrowserHeaders(request *http.Request) fhttp.Header {
+	return browserHeaders(request, huangguoFingerprintProfile)
+}
+
+// browserHeaders 生成一套完整的 Chrome 导航请求头。
+//
+// HeaderOrderKey 必须保留：h2 的伪头/普通头顺序本身是指纹的一部分，
+// 让 fhttp 按固定顺序写出，才和真浏览器一致。
+//
+// 注意 UA / sec-ch-ua 来自 profile 而不是 request：验证页、HTTP 客户端、
+// 挑战下发三方必须共用同一个 UA 字符串，否则 cf_clearance 绑不上。
+func browserHeaders(request *http.Request, profile browserFingerprintProfile) fhttp.Header {
+	if profile.userAgent == "" {
+		profile = huangguoFingerprintProfile
+	}
 	headers := fhttp.Header{
-		"sec-ch-ua":                 {`"Chromium";v="150", "Google Chrome";v="150", "Not_A Brand";v="24"`},
+		"sec-ch-ua":                 {profile.clientHint},
 		"sec-ch-ua-mobile":          {"?0"},
-		"sec-ch-ua-platform":        {`"macOS"`},
+		"sec-ch-ua-platform":        {`"` + profile.platform + `"`},
 		"upgrade-insecure-requests": {"1"},
-		"user-agent":                {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"},
+		"user-agent":                {profile.userAgent},
 		"accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"},
 		"sec-fetch-site":            {"same-origin"},
 		"sec-fetch-mode":            {"navigate"},
@@ -157,7 +231,11 @@ func (transport *huangguoBrowserTransport) RoundTrip(request *http.Request) (*ht
 	if err != nil {
 		return nil, err
 	}
-	upstream.Header = huangguoBrowserHeaders(request)
+	profile := huangguoFingerprintProfile
+	if registered, ok := transport.profileFor(request); ok {
+		profile = registered
+	}
+	upstream.Header = browserHeaders(request, profile)
 	upstream.Host = request.Host
 	upstream.ContentLength = request.ContentLength
 	upstream.GetBody = request.GetBody
@@ -186,10 +264,14 @@ func (transport *huangguoBrowserTransport) RoundTrip(request *http.Request) (*ht
 		if result.StatusCode >= 400 || strings.EqualFold(result.Header.Get("Cf-Mitigated"), "challenge") {
 			level = "warning"
 		}
-		transport.record(diagnosticEvent{Event: "network.browser_request", Level: level, Source: sourceHuangguoVideo,
-			Host: request.URL.Hostname(), HTTPStatus: result.StatusCode, Client: huangguoBrowserProfile,
+		source := providerSourceForURL(request.URL.String())
+		if source == "" {
+			source = sourceHuangguoVideo
+		}
+		transport.record(diagnosticEvent{Event: "network.browser_request", Level: level, Source: source,
+			Host: request.URL.Hostname(), HTTPStatus: result.StatusCode, Client: transport.profileName(request),
 			Protocol: result.Proto, CFRay: truncate(result.Header.Get("Cf-Ray"), 128),
-			ResponseType: truncate(result.Header.Get("Content-Type"), 128), Message: "黄果浏览器指纹请求完成"})
+			ResponseType: truncate(result.Header.Get("Content-Type"), 128), Message: "浏览器指纹请求完成"})
 	}
 	return result, nil
 }

@@ -64,21 +64,35 @@ type nativeSiteVerificationTarget struct {
 
 type nativeSiteVerificationView struct {
 	Targets []nativeSiteVerificationTarget `json:"targets"`
-	Entries []nativeSiteVerification       `json:"entries"`
+	Entries []nativeSiteVerificationEntry  `json:"entries"`
 }
 
-// nativeSiteVerificationTargets 是目前接入验证流程的源。只列「确实会被
-// 挑战页拦住」的站点：没遇到过的源不加，避免 UI 上出现无意义的按钮。
-func nativeSiteVerificationTargets() []nativeSiteVerificationTarget {
-	all := []nativeSiteVerificationTarget{
+// nativeSiteVerificationEntry 是给 UI 看的凭据视图。Stale 不落盘：它是
+// 「这条 cookie 与当前构建的 UA 对不上」的运行时判定，升级后自动重算。
+type nativeSiteVerificationEntry struct {
+	nativeSiteVerification
+	Stale bool `json:"stale,omitempty"`
+}
+
+// nativeSiteVerificationAllTargets 是完整登记表，不受构建裁剪影响。失效
+// 判定要用它：精简包里虽然不显示该源，但凭据文件里可能还留着旧记录，
+// 换回全源包时得立刻能判断出「这条已经过期」。
+func nativeSiteVerificationAllTargets() []nativeSiteVerificationTarget {
+	return []nativeSiteVerificationTarget{
 		{
 			Source:    sourceHanime,
 			Name:      "Han1me",
 			URL:       hanimeBaseURL,
 			UserAgent: hanimeUserAgent,
-			Note:      "站点用 Cloudflare 挑战页拦截脚本请求；换代理节点或换域名后需要重新验证。",
+			Note:      "站点用 Cloudflare 拦截脚本请求。节点 IP 被封（Error 1020）时验证无效，只能换节点——日本节点基本必封。换节点或换域名后需要重新验证。",
 		},
 	}
+}
+
+// nativeSiteVerificationTargets 是当前构建里可用的验证入口。只列「确实会
+// 被挑战页拦住」的站点：没遇到过的源不加，避免 UI 上出现无意义的按钮。
+func nativeSiteVerificationTargets() []nativeSiteVerificationTarget {
+	all := nativeSiteVerificationAllTargets()
 	available := make([]nativeSiteVerificationTarget, 0, len(all))
 	for _, target := range all {
 		if nativeSourceAvailable(target.Source) {
@@ -262,8 +276,25 @@ func (store *siteVerificationStore) flushLocked() error {
 	return nil
 }
 
+// siteVerificationStale 判断凭据是否因构建升级而失效。
+//
+// cf_clearance 绑 UA：构建换了 UA（例如 Chrome 126 → 150）之后，旧 cookie
+// 一条都用不了。不主动标记的话，用户看到的是「已验证」却依然 403，只能猜。
+func siteVerificationStale(entry nativeSiteVerification) bool {
+	for _, target := range nativeSiteVerificationAllTargets() {
+		if target.Source == entry.Source {
+			return entry.UserAgent != target.UserAgent
+		}
+	}
+	return false
+}
+
 // applySiteVerification 在发请求前注入该源已验证的 Cookie 与 UA。只对
 // 记录里的 host 生效；UA 覆盖源自身 UA 是必须的——cookie 绑 UA hash。
+//
+// 注意：UA 已对不上的旧凭据仍然注入。带上去虽然大概率被拒，但不带也一样
+// 是 403，拦下来只会多一种「明明验证过却不发请求」的困惑。失效由 UI 侧
+// 的 stale 标记提示用户重验。
 func (d *Downloader) applySiteVerification(request *http.Request, source string) {
 	if d == nil || request == nil || source == "" || d.siteVerifications == nil {
 		return
@@ -281,10 +312,15 @@ func (d *Downloader) applySiteVerification(request *http.Request, source string)
 func (engine *nativeEngine) siteVerifications() nativeSiteVerificationView {
 	view := nativeSiteVerificationView{Targets: nativeSiteVerificationTargets()}
 	if engine != nil && engine.downloader != nil {
-		view.Entries = engine.downloader.siteVerifications.list()
+		for _, entry := range engine.downloader.siteVerifications.list() {
+			view.Entries = append(view.Entries, nativeSiteVerificationEntry{
+				nativeSiteVerification: entry,
+				Stale:                  siteVerificationStale(entry),
+			})
+		}
 	}
 	if view.Entries == nil {
-		view.Entries = []nativeSiteVerification{}
+		view.Entries = []nativeSiteVerificationEntry{}
 	}
 	return view
 }

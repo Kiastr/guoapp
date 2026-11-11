@@ -36,6 +36,9 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
   bool _busy = false;
   String? _error;
   String _status = '';
+  /// 没拿到 cf_clearance 时先警告一次；用户再点「完成」才强制保存。
+  /// 有些站点放行后只下发 __cf_bm，硬拦着不让存反而堵死这条路。
+  bool _warnedMissingClearance = false;
 
   bool get _webViewAvailable => WebViewSniffer.supported;
 
@@ -87,6 +90,9 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
   ///
   /// 必须取全部而不是只找 cf_clearance：__cf_bm 约 30 分钟过期，但每次
   /// 响应都会续期，缺了它请求照样会被挑战。
+  ///
+  /// 但 cf_clearance 的有无是「挑战到底过没过」的唯一可判定信号，所以它
+  /// 单独检查一次：没有就先警告，让用户别在没通过时白存一条无效凭据。
   Future<void> _collectFromWebView() async {
     setState(() {
       _busy = true;
@@ -96,14 +102,28 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
       final cookies = await CookieManager.instance().getCookies(
         url: WebUri(widget.target.url),
       );
-      final header = cookies
+      final usable = cookies
           .where((cookie) => cookie.name.isNotEmpty && cookie.value.isNotEmpty)
+          .toList();
+      final header = usable
           .map((cookie) => '${cookie.name}=${cookie.value}')
           .join('; ');
       if (header.isEmpty) {
         if (!mounted) return;
         setState(() {
           _error = '还没有拿到站点 Cookie。请在页面里完成验证，能看到站点内容后再点「完成」。';
+        });
+        return;
+      }
+      final hasClearance =
+          usable.any((cookie) => cookie.name == 'cf_clearance');
+      if (!hasClearance && !_warnedMissingClearance) {
+        if (!mounted) return;
+        setState(() {
+          _warnedMissingClearance = true;
+          _error = '没有检测到 cf_clearance。通常有两种情况：① 挑战还没通过'
+              '（页面仍停在「请稍候 / Just a moment」）；② 该节点被直接放行，'
+              '本来就不需要验证。如果页面确实已经能正常浏览，再点一次「完成」强制保存。';
         });
         return;
       }
@@ -142,7 +162,8 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: Text(
             '在下方页面完成站点验证（勾选「确认您是真人」或等待自动通过），'
-            '能看到站点内容后点右上角「完成」。',
+            '拿到 cf_clearance 后点右上角「完成」。'
+            '换代理节点后需要重新验证；日本节点会被站点直接封禁，别用。',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
@@ -184,8 +205,39 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
             ),
             onLoadStop: (controller, url) async {
               if (!mounted) return;
+              String title = '';
+              bool clearance = false;
+              try {
+                title = await controller.getTitle() ?? '';
+              } catch (_) {}
+              try {
+                final cookies = await CookieManager.instance().getCookies(
+                  url: WebUri(widget.target.url),
+                );
+                clearance =
+                    cookies.any((cookie) => cookie.name == 'cf_clearance');
+              } catch (_) {}
+              if (!mounted) return;
+              final target = url?.toString() ?? '';
+              // CF 的挑战页有三个特征：停在 /cdn-cgi/ 路径、标题是
+              // "Just a moment..." 或「请稍候」。命中就说明还没过，
+              // 直接告诉用户「换节点」比让他反复点更有用。
+              final onChallenge = target.contains('/cdn-cgi/') ||
+                  title.toLowerCase().contains('just a moment') ||
+                  title.contains('请稍候');
               setState(() {
-                _status = url == null ? '' : '当前页面：$url';
+                if (onChallenge) {
+                  _status = '仍在 Cloudflare 挑战页'
+                      '${title.isEmpty ? '' : '（$title）'}。'
+                      '反复点不过说明该节点已被判定为高风险，换一个节点；'
+                      '不要连续刷新。';
+                } else if (clearance) {
+                  _status = '已获取 cf_clearance，可以点右上角「完成」保存。';
+                } else if (target.isNotEmpty) {
+                  _status = '当前页面：${title.isEmpty ? target : title}';
+                } else {
+                  _status = '';
+                }
               });
             },
             onReceivedError: (controller, request, error) {

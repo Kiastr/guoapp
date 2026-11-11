@@ -32,6 +32,14 @@ func (backoff *requestBackoff) Error() string {
 	return fmt.Sprintf("%s HTTP %d%s，请在 %d 秒后重试", backoff.host, backoff.status, reason, seconds)
 }
 
+// catalogResponseBlockReason 把 Cloudflare 的两类拦截分开：
+//
+//   - ban  ：403 + "you have been blocked"（Error 1020），是 IP/ASN 级封锁。
+//     换节点是唯一解，站点验证拿不到 cf_clearance，等 60 秒也没用。
+//   - challenge：真挑战页，去站点验证能解决。
+//
+// 两者混成一句话会让用户按错误的路径折腾（去做验证、去等重试），所以文案
+// 必须能区分——上层（hanimeRequestError）就是按这里的措辞分支的。
 func catalogResponseBlockReason(response *http.Response, body []byte) string {
 	if len(body) > 64*1024 {
 		body = body[:64*1024]
@@ -39,9 +47,9 @@ func catalogResponseBlockReason(response *http.Response, body []byte) string {
 	page := strings.ToLower(string(body))
 	reason := ""
 	if strings.Contains(page, "cloudflare") && (strings.Contains(page, "sorry, you have been blocked") || strings.Contains(page, "you are unable to access")) {
-		reason = "Cloudflare 拒绝了当前请求"
+		reason = "当前节点 IP 被 Cloudflare 封禁（Error 1020）"
 	} else if strings.EqualFold(response.Header.Get("Cf-Mitigated"), "challenge") || strings.Contains(page, "_cf_chl_opt") || strings.Contains(page, "<title>just a moment") && strings.Contains(page, "cloudflare") {
-		reason = "站点要求浏览器验证，当前请求无法通过"
+		reason = "站点要求浏览器验证（Cloudflare 挑战）"
 	}
 	return reason
 }
@@ -49,7 +57,8 @@ func catalogResponseBlockReason(response *http.Response, body []byte) string {
 func (d *Downloader) catalogResponseError(request *http.Request, response *http.Response, body []byte) error {
 	reason := catalogResponseBlockReason(response, body)
 	if d.limiter != nil && reason != "" && response.StatusCode >= 200 && response.StatusCode < 300 {
-		d.limiter.observeBlock(request, response)
+		// 2xx 却下发挑战页：短退避防连点即可，别把刚做完验证的用户挡住。
+		d.limiter.backoff(request, response.StatusCode, 5*time.Second)
 	}
 
 	host := strings.ToLower(request.URL.Hostname())
@@ -273,11 +282,20 @@ func (limiter *requestLimiter) acquire(ctx context.Context, request *http.Reques
 	}, nil
 }
 
+// observe 在每个响应后调用，决定要不要给这个 host 加退避。
+//
+// 只有 429 走满额退避：那是对方明确要求放慢，等是对的。403 / 挑战页只压
+// 5 秒——这两类要么靠换节点、要么靠站点验证，全都不是「等一会儿」能解决
+// 的；原来固定压 1 分钟，用户换完节点/刚验证完还得干等满一分钟，看起来
+// 就像「验证成功了但还是打不开」。
 func (limiter *requestLimiter) observe(request *http.Request, response *http.Response) {
-	if response.StatusCode != http.StatusForbidden && response.StatusCode != http.StatusTooManyRequests && !strings.EqualFold(response.Header.Get("Cf-Mitigated"), "challenge") {
-		return
+	challenge := strings.EqualFold(response.Header.Get("Cf-Mitigated"), "challenge")
+	switch {
+	case response.StatusCode == http.StatusTooManyRequests:
+		limiter.observeBlock(request, response)
+	case response.StatusCode == http.StatusForbidden || challenge:
+		limiter.backoff(request, response.StatusCode, 5*time.Second)
 	}
-	limiter.observeBlock(request, response)
 }
 
 func (limiter *requestLimiter) observeBlock(request *http.Request, response *http.Response) {
@@ -287,17 +305,26 @@ func (limiter *requestLimiter) observeBlock(request *http.Request, response *htt
 	} else if until, err := http.ParseTime(response.Header.Get("Retry-After")); err == nil && time.Until(until) > 0 {
 		delay = time.Until(until)
 	}
+	limiter.backoff(request, response.StatusCode, delay)
+}
+
+// backoff 写入 host 级退避。前台与后台各有一张表：后台任务被拦不能连累
+// 用户手动操作，所以分开记。
+func (limiter *requestLimiter) backoff(request *http.Request, status int, delay time.Duration) {
+	if delay <= 0 {
+		return
+	}
 	if delay > 30*time.Minute {
 		delay = 30 * time.Minute
 	}
 	host := strings.ToLower(request.URL.Hostname())
 	limiter.mu.Lock()
 	backoffs := limiter.backoffs
-	if background, _ := request.Context().Value(backgroundCatalogKey{}).(bool); background && response.StatusCode != http.StatusTooManyRequests {
+	if background, _ := request.Context().Value(backgroundCatalogKey{}).(bool); background && status != http.StatusTooManyRequests {
 
 		backoffs = limiter.backgroundBackoffs
 	}
-	backoffs[host] = &requestBackoff{host: host, until: time.Now().Add(delay), status: response.StatusCode}
+	backoffs[host] = &requestBackoff{host: host, until: time.Now().Add(delay), status: status}
 	limiter.notifyLocked()
 	limiter.mu.Unlock()
 }
