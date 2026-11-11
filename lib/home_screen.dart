@@ -27,6 +27,8 @@ import 'profiles_screen.dart';
 import 'search_input.dart';
 import 'source_gate_dialog.dart';
 import 'source_gate_taps.dart';
+import 'site_verification.dart';
+import 'site_verification_screen.dart';
 import 'sources_screen.dart';
 import 'batch_download_screen.dart';
 import 'batch_downloads.dart';
@@ -86,6 +88,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingMore = false;
   bool _hasMore = true;
   String? _error;
+  /// 当前源的站点验证入口。仅在错误提示需要「去验证」时用到：让用户在
+  /// 403 现场直接跳过去，不用自己翻到设置里找。
+  SiteVerificationTarget? _verificationTarget;
   int _generation = 0;
 
   int _tab = 0;
@@ -699,6 +704,9 @@ class _HomeScreenState extends State<HomeScreen> {
         // 缓存阶段通常几十毫秒，卡顿是后面几十个网络请求造成的。
         if (!_loading) _stopHeavyNotice();
       });
+      if (result.warning.contains('浏览器验证')) {
+        unawaited(_refreshVerificationTarget());
+      }
       unawaited(
         saveUserChange(context, () => widget.store.refreshDramas(result.items)),
       );
@@ -761,7 +769,78 @@ class _HomeScreenState extends State<HomeScreen> {
         _error = error.toString();
         _stopHeavyNotice();
       });
+      // 403 现场给「去站点验证」入口，省得用户自己翻到设置里找。
+      if (_error!.contains('浏览器验证')) {
+        unawaited(_refreshVerificationTarget());
+      }
     }
+  }
+
+  /// 拉取当前源是否有可用的站点验证入口。
+  ///
+  /// 只在报错时按需调用：这个接口要走一次 native 桥，首页正常加载不该为
+  /// 它多付一次往返。
+  Future<void> _refreshVerificationTarget() async {
+    final source = _source.id;
+    if (!widget.repository.supportsSourceManagement) {
+      if (_verificationTarget != null) {
+        setState(() => _verificationTarget = null);
+      }
+      return;
+    }
+    try {
+      final view = await widget.repository.siteVerifications();
+      if (!mounted) return;
+      SiteVerificationTarget? target;
+      for (final item in view.targets) {
+        if (item.source == source) {
+          target = item;
+          break;
+        }
+      }
+      setState(() => _verificationTarget = target);
+    } catch (_) {
+      // 取不到入口不影响主流程：错误面板退化成只有「站源诊断」。
+    }
+  }
+
+  /// 从错误面板直接打开站点验证页，验证成功回来自动重载这一组。
+  Future<void> _openSiteVerification(SiteVerificationTarget target) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) =>
+            SiteVerificationScreen(repository: widget.repository, target: target),
+      ),
+    );
+    if (changed == true && mounted) _load(force: true);
+  }
+
+  /// 当前错误是否属于「去验证一下就能好」的那类。
+  ///
+  /// 只认挑战页（文案带「浏览器验证」）。IP 封禁（1020）验证救不了，给了
+  /// 按钮只会把用户引到一条走不通的路上——那种情况要换节点。
+  bool get _errorNeedsVerification =>
+      _verificationTarget != null &&
+      (_error?.contains('浏览器验证') ?? false);
+
+  Widget? get _errorSecondaryActions {
+    final Widget? diagnose = widget.repository.supportsSourceManagement
+        ? TextButton(onPressed: _manageSources, child: const Text('站源诊断'))
+        : null;
+    if (!_errorNeedsVerification) return diagnose;
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        FilledButton.tonalIcon(
+          onPressed: () => _openSiteVerification(_verificationTarget!),
+          icon: const Icon(Icons.verified_user_outlined),
+          label: const Text('去站点验证'),
+        ),
+        ?diagnose,
+      ],
+    );
   }
 
   /// [groupId] 见 [_changeGroup]：多源分组传组 id 让首页按整组聚合，
@@ -791,6 +870,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasMore = true;
       _submittedQuery = '';
       _error = null;
+      // 换源后旧源的验证入口必须作废：否则错误面板会拿 A 站的凭据入口
+      // 去验证 B 站。
+      _verificationTarget = null;
     });
     unawaited(
       saveUserChange(
@@ -1698,14 +1780,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: '暂时无法加载',
                       message: _error!,
                       onRetry: () => _load(force: true),
-                      secondaryAction:
-                          widget.repository.supportsSourceManagement
-                          ? TextButton(
-                              onPressed: _manageSources,
-                              child: const Text('站源诊断'),
-                            )
-                          : null,
-                      icon: Icons.wifi_off_rounded,
+                      secondaryAction: _errorSecondaryActions,
+                      icon: _errorNeedsVerification
+                          ? Icons.verified_user_outlined
+                          : Icons.wifi_off_rounded,
                     )
                   : items.isEmpty
                   ? StatusPanel(
