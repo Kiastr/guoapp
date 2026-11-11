@@ -201,6 +201,28 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
         '${two(time.hour)}:${two(time.minute)}';
   }
 
+  /// 把 UA 压成「Android Chrome 130」这种一眼能看的标签。
+  ///
+  /// 完整 UA 太长，一行放不下；但平台和主版本恰好是排查 cf_clearance 的
+  /// 关键——它必须与「当时那台设备上验证页用的浏览器」一致。换了设备或
+  /// 升级了 WebView，这里的版本会变，也就意味着要重新验证。
+  static String _agentLabel(String agent) {
+    final version =
+        RegExp(r'Chrome/(\d+)\.').firstMatch(agent)?.group(1) ?? '?';
+    final platform = agent.contains('Android')
+        ? 'Android'
+        : agent.contains('iPhone') || agent.contains('iPad')
+        ? 'iOS'
+        : agent.contains('Windows')
+        ? 'Windows'
+        : agent.contains('Macintosh')
+        ? 'macOS'
+        : agent.contains('Linux')
+        ? 'Linux'
+        : '未知平台';
+    return '$platform Chrome $version';
+  }
+
   Widget _verificationSection(BuildContext context) {
     final targets = _verifications.targets;
     if (targets.isEmpty) return const SizedBox.shrink();
@@ -241,7 +263,7 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
                             entry == null
                                 ? '未验证'
                                 : entry.stale
-                                ? '验证已失效（UA 变更）· 请重新验证'
+                                ? '验证已失效 · 请重新验证'
                                 : '已验证 · ${_verifiedAt(entry.updatedAt)} · ${entry.host}',
                             style: entry?.stale == true
                                 ? TextStyle(
@@ -249,6 +271,16 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
                                   )
                                 : null,
                           ),
+                          if (entry != null && entry.userAgent.isNotEmpty)
+                            Text(
+                              _agentLabel(entry.userAgent),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
                           if (target.note.isNotEmpty)
                             Text(
                               target.note,

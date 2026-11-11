@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,7 +19,14 @@ import (
 
 func newFingerprintTestTransport(t *testing.T) *huangguoBrowserTransport {
 	t.Helper()
-	downloader := &Downloader{cfg: defaultConfig(), providerHosts: map[string]string{}}
+	// router 必须给：transport.client() 会先问路由要代理，nil router 直接
+	// 崩在 RoundTrip 里，而真正的原因只是测试脚手架没搭全。
+	downloader := &Downloader{
+		cfg:               defaultConfig(),
+		providerHosts:     map[string]string{},
+		proxyRouter:       &proxyRouter{mode: "direct"},
+		siteVerifications: loadSiteVerificationStore(t.TempDir()),
+	}
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	return newHuangguoBrowserTransport(newCDNTransport(base, newDNSResolver(base)), downloader)
 }
@@ -148,5 +156,101 @@ func TestHanimeRequestErrorPointsToTheRightFix(t *testing.T) {
 	plain := errors.New("hanime1.me HTTP 500")
 	if got := hanimeRequestError(plain); got != plain {
 		t.Fatalf("无关错误不应被改写：%v", got)
+	}
+}
+
+// [指纹] 验证记录里的 UA 必须能覆盖源表里的出厂 UA。
+//
+// 这条链路断掉的表现非常隐蔽：验证页在 Android 上用真实 UA 拿到
+// cf_clearance，请求却按源表写着桌面 Chrome/150 发出去，cookie 被判无效，
+// 用户看到的就是「验证成功了还是 403」。
+func TestBrowserHeadersFollowVerifiedAgent(t *testing.T) {
+	const agent = "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/130.0.6723.86 Mobile Safari/537.36"
+
+	request, _ := http.NewRequest(http.MethodGet, hanimeBaseURL+"/", nil)
+	request.Header.Set("User-Agent", agent)
+
+	profile := profileForUserAgent(
+		browserFingerprintSources[sourceHanime],
+		request.Header.Get("User-Agent"),
+	)
+	headers := browserHeaders(request, profile)
+
+	if got := headerValue(headers, "user-agent"); got != agent {
+		t.Fatalf("验证记录里的 UA 应覆盖源表 UA，实际 %q", got)
+	}
+	// 桌面声明配移动 UA 是 Turnstile 最容易抓的破绽，必须整组跟着 UA 变。
+	if got := headerValue(headers, "sec-ch-ua-mobile"); got != "?1" {
+		t.Fatalf("移动端 UA 的 sec-ch-ua-mobile 应为 ?1，实际 %q", got)
+	}
+	if got := headerValue(headers, "sec-ch-ua-platform"); got != `"Android"` {
+		t.Fatalf("sec-ch-ua-platform 应跟随 UA 变成 Android，实际 %q", got)
+	}
+	if got := headerValue(headers, "sec-ch-ua"); !strings.Contains(got, `v="130"`) {
+		t.Fatalf("Client Hints 主版本应跟随 UA（130），实际 %q", got)
+	}
+}
+
+// recordingBrowserClient 记录真实发出的请求头，用来验证 transport 那一层
+// 没有把 UA 又覆盖回源表的值。
+type recordingBrowserClient struct {
+	seen fhttp.Header
+}
+
+func (client *recordingBrowserClient) Do(request *fhttp.Request) (*fhttp.Response, error) {
+	client.seen = request.Header.Clone()
+	return &fhttp.Response{
+		Status: "200 OK", StatusCode: 200, Proto: "HTTP/2.0", ProtoMajor: 2,
+		Header: fhttp.Header{}, Body: io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+func (client *recordingBrowserClient) CloseIdleConnections() {}
+
+func TestBrowserTransportKeepsVerifiedAgent(t *testing.T) {
+	const agent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/131.0.6778.135 Mobile Safari/537.36"
+
+	transport := newFingerprintTestTransport(t)
+	recorder := &recordingBrowserClient{}
+	transport.newClient = func(string) (browserHTTPClient, error) { return recorder, nil }
+
+	// 凭据表里有什么，请求就得用什么身份发出去。这条链路断掉的表现是
+	// 「验证页过了、脚本还是 403」，而两边各自的日志都显示正常。
+	store := transport.verifications()
+	if store == nil {
+		t.Fatal("测试脚手架应带一个空的凭据表")
+	}
+	if err := store.save(nativeSiteVerification{
+		Source: sourceHanime, Host: "hanime1.me", UserAgent: agent, Cookie: "cf_clearance=x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	request, _ := http.NewRequest(http.MethodGet, hanimeBaseURL+"/search?page=1", nil)
+	// fetchProviderText 会给所有源塞一个 iPhone 默认 UA，它不该影响身份。
+	request.Header.Set("User-Agent", userAgent)
+	if _, err := transport.RoundTrip(request); err != nil {
+		t.Fatal(err)
+	}
+	if got := headerValue(recorder.seen, "user-agent"); got != agent {
+		t.Fatalf("transport 发出的 UA 应等于验证记录的 UA，实际 %q", got)
+	}
+	if got := headerValue(recorder.seen, "sec-ch-ua-platform"); got != `"Android"` {
+		t.Fatalf("transport 层的 Client Hints 也要跟随 UA，实际 %q", got)
+	}
+	if got := headerValue(recorder.seen, "sec-ch-ua-mobile"); got != "?1" {
+		t.Fatalf("Android UA 应带 ?1，实际 %q", got)
+	}
+	store.clear(sourceHanime)
+
+	// 没有验证记录时必须回到源表身份：黄果这类链路默认就是桌面 Chrome，
+	// 跟着默认 UA 走会把已跑通的生产链路改成移动端。
+	if _, err := transport.RoundTrip(request); err != nil {
+		t.Fatal(err)
+	}
+	if got := headerValue(recorder.seen, "user-agent"); got != hanimeUserAgent {
+		t.Fatalf("无验证记录时应回落到源表 UA，实际 %q", got)
 	}
 }

@@ -150,43 +150,38 @@ func TestSiteVerificationSaveRejectsUnavailableSource(t *testing.T) {
 	}
 }
 
-func TestSiteVerificationStaleAgentIsIgnored(t *testing.T) {
-	var seen *http.Request
-	downloader := sourceFixtureDownloader(t, func(request *http.Request) (*http.Response, error) {
-		seen = request
-		return sourceFixtureResponse(request, 200, "<html><body>ok</body></html>"), nil
-	})
-	downloader.siteVerifications = loadSiteVerificationStore(t.TempDir())
-	// 模拟旧构建（Chrome/126）存下的凭据：cf_clearance 绑的是当时的 UA，
-	// 升级后这条记录必然失效，必须忽略并让 UI 提示重验。
-	if err := downloader.siteVerifications.save(nativeSiteVerification{
-		Source: sourceHanime, Host: "hanime1.me",
-		UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36",
-		Cookie:    "cf_clearance=stale",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := downloader.fetchProviderText(context.Background(), hanimeBaseURL+"/search?page=1", ""); err != nil {
-		t.Fatal(err)
-	}
-	// 注入行为不变（不带也一样 403），关键是 UI 必须能看出这条已经过期。
-	if cookie := seen.Header.Get("Cookie"); cookie != "cf_clearance=stale" {
-		t.Fatalf("旧凭据仍应注入，由 UI 标记失效：%q", cookie)
-	}
+func TestSiteVerificationStaleOnlyWhenAgentUnusable(t *testing.T) {
+	engine := &nativeEngine{downloader: &Downloader{
+		siteVerifications: loadSiteVerificationStore(t.TempDir()),
+	}}
+	store := engine.downloader.siteVerifications
 
-	view := (&nativeEngine{downloader: downloader}).siteVerifications()
-	if len(view.Entries) != 1 || !view.Entries[0].Stale {
-		t.Fatalf("旧凭据应标记 stale：%+v", view.Entries)
-	}
+	// hanime 登记为 followBrowserUa：UA 是验证页运行时从 WebView 读出来写
+	// 进去的，每台设备都不一样，没法拿常量比对。能判的只有「这条记录根本
+	// 不可能有效」。
+	const androidAgent = "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/130.0.6723.86 Mobile Safari/537.36"
 
-	// 用当前 UA 重新验证后，stale 必须消失，否则用户会被永久提示「已失效」。
-	if err := downloader.siteVerifications.save(nativeSiteVerification{
-		Source: sourceHanime, Host: "hanime1.me",
-		UserAgent: hanimeUserAgent, Cookie: "cf_clearance=fresh",
-	}); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name  string
+		agent string
+		stale bool
+	}{
+		{"缺少 UA 的老记录", "", true},
+		{"内核实名太旧", "Mozilla/5.0 (Linux; Android 9) AppleWebKit/537.36 Chrome/80.0.3987.99 Mobile Safari/537.36", true},
+		{"WebView 真实 UA", androidAgent, false},
+		{"桌面兜底 UA", hanimeUserAgent, false},
 	}
-	if view := (&nativeEngine{downloader: downloader}).siteVerifications(); view.Entries[0].Stale {
-		t.Fatalf("新凭据不应标记 stale：%+v", view.Entries)
+	for _, tc := range cases {
+		if err := store.save(nativeSiteVerification{
+			Source: sourceHanime, Host: "hanime1.me",
+			UserAgent: tc.agent, Cookie: "cf_clearance=x",
+		}); err != nil {
+			t.Fatalf("%s：保存失败 %v", tc.name, err)
+		}
+		view := engine.siteVerifications()
+		if len(view.Entries) != 1 || view.Entries[0].Stale != tc.stale {
+			t.Fatalf("%s：stale 期望 %v，实际 %+v", tc.name, tc.stale, view.Entries)
+		}
 	}
 }

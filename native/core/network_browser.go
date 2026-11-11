@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,9 @@ type browserFingerprintProfile struct {
 	userAgent  string
 	platform   string
 	clientHint string
+	// mobile 决定 sec-ch-ua-mobile 与 Accept 的取值。桌面 UA 配 ?0、移动
+	// UA 配 ?1，两者对不上时 CF 会把请求当成「被篡改过的客户端」。
+	mobile bool
 }
 
 var huangguoFingerprintProfile = browserFingerprintProfile{
@@ -67,6 +72,9 @@ type huangguoBrowserTransport struct {
 	mu        sync.Mutex
 	clients   map[string]browserHTTPClient
 	newClient func(string) (browserHTTPClient, error)
+	// verifications 延迟取站点验证凭据表：transport 可能比 store 先构造，
+	// 直接存指针会拿到 nil。
+	verifications func() *siteVerificationStore
 }
 
 func newHuangguoBrowserTransport(base http.RoundTripper, downloader *Downloader) *huangguoBrowserTransport {
@@ -74,7 +82,8 @@ func newHuangguoBrowserTransport(base http.RoundTripper, downloader *Downloader)
 	transport := &huangguoBrowserTransport{
 		base: base, router: downloader.proxyRouter, host: configured.Host,
 		insecure: downloader.cfg.InsecureTLS, record: downloader.recordDiagnostic,
-		clients: make(map[string]browserHTTPClient),
+		clients:       make(map[string]browserHTTPClient),
+		verifications: func() *siteVerificationStore { return downloader.siteVerifications },
 	}
 	transport.newClient = transport.createClient
 	return transport
@@ -107,6 +116,59 @@ func (transport *huangguoBrowserTransport) profileName(request *http.Request) st
 		return profile.label
 	}
 	return huangguoFingerprintProfile.label
+}
+
+// uaChromeVersion 从 UA 里取 Chrome 主版本。没有就返回 0。
+func uaChromeVersion(userAgent string) int {
+	match := uaChromeVersionPattern.FindStringSubmatch(userAgent)
+	if len(match) != 2 {
+		return 0
+	}
+	version, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0
+	}
+	return version
+}
+
+var uaChromeVersionPattern = regexp.MustCompile(`Chrome/(\d+)\.`)
+
+// profileForUserAgent 按 UA 推导 Client Hints。
+//
+// 为什么必须跟着 UA 走：sec-ch-ua-platform 是 UA 的「结构化副本」，浏览器
+// 自己保证两者一致。我们一旦手写死 "Windows"/?0，而 UA 里写着 Android，
+// Cloudflare 的 Turnstile 立刻能看出这是被改过头的环境——它宁可一直挑战，
+// 也不肯下发 cf_clearance。这正是「点很多次也过不了」的其中一个原因。
+func profileForUserAgent(base browserFingerprintProfile, userAgent string) browserFingerprintProfile {
+	userAgent = strings.TrimSpace(userAgent)
+	if userAgent == "" || userAgent == base.userAgent {
+		return base
+	}
+	profile := base
+	profile.userAgent = userAgent
+	profile.mobile = strings.Contains(userAgent, "Mobile") || strings.Contains(userAgent, "Android")
+	switch {
+	case strings.Contains(userAgent, "Android"):
+		profile.platform = "Android"
+	case strings.Contains(userAgent, "iPhone") || strings.Contains(userAgent, "iPad"):
+		profile.platform = "iOS"
+	case strings.Contains(userAgent, "Macintosh"):
+		profile.platform = "macOS"
+	case strings.Contains(userAgent, "Windows"):
+		profile.platform = "Windows"
+	case strings.Contains(userAgent, "X11") || strings.Contains(userAgent, "Linux"):
+		profile.platform = "Linux"
+	default:
+		profile.platform = base.platform
+	}
+	if version := uaChromeVersion(userAgent); version > 0 {
+		profile.clientHint = `"Chromium";v="` + strconv.Itoa(version) +
+			`", "Google Chrome";v="` + strconv.Itoa(version) + `", "Not_A Brand";v="24"`
+		profile.label = profile.platform + " " + strconv.Itoa(version)
+	} else {
+		profile.label = profile.platform
+	}
+	return profile
 }
 
 func (transport *huangguoBrowserTransport) createClient(proxy string) (browserHTTPClient, error) {
@@ -175,9 +237,13 @@ func browserHeaders(request *http.Request, profile browserFingerprintProfile) fh
 	if profile.userAgent == "" {
 		profile = huangguoFingerprintProfile
 	}
+	mobile := "?0"
+	if profile.mobile {
+		mobile = "?1"
+	}
 	headers := fhttp.Header{
 		"sec-ch-ua":                 {profile.clientHint},
-		"sec-ch-ua-mobile":          {"?0"},
+		"sec-ch-ua-mobile":          {mobile},
 		"sec-ch-ua-platform":        {`"` + profile.platform + `"`},
 		"upgrade-insecure-requests": {"1"},
 		"user-agent":                {profile.userAgent},
@@ -234,6 +300,21 @@ func (transport *huangguoBrowserTransport) RoundTrip(request *http.Request) (*ht
 	profile := huangguoFingerprintProfile
 	if registered, ok := transport.profileFor(request); ok {
 		profile = registered
+	}
+	// 只有「站点验证记录」里的 UA 才该改写身份：那是用户在浏览器里过挑战
+	// 时用的那一串，cf_clearance 绑的就是它。
+	//
+	// 不能直接拿 request.Header 的 UA：fetchProviderText 会给所有源默认塞
+	// 一个 iPhone Safari 的 UA，跟着它走会把黄果这类已经跑通的链路也一起
+	// 改成移动端身份。
+	if transport.verifications != nil {
+		if store := transport.verifications(); store != nil {
+			if source := providerSourceForURL(request.URL.String()); source != "" {
+				if entry, found := store.lookup(source, request.URL.Hostname()); found && entry.UserAgent != "" {
+					profile = profileForUserAgent(profile, entry.UserAgent)
+				}
+			}
+		}
 	}
 	upstream.Header = browserHeaders(request, profile)
 	upstream.Host = request.Host

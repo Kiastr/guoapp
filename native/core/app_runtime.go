@@ -469,6 +469,8 @@ func nativeDispatch(input nativeInput) (any, error) {
 		return engine.saveSiteVerification(input.SiteVerification)
 	case "clearSiteVerification":
 		return engine.clearSiteVerification(input.Source)
+	case "verifySiteVerification":
+		return engine.verifySiteVerification(input.Source)
 	case "controlDownloadBatch":
 		return engine.downloads.controlBatchExpected(ctx, input.JobIDs, input.Command, input.ExpectedVersions)
 	case "preload":

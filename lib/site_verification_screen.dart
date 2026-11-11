@@ -33,6 +33,7 @@ class SiteVerificationScreen extends StatefulWidget {
 
 class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
   final _cookie = TextEditingController();
+  final _agent = TextEditingController();
   bool _busy = false;
   String? _error;
   String _status = '';
@@ -40,11 +41,30 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
   /// 有些站点放行后只下发 __cf_bm，硬拦着不让存反而堵死这条路。
   bool _warnedMissingClearance = false;
 
+  /// WebView 读到的真实 UA（已去掉 wv / Version 标记）。
+  ///
+  /// 必须用真实的：UA 头说 Windows 桌面 Chrome，而 JS 侧
+  /// navigator.userAgentData.platform 说 Android、屏幕是手机尺寸，
+  /// Turnstile 一看就知道环境被改过，只会无限挑战。
+  String _webViewAgent = '';
+
+  /// WebView 内核实名版本，低于 100 时给用户一句明确提示。
+  int _webViewChrome = 0;
+
   bool get _webViewAvailable => WebViewSniffer.supported;
+
+  @override
+  void initState() {
+    super.initState();
+    _agent.text = widget.target.desktopUserAgent.isNotEmpty
+        ? widget.target.desktopUserAgent
+        : widget.target.userAgent;
+  }
 
   @override
   void dispose() {
     _cookie.dispose();
+    _agent.dispose();
     super.dispose();
   }
 
@@ -56,10 +76,52 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
     }
   }
 
+  /// 最终写进凭据的 UA。
+  ///
+  /// Android：跟随 WebView 真实 UA，Go 侧会换成同一个。
+  /// Windows：没有内置浏览器，用粘贴页里用户填的 UA。
+  String get _effectiveAgent {
+    if (!widget.target.followBrowserUa) return widget.target.userAgent;
+    // 有内置浏览器的平台只认 WebView 读出来的 UA。为空说明页面还没初始化
+    // 完，此时回落到桌面 UA 等于给凭据埋一颗雷，宁可让 _save 拦住。
+    if (_webViewAvailable) return _webViewAgent;
+    final pasted = _agent.text.trim();
+    if (pasted.isNotEmpty) return pasted;
+    if (widget.target.desktopUserAgent.isNotEmpty) {
+      return widget.target.desktopUserAgent;
+    }
+    return widget.target.userAgent;
+  }
+
+  /// 把 WebView 的 UA 改成「同版本手机 Chrome」的 UA。
+  ///
+  /// Android WebView 的默认 UA 带 `; wv` 和 `Version/4.0` 两个标记，站点
+  /// 一眼就知道这是 App 内嵌浏览器，Turnstile 会调到最严。去掉之后 UA 与
+  /// 真机 Chrome 完全一致，而 JS 环境本来就是真的——两边终于对得上。
+  static String browserUserAgent(String raw) {
+    var ua = raw.replaceAll(RegExp(r';\s*wv\b'), '');
+    ua = ua.replaceAll(RegExp(r'\s*Version/[\d.]+\s*'), ' ');
+    return ua.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+  }
+
+  static int chromeVersionOf(String ua) {
+    final match = RegExp(r'Chrome/(\d+)\.').firstMatch(ua);
+    return int.tryParse(match?.group(1) ?? '') ?? 0;
+  }
+
   Future<void> _save(String cookie) async {
     final text = cookie.trim();
     if (text.isEmpty) {
       setState(() => _error = 'Cookie 为空，请先在站点页面完成验证。');
+      return;
+    }
+    final agent = _effectiveAgent.trim();
+    if (agent.isEmpty) {
+      setState(() {
+        _error = _webViewAvailable
+            ? '内置浏览器还没初始化完，等页面出来再点「完成」。'
+            : 'User-Agent 为空。cf_clearance 绑定 UA，缺了它凭据一定无效。';
+      });
       return;
     }
     setState(() {
@@ -71,19 +133,55 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
         SiteVerification(
           source: widget.target.source,
           host: _host,
-          userAgent: widget.target.userAgent,
+          userAgent: agent,
           cookie: text,
           updatedAt: 0,
         ),
       );
+      // 存完立刻用脚本通道试一次。验证页里过了只代表浏览器能用，脚本走
+      // 的是另一条链路（代理、TLS 指纹都不同），不试一次等于让用户去猜。
+      final check = await widget.repository.verifySiteVerification(
+        widget.target.source,
+      );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      if (check.ok) {
+        Navigator.of(context).pop(true);
+        return;
+      }
+      setState(() {
+        _error = '凭据已保存，但脚本通道自检没通过：${check.reason}';
+        _status = '留在本页可以换个节点重新验证；也可以直接返回，'
+            '主页会按新凭据重试。';
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = '保存失败：$error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// 清掉该站点在当前 WebView 里的全部 cookie。
+  ///
+  /// 为什么非清不可：系统里可能躺着一份别的 UA 签发的 cf_clearance。带着
+  /// 它去挑战，Cloudflare 会判断「cookie 与当前指纹不符」，给的不是放行也
+  /// 不是普通挑战，而是一遍又一遍的验证。必须从白纸开始。
+  ///
+  /// 只清目标站：播放嗅探器（webview_sniffer）依赖别的站点的登录态。
+  /// 插件一次调用会把这个 url 下能看到的 cookie 全部置为过期，所以按
+  /// host-only 与显式 Domain 各删一遍，避免漏掉 `.hanime1.me` 那种写法。
+  Future<void> _clearSiteCookies() async {
+    final manager = CookieManager.instance();
+    try {
+      await manager.deleteCookies(url: WebUri(widget.target.url), path: '/');
+    } catch (_) {}
+    try {
+      await manager.deleteCookies(
+        url: WebUri(widget.target.url),
+        domain: _host,
+        path: '/',
+      );
+    } catch (_) {}
   }
 
   /// 从 WebView 的 CookieManager 取全部 cookie。
@@ -160,11 +258,28 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
           width: double.infinity,
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-          child: Text(
-            '在下方页面完成站点验证（勾选「确认您是真人」或等待自动通过），'
-            '拿到 cf_clearance 后点右上角「完成」。'
-            '换代理节点后需要重新验证；日本节点会被站点直接封禁，别用。',
-            style: Theme.of(context).textTheme.bodySmall,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '在下方页面完成站点验证（勾选「确认您是真人」或等待自动通过），'
+                '拿到 cf_clearance 后点右上角「完成」。'
+                '换代理节点后需要重新验证；日本节点会被站点直接封禁，别用。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (_webViewChrome > 0 && _webViewChrome < 100)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '内置浏览器内核是 Chrome/$_webViewChrome，版本太旧，'
+                    'Cloudflare 的挑战脚本跑不起来。去应用商店更新'
+                    '「Android System WebView」或「Chrome」之后重试。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
         if (_error != null)
@@ -192,17 +307,47 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
           ),
         Expanded(
           child: InAppWebView(
-            initialUrlRequest: URLRequest(url: WebUri(widget.target.url)),
+            // 不在 initialUrlRequest 里加载：必须先拿到 WebView 的真实 UA、
+            // 设好再发请求，否则第一跳用的是默认 UA，cookie 就绑错了。
             initialSettings: InAppWebViewSettings(
-              // 必须与 Go 侧该源请求的 UA 逐字一致，否则 cf_clearance 绑不上。
-              userAgent: widget.target.userAgent,
               javaScriptEnabled: true,
               domStorageEnabled: true,
               databaseEnabled: true,
               thirdPartyCookiesEnabled: true,
-              sharedCookiesEnabled: true,
               mediaPlaybackRequiresUserGesture: false,
             ),
+            onWebViewCreated: (controller) async {
+              await _clearSiteCookies();
+              String raw = '';
+              try {
+                raw = await InAppWebViewController.getDefaultUserAgent();
+              } catch (_) {}
+              final ua = widget.target.followBrowserUa
+                  ? browserUserAgent(raw)
+                  : widget.target.userAgent;
+              final version = chromeVersionOf(ua);
+              try {
+                await controller.setSettings(
+                  settings: InAppWebViewSettings(
+                    userAgent: ua,
+                    javaScriptEnabled: true,
+                    domStorageEnabled: true,
+                    databaseEnabled: true,
+                    thirdPartyCookiesEnabled: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                  ),
+                );
+              } catch (_) {}
+              if (mounted) {
+                setState(() {
+                  _webViewAgent = ua;
+                  _webViewChrome = version;
+                });
+              }
+              await controller.loadUrl(
+                urlRequest: URLRequest(url: WebUri(widget.target.url)),
+              );
+            },
             onLoadStop: (controller, url) async {
               if (!mounted) return;
               String title = '';
@@ -218,23 +363,23 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
                     cookies.any((cookie) => cookie.name == 'cf_clearance');
               } catch (_) {}
               if (!mounted) return;
-              final target = url?.toString() ?? '';
+              final current = url?.toString() ?? '';
               // CF 的挑战页有三个特征：停在 /cdn-cgi/ 路径、标题是
               // "Just a moment..." 或「请稍候」。命中就说明还没过，
               // 直接告诉用户「换节点」比让他反复点更有用。
-              final onChallenge = target.contains('/cdn-cgi/') ||
+              final onChallenge = current.contains('/cdn-cgi/') ||
                   title.toLowerCase().contains('just a moment') ||
                   title.contains('请稍候');
               setState(() {
                 if (onChallenge) {
                   _status = '仍在 Cloudflare 挑战页'
                       '${title.isEmpty ? '' : '（$title）'}。'
-                      '反复点不过说明该节点已被判定为高风险，换一个节点；'
-                      '不要连续刷新。';
+                      '连续点不过说明该节点已被判定为高风险，换一个节点；'
+                      '不要在同一节点上反复刷新。';
                 } else if (clearance) {
                   _status = '已获取 cf_clearance，可以点右上角「完成」保存。';
-                } else if (target.isNotEmpty) {
-                  _status = '当前页面：${title.isEmpty ? target : title}';
+                } else if (current.isNotEmpty) {
+                  _status = '当前页面：${title.isEmpty ? current : title}';
                 } else {
                   _status = '';
                 }
@@ -280,6 +425,24 @@ class _SiteVerificationScreenState extends State<SiteVerificationScreen> {
           ),
         ],
         const SizedBox(height: 16),
+        // UA 必须和「在浏览器里过挑战的那一次」逐字一致：cf_clearance 绑
+        // UA。填默认值是给个能用的起点，但 Edge 的 UA 带 Edg/、Firefox 带
+        // Gecko，跟这里对不上就白验——所以留成可编辑。
+        TextField(
+          controller: _agent,
+          minLines: 2,
+          maxLines: 3,
+          enableSuggestions: false,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'User-Agent（必须与浏览器里那次一致）',
+            hintText: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...',
+            helperText: '在开发者工具的「请求标头」里复制 User-Agent 整行覆盖这里。',
+            helperMaxLines: 3,
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
         TextField(
           controller: _cookie,
           minLines: 4,

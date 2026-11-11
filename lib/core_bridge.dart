@@ -99,6 +99,12 @@ abstract class AppRepository {
     String source,
   ) async => throw AppFailure('当前环境不支持站点验证');
 
+  /// 用刚存下的凭据走一次脚本通道，确认它在 HTTP 客户端里真的有效。
+  ///
+  /// 验证页通过 ≠ 脚本能用：出口 IP 不一致、UA 没跟上，都会让凭据白存。
+  Future<SiteVerificationCheck> verifySiteVerification(String source) async =>
+      const SiteVerificationCheck(ok: false, reason: '当前环境不支持站点验证');
+
   final catalogUpdates = CatalogUpdates();
   Future<void> cancelPreload() async {}
   Future<PlaybackPlan?> preload(
@@ -394,6 +400,14 @@ class NativeRepository extends AppRepository {
     _adminPermission('仅管理员可清除站点验证');
     return SiteVerificationView.fromJson(
       await _call({'action': 'clearSiteVerification', 'source': source}),
+    );
+  }
+
+  @override
+  Future<SiteVerificationCheck> verifySiteVerification(String source) async {
+    _adminPermission('仅管理员可配置站点验证');
+    return SiteVerificationCheck.fromJson(
+      await _call({'action': 'verifySiteVerification', 'source': source}),
     );
   }
 

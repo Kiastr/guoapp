@@ -69,7 +69,7 @@ func nativeAuthorizeInput(input nativeInput) error {
 		if !nativeSourceAvailable(input.SiteVerification.Source) {
 			return errNativeBuildSource
 		}
-	case "clearSiteVerification":
+	case "clearSiteVerification", "verifySiteVerification":
 		if !nativeSourceAvailable(input.Source) {
 			return errNativeBuildSource
 		}

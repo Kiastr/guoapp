@@ -14,6 +14,8 @@ class SiteVerificationTarget {
     required this.url,
     required this.userAgent,
     this.note = '',
+    this.followBrowserUa = false,
+    this.desktopUserAgent = '',
   });
 
   final String source;
@@ -23,8 +25,22 @@ class SiteVerificationTarget {
   final String url;
 
   /// 该源请求实际使用的 UA。验证页必须用同一串，否则 cf_clearance 失效。
+  ///
+  /// [followBrowserUa] 为 true 时这个值只是出厂兜底，真正用的是验证页从
+  /// WebView 读到的真实 UA。
   final String userAgent;
   final String note;
+
+  /// 验证页改用本机浏览器的真实 UA。
+  ///
+  /// Android WebView 的 JS 环境永远透着移动端特征，把 UA 头伪造成 Windows
+  /// 桌面 Chrome 会让 Turnstile 看出矛盾、无限挑战。跟随真实 UA 才能让
+  /// 环境自洽；Go 侧会跟着换成同一个 UA。
+  final bool followBrowserUa;
+
+  /// [followBrowserUa] 为 true 时给 Windows 用的桌面 UA（Windows 没有
+  /// 内置浏览器，走粘贴 Cookie，只能沿用桌面身份）。
+  final String desktopUserAgent;
 
   factory SiteVerificationTarget.fromJson(Map<String, dynamic> json) =>
       SiteVerificationTarget(
@@ -33,6 +49,8 @@ class SiteVerificationTarget {
         url: json['url'] as String? ?? '',
         userAgent: json['userAgent'] as String? ?? '',
         note: json['note'] as String? ?? '',
+        followBrowserUa: json['followBrowserUa'] as bool? ?? false,
+        desktopUserAgent: json['desktopUserAgent'] as String? ?? '',
       );
 }
 
@@ -105,4 +123,28 @@ class SiteVerificationView {
     }
     return null;
   }
+}
+
+/// Go 侧「存完凭据立刻用脚本通道试一次」的结果。
+///
+/// 验证页没通过只说明浏览器里没成，通过也不代表脚本能用——出口 IP 不一
+/// 致、UA 没跟上、cookie 没覆盖到路径，都会让验证白做。这个结果就是把
+/// 「白做」当场告诉用户，而不是让他十分钟后再来问一句为什么还是 403。
+class SiteVerificationCheck {
+  const SiteVerificationCheck({
+    required this.ok,
+    this.status = 0,
+    this.reason = '',
+  });
+
+  final bool ok;
+  final int status;
+  final String reason;
+
+  factory SiteVerificationCheck.fromJson(Map<String, dynamic> json) =>
+      SiteVerificationCheck(
+        ok: json['ok'] as bool? ?? false,
+        status: (json['status'] as num?)?.toInt() ?? 0,
+        reason: json['reason'] as String? ?? '',
+      );
 }
