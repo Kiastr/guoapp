@@ -4,6 +4,8 @@ import 'core_bridge.dart';
 import 'download_preferences.dart';
 import 'local_store.dart';
 import 'resource_settings.dart';
+import 'site_verification.dart';
+import 'site_verification_screen.dart';
 import 'widgets.dart';
 
 class DownloadPreferencesScreen extends StatelessWidget {
@@ -92,6 +94,7 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
   final _proxy = TextEditingController();
   late final int _epoch = widget.store.profileEpoch;
   ResourceSettings? _settings;
+  SiteVerificationView _verifications = const SiteVerificationView();
   String _mode = 'auto';
   int _catalog = 3, _interval = 250, _downloads = 2;
   bool _folders = false, _busy = false, _showProxy = false;
@@ -116,9 +119,13 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
   Future<void> _load() async {
     try {
       final settings = await widget.repository.resourceSettings();
+      // 站点验证状态与资源设置一起加载：两者都在本机、都属于管理员配置，
+      // 失败时不影响另一项（接口默认实现会返回空列表）。
+      final verifications = await widget.repository.siteVerifications();
       if (!mounted || !_allowed) return;
       setState(() {
         _settings = settings;
+        _verifications = verifications;
         _mode = settings.proxyMode;
         _proxy.text = settings.proxyUrl;
         _catalog = settings.catalogConcurrency;
@@ -159,6 +166,120 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _openVerification(SiteVerificationTarget target) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => SiteVerificationScreen(
+          repository: widget.repository,
+          target: target,
+        ),
+      ),
+    );
+    if (saved == true) await _load();
+  }
+
+  Future<void> _clearVerification(SiteVerificationTarget target) async {
+    try {
+      final view = await widget.repository.clearSiteVerification(target.source);
+      if (!mounted) return;
+      setState(() => _verifications = view);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已清除 ${target.name} 的验证凭据')));
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    }
+  }
+
+  static String _verifiedAt(int seconds) {
+    if (seconds <= 0) return '';
+    final time = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${time.year}-${two(time.month)}-${two(time.day)} '
+        '${two(time.hour)}:${two(time.minute)}';
+  }
+
+  Widget _verificationSection(BuildContext context) {
+    final targets = _verifications.targets;
+    if (targets.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 32),
+        Text('站点验证', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+          '部分站源用 Cloudflare 挑战页拦截脚本请求。用内置浏览器验证一次后，'
+          '凭据只保存在本机，不进配置备份；换代理节点或换域名后需要重新验证。',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        for (final target in targets)
+          Builder(
+            builder: (context) {
+              final entry = _verifications.entryFor(target.source);
+              // 不用 ListTile：它的 trailing 宽度有限，两个按钮在窄屏会溢出。
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            target.name,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            entry == null
+                                ? '未验证'
+                                : '已验证 · ${_verifiedAt(entry.updatedAt)} · ${entry.host}',
+                          ),
+                          if (target.note.isNotEmpty)
+                            Text(
+                              target.note,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        FilledButton.tonal(
+                          onPressed: _busy
+                              ? null
+                              : () => _openVerification(target),
+                          child: Text(entry == null ? '验证' : '重新验证'),
+                        ),
+                        if (entry != null)
+                          TextButton(
+                            onPressed: _busy
+                                ? null
+                                : () => _clearVerification(target),
+                            child: const Text('清除'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+      ],
+    );
   }
 
   Widget _count(String title, int value, ValueChanged<int> change) =>
@@ -278,6 +399,7 @@ class _ResourceSettingsScreenState extends State<ResourceSettingsScreen> {
                         ? null
                         : (value) => setState(() => _folders = value),
                   ),
+                  _verificationSection(context),
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 12),

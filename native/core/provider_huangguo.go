@@ -467,8 +467,11 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 			if agent, ok := ctx.Value(providerTextUserAgentKey{}).(string); ok && agent != "" {
 				req.Header.Set("User-Agent", agent)
 			}
-			if providerSourceForURL(rawURL) != "" {
+			if source := providerSourceForURL(rawURL); source != "" {
 				req.Header.Set("Referer", providerRefererForURL(candidate, referer))
+				// [+182] 该源在浏览器里通过挑战后存下的凭据，仅对记录时的
+				// host 生效；UA 一并覆盖，否则 cf_clearance 绑不上。
+				d.applySiteVerification(req, source)
 			} else {
 				req.Header.Set("Referer", referer)
 			}

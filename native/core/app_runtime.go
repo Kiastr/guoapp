@@ -93,6 +93,10 @@ type Downloader struct {
 	// kazumi 运行时导入的 Kazumi 规则源表（+155），
 	// 由 newNativeEngine 从引擎目录 kazumi.json + kazumi/ 载入。
 	kazumi *kazumiStore
+	// siteVerifications [+182] 站点验证凭据表（源 → host/UA/Cookie），
+	// 由 newNativeEngine 从引擎目录 site-verifications.json 载入。
+	// 只在本机落盘，不进配置备份与 WebDAV 同步。
+	siteVerifications *siteVerificationStore
 }
 
 func defaultConfig() Config { return Config{MaxPagesPerSort: 50, PageSize: 30, Retries: 2} }
@@ -121,6 +125,7 @@ type nativeInput struct {
 	ExpectedVersions map[string]string       `json:"expectedVersions"`
 	SystemProxy      nativeSystemProxy       `json:"systemProxy"`
 	Settings         nativeResourceSettings  `json:"settings"`
+	SiteVerification nativeSiteVerification  `json:"siteVerification"`
 	JobIDs           []string                `json:"jobIds"`
 	PlaybackSession  string                  `json:"playbackSession"`
 	StartMS          int64                   `json:"startMs"`
@@ -341,6 +346,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 		}}
 	engine := &nativeEngine{downloader: d, directory: directory, catalogs: map[string][]nativeDrama{}, catalogStates: map[string]nativeCatalogState{}}
 	engine.loadResourceSettings()
+	d.siteVerifications = loadSiteVerificationStore(directory)
 	d.libretv = loadLibreTVStore(directory)
 	d.drpy = loadDrpyStore(directory)
 	d.rules = loadRuleStore(directory)
@@ -457,6 +463,12 @@ func nativeDispatch(input nativeInput) (any, error) {
 		return engine.resourceSettings(), nil
 	case "saveResourceSettings":
 		return engine.saveResourceSettings(input.Settings)
+	case "siteVerifications":
+		return engine.siteVerifications(), nil
+	case "saveSiteVerification":
+		return engine.saveSiteVerification(input.SiteVerification)
+	case "clearSiteVerification":
+		return engine.clearSiteVerification(input.Source)
 	case "controlDownloadBatch":
 		return engine.downloads.controlBatchExpected(ctx, input.JobIDs, input.Command, input.ExpectedVersions)
 	case "preload":

@@ -23,6 +23,7 @@ import 'cover_request_gate.dart';
 import 'catalog_updates.dart';
 import 'download_collections.dart';
 import 'resource_settings.dart';
+import 'site_verification.dart';
 import 'hongguo_login.dart';
 import 'hongguo_account.dart';
 
@@ -87,6 +88,16 @@ abstract class AppRepository {
   Future<ResourceSettings> saveResourceSettings(
     ResourceSettings settings,
   ) async => throw AppFailure('当前环境不支持资源设置');
+
+  /// 站点验证：哪些源需要验证、当前存了哪份凭据。
+  Future<SiteVerificationView> siteVerifications() async =>
+      const SiteVerificationView();
+  Future<SiteVerificationView> saveSiteVerification(
+    SiteVerification entry,
+  ) async => throw AppFailure('当前环境不支持站点验证');
+  Future<SiteVerificationView> clearSiteVerification(
+    String source,
+  ) async => throw AppFailure('当前环境不支持站点验证');
 
   final catalogUpdates = CatalogUpdates();
   Future<void> cancelPreload() async {}
@@ -354,6 +365,35 @@ class NativeRepository extends AppRepository {
         'action': 'saveResourceSettings',
         'settings': settings.toJson(),
       }),
+    );
+  }
+
+  @override
+  Future<SiteVerificationView> siteVerifications() async =>
+      SiteVerificationView.fromJson(
+        await _call({'action': 'siteVerifications'}),
+      );
+
+  @override
+  Future<SiteVerificationView> saveSiteVerification(
+    SiteVerification entry,
+  ) async {
+    // 验证凭据属于本机网络配置，和代理设置同级，只允许管理员写入。
+    _adminPermission('仅管理员可配置站点验证');
+    return SiteVerificationView.fromJson(
+      await _call({
+        'action': 'saveSiteVerification',
+        'source': entry.source,
+        'siteVerification': entry.toJson(),
+      }),
+    );
+  }
+
+  @override
+  Future<SiteVerificationView> clearSiteVerification(String source) async {
+    _adminPermission('仅管理员可清除站点验证');
+    return SiteVerificationView.fromJson(
+      await _call({'action': 'clearSiteVerification', 'source': source}),
     );
   }
 

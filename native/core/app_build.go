@@ -65,6 +65,14 @@ func nativeAuthorizeInput(input nativeInput) error {
 			(!nativeDramaAvailable(input.Drama) || sourceFromDramaID(input.Drama.ID) != canonicalProviderSource(input.Source)) {
 			return errNativeBuildSource
 		}
+	case "saveSiteVerification":
+		if !nativeSourceAvailable(input.SiteVerification.Source) {
+			return errNativeBuildSource
+		}
+	case "clearSiteVerification":
+		if !nativeSourceAvailable(input.Source) {
+			return errNativeBuildSource
+		}
 	case "cover", "prepareCover", "detail", "metadata", "resolve", "preload", "prepareHandoff", "enqueueDownloads", "localPlayback":
 		if !nativeDramaAvailable(input.Drama) {
 			return errNativeBuildSource
