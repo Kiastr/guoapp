@@ -148,46 +148,95 @@ class _SearchInputState extends State<SearchInput> {
         _selected = true;
         _submit(value);
       },
-      fieldViewBuilder: (context, controller, focus, submitted) => TextField(
-        controller: controller,
-        focusNode: focus,
-        autofocus: widget.autofocus,
-        textInputAction: TextInputAction.search,
-        onChanged: (value) {
-          widget.onChanged?.call(value);
-          setState(() {});
-        },
-        onSubmitted: (value) {
-          _selected = false;
-          submitted();
-          if (!_selected) _submit(value);
-        },
-        decoration: InputDecoration(
-          hintText: widget.hint,
-          prefixIcon: const Icon(Icons.search_rounded),
-          suffixIcon: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (controller.text.isNotEmpty)
-                IconButton(
-                  tooltip: '清空搜索',
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () {
-                    _cancel();
-                    controller.clear();
-                    widget.onChanged?.call('');
-                    setState(() {});
-                  },
-                ),
-              IconButton(
-                tooltip: '搜索',
-                icon: const Icon(Icons.arrow_forward_rounded),
-                onPressed: () => _submit(controller.text),
-              ),
-            ],
+      fieldViewBuilder: (context, controller, focus, submitted) {
+        final scheme = Theme.of(context).colorScheme;
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        // [+192] 搜索框对齐定稿 .search：43px 高、99px 全圆角药丸、近黑
+        // 淡底 + 极弱描边、11px 提示字、17px 放大镜。空输入时右侧不放
+        // 任何按钮，首屏保持定稿那样干净的胶囊右端；一旦有输入才出现
+        // 清空 / 提交图标（tooltip 保持不变，search_input_test 依赖它们）。
+        // 这里显式给 border，覆盖全局 inputDecorationTheme 的 16px 圆角，
+        // 只影响搜索框，不动站源管理 / 密码框等其它输入框。
+        final pill = OutlineInputBorder(
+          borderRadius: BorderRadius.circular(99),
+          borderSide: BorderSide(
+            color: Colors.white.withValues(alpha: dark ? .05 : .1),
           ),
-        ),
-      ),
+        );
+        return TextField(
+          controller: controller,
+          focusNode: focus,
+          autofocus: widget.autofocus,
+          textInputAction: TextInputAction.search,
+          style: TextStyle(fontSize: 12, color: scheme.onSurface),
+          onChanged: (value) {
+            widget.onChanged?.call(value);
+            setState(() {});
+          },
+          onSubmitted: (value) {
+            _selected = false;
+            submitted();
+            if (!_selected) _submit(value);
+          },
+          decoration: InputDecoration(
+            isDense: true,
+            filled: true,
+            fillColor: dark
+                ? CinemaTokens.surfaceDark
+                : scheme.surfaceContainerHighest,
+            constraints: const BoxConstraints(minHeight: 43, maxHeight: 43),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 15,
+              vertical: 11,
+            ),
+            hintText: widget.hint,
+            hintStyle: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            prefixIcon: const Icon(Icons.search_rounded, size: 17),
+            prefixIconConstraints: const BoxConstraints(
+              minWidth: 41,
+              minHeight: 17,
+            ),
+            border: pill,
+            enabledBorder: pill,
+            focusedBorder: pill,
+            suffixIcon: controller.text.isEmpty
+                ? null
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: '清空搜索',
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 34,
+                          maxWidth: 34,
+                          maxHeight: 40,
+                        ),
+                        onPressed: () {
+                          _cancel();
+                          controller.clear();
+                          widget.onChanged?.call('');
+                          setState(() {});
+                        },
+                      ),
+                      IconButton(
+                        tooltip: '搜索',
+                        icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 34,
+                          maxWidth: 34,
+                          maxHeight: 40,
+                        ),
+                        onPressed: () => _submit(controller.text),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                  ),
+          ),
+        );
+      },
       optionsViewBuilder: (context, selected, options) {
         final values = options.toList();
         final available =

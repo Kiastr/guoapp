@@ -19,6 +19,12 @@ abstract final class CinemaTokens {
   static const panelRadius = 18.0;
   static const navigationRadius = 24.0;
 
+  /// [+192] 底部浮岛导航叠在内容之上（Scaffold.extendBody），所有 tab 的滚动
+  /// 区末尾都要留出这段高度，否则最后一行内容会被浮岛压住。定稿 .scroll
+  /// 的 padding-bottom 是 128px，这里取 104：浮岛 68 + 底部外边距 12 + 系统
+  /// 手势栏与余量，够把最后一行顶到浮岛上方，又不会滑到底留一大截空白。
+  static const floatingNavClearance = 104.0;
+
   static const microDuration = Duration(milliseconds: 160);
   static const controlsDuration = Duration(milliseconds: 180);
   static const motionCurve = Curves.easeOutCubic;

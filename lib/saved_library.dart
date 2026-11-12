@@ -294,7 +294,14 @@ class _SavedLibraryState extends State<SavedLibrary> {
                 SliverFillRemaining(hasScrollBody: false, child: empty)
               else
                 SliverPadding(
-                  padding: EdgeInsets.fromLTRB(padding, 0, padding, 20),
+                  // [+192] 首页 Scaffold 用 extendBody 让内容延伸到浮岛背后，
+                  // 这里补足底部留白，最后一行封面才不会被浮岛压住。
+                  padding: EdgeInsets.fromLTRB(
+                    padding,
+                    0,
+                    padding,
+                    CinemaTokens.floatingNavClearance,
+                  ),
                   sliver: SliverGrid(
                     gridDelegate: dramaGridDelegate(
                       context,

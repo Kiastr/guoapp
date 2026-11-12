@@ -343,16 +343,20 @@ class DramaTile extends StatelessWidget {
   final VoidCallback? onMore;
   final VoidCallback? onLongPress;
 
+  // [+192] 手机端海报标题 11 / 副标题 9，逐字对齐定稿 .card-title(11px/500)
+  // 与 .card-meta(9px)；拼图里实机这两行明显比设计稿大一圈。电视端
+  // 17 / 14 保留（遥控器距离远，需要更大的字）。基数与下面 Text 的
+  // fontSize 必须同步，否则 extentFor 算出的行高和文字行数不匹配。
   static double titleHeight(BuildContext context) =>
       MediaQuery.textScalerOf(
         context,
-      ).scale(AppLayout.isTelevision(context) ? 17 : 14) *
+      ).scale(AppLayout.isTelevision(context) ? 17 : 11) *
       2.6;
 
   static double subtitleHeight(BuildContext context) =>
       MediaQuery.textScalerOf(
         context,
-      ).scale(AppLayout.isTelevision(context) ? 14 : 12) *
+      ).scale(AppLayout.isTelevision(context) ? 14 : 9) *
       1.3;
 
   static double extentFor(BuildContext context, double width) =>
@@ -433,7 +437,7 @@ class DramaTile extends StatelessWidget {
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 height: 1.3,
-                fontSize: television ? 17 : 14,
+                fontSize: television ? 17 : 11,
               ),
             ),
           ),
@@ -448,7 +452,7 @@ class DramaTile extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: television ? 14 : 12,
+                fontSize: television ? 14 : 9,
                 height: 1.3,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -556,9 +560,9 @@ SliverGridDelegate dramaGridDelegate(BuildContext context, double width) {
   final tileWidth = (width - (columns - 1) * spacing) / columns;
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: columns,
-    // 纵向留白刻意大于横向：海报卡片下方还有标题 / 状态文字，套用
-    // gridSpacing(12) 会让下一行封面贴到上一行标题。故保持 22，不随 token 变。
-    mainAxisSpacing: 22,
+    // [+192] 纵向 16 对齐定稿 `.grid { gap:16px 12px }`。之前 22 把行距
+    // 撑得比定稿大一截，逐行累积后首屏能看到的海报行数变少。
+    mainAxisSpacing: 16,
     crossAxisSpacing: spacing,
     mainAxisExtent: DramaTile.extentFor(context, tileWidth),
   );

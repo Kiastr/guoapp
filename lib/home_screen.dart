@@ -1214,8 +1214,15 @@ class _HomeScreenState extends State<HomeScreen> {
         final television = AppLayout.isTelevision(context);
         final desktop = constraints.maxWidth >= 840;
         final scaffold = Scaffold(
+          // [+192] 让首页内容延伸到磨砂浮岛背后（定稿里最后一行海报能透到
+          // 浮岛下方），消除浮岛下面那条纯黑托盘。非首页 tab 在下面自行用
+          // SafeArea 避让底部系统栏，行为不变。
+          extendBody: true,
           appBar: AppBar(
-            toolbarHeight: television ? 64 : null,
+            // [+192] 品牌头改为「发现好剧 + 站源小字」两行，需要比单行
+            // 更高的 toolbar。定稿 .appbar 总高约 66px，这里取 66 让两行
+            // 文字垂直居中又不溢出；电视端保持 64。
+            toolbarHeight: television ? 64 : 66,
             titleSpacing: 12,
             title: _selectionMode
                 ? const Text(
@@ -1242,31 +1249,59 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                     ],
-                    child: SizedBox(
-                      height: 48,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            // [+190] 品牌头按定稿保留「站源名 + 点开切源」，
-                            // 不用设计稿的「发现好剧」大标题；只把字重 / 字距
-                            // 往定稿 h2 的粗体质感靠。PopupMenuButton 与
-                            // ValueKey('source-switch') 一律不动（多个 widget
-                            // test 依赖它）。
-                            child: Text(
-                              _group.name,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 21,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -.5,
+                    // [+192] 恢复定稿的「品牌名 + 站源小字」两行结构：
+                    // 大标题用「发现好剧」（定稿 h2 29px/900），站源名降为
+                    // 下方 11px 小字（定稿 .appbar .source）。整块仍是
+                    // PopupMenuButton，点任意处展开切源；ValueKey
+                    // ('source-switch') 与 onSelected 一律不动（多个 widget
+                    // test 依赖它 tap 切源）。
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // 定稿 .appbar h2：29px / 900 / -.045em / 1.2。
+                        const Text(
+                          '发现好剧',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 29,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1.3,
+                            height: 1.2,
+                          ),
+                        ),
+                        // 定稿 .appbar .source 的 margin-top:5px。
+                        const SizedBox(height: 5),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                _group.name,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                  height: 1.1,
+                                ),
                               ),
                             ),
-                          ),
-                          if (_sourceGroups.length > 1)
-                            const Icon(Icons.expand_more_rounded),
-                        ],
-                      ),
+                            if (_sourceGroups.length > 1)
+                              Icon(
+                                Icons.expand_more_rounded,
+                                size: 14,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                   )
                 : const Text(appName),
@@ -1748,9 +1783,11 @@ class _HomeScreenState extends State<HomeScreen> {
         // [+190] 搜索框常驻（电视端仍走对话框，不在页面上放输入框）。
         if (!television)
           Padding(
+            // [+192] 定稿 `.search { margin-top:17px }`，之前 10 把搜索框
+            // 往上提了 7px，是顶部留白累积错位的起点之一。
             padding: const EdgeInsets.fromLTRB(
               CinemaTokens.pageGutter,
-              10,
+              17,
               CinemaTokens.pageGutter,
               4,
             ),
@@ -1842,36 +1879,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-        // [+190] 「继续观看」横卡：最近未看完的两条，纯本地绘制、不发网络
-        // 请求，也不使用 DramaCover / DramaTile（见 cinema_sections.dart
-        // 文件头注释：interface_test 会跨 tab 数封面）。无记录时组件返回
-        // 零尺寸，不占首屏一行空白。
-        ContinueWatchingStrip(
-          key: const ValueKey('continue-watching-strip'),
-          entries: widget.store.history
-              .where((entry) => !entry.finished)
-              .take(2)
-              .toList(),
-          onOpen: (drama) => _openDrama(drama, resume: true),
-          onViewAll: () => _changeTab(2),
-        ),
-        // [+190] 目录态的「为你推荐 / 换一批」标题行。推荐态的标题行由
-        // RecommendationsScreen 自己在内嵌模式渲染（档位按钮要读它的
-        // _genre / _load），这里只负责目录态，避免两侧各维护一套状态。
-        if (!_showRecommendations)
-          CinemaSectionHeader(
-            title: '为你推荐',
-            actions: [
-              CinemaTextLink(
-                label: '换一批',
-                icon: Icons.refresh_rounded,
-                tooltip: '换一批剧集',
-                onTap: (_loading || _loadingMore)
-                    ? null
-                    : () => _load(force: true),
-              ),
-            ],
-          ),
+        // [+192] 手机端把「继续观看」横卡和目录态「为你推荐」标题行放进
+        // 下面的滚动区，随内容一起向上滚走；站源栏（AppBar）与分类 tag 栏
+        // 继续常驻。之前它们在固定 Column 里，只有最底部网格自己滚，下滑时
+        // 这几块一直钉住半屏。电视端保留固定布局：遥控器焦点需要稳定锚点，
+        // 且电视网格自带 ScrollController，不便再嵌一层滚动。
+        if (television) ...[
+          _continueWatching(),
+          if (!_showRecommendations) _catalogHeader(),
+        ],
         if (_showRecommendations)
           Expanded(
             child: GestureDetector(
@@ -1880,6 +1896,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 repository: widget.repository,
                 store: widget.store,
                 embedded: true,
+                // [+192] 手机端把继续观看横卡交给推荐页当首个 sliver，
+                // 和它的「为你推荐」标题行一起滚走。
+                leading: television ? null : _continueWatching(),
               ),
             ),
           )
@@ -1889,140 +1908,202 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: GestureDetector(
               onHorizontalDragEnd: television ? null : _swipeCategory,
-              child: _loading && _items.isEmpty
-                  ? hideEmptyLoading
-                        // 重载分组有自己的遮罩，这里再渲染一份「正在加载剧集」
-                        // 会从半透明遮罩底下透出来重影。
-                        ? const SizedBox.expand()
-                        : const Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CircularProgressIndicator(),
-                                SizedBox(height: 18),
-                                Text('正在加载剧集'),
-                              ],
-                            ),
-                          )
-                  : _items.isEmpty && _error != null
-                  ? StatusPanel(
-                      title: '暂时无法加载',
-                      message: _error!,
-                      onRetry: () => _load(force: true),
-                      secondaryAction: _errorSecondaryActions,
-                      icon: _errorNeedsVerification
-                          ? Icons.verified_user_outlined
-                          : Icons.wifi_off_rounded,
-                    )
-                  : items.isEmpty
-                  ? StatusPanel(
-                      title: '没有找到匹配的短剧',
-                      message: _hideVip
-                          ? '可以换个搜索词，或显示 VIP 内容。'
-                          : widget.store.sources.length > 1
-                          ? '可以换个搜索词或切换站源。'
-                          : '可以换个搜索词，或刷新后重试。',
-                      onRetry:
-                          _hasMore &&
-                              !_loadingMore &&
-                              (!_onlineSearch ||
-                                  _search.text.isEmpty ||
-                                  _group.sources.any(
-                                    (source) => source.pagedSearch,
-                                  ))
-                          ? () => _load(more: true)
-                          : null,
-                      action: '加载更多',
-                    )
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        if (television) {
-                          return _televisionGrid(
-                            items,
-                            constraints.maxWidth,
-                            key:
-                                'catalog-${_group.id}-$_category-$_submittedQuery',
-                            controller: _scroll,
-                            footer: Padding(
-                              padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
-                              child: Center(
-                                child: _loadingMore
-                                    ? const CircularProgressIndicator()
-                                    : _hasMore
-                                    ? RemoteButton(
-                                        label: '加载更多',
-                                        icon: Icons.expand_more,
-                                        onPressed: () => _load(more: true),
-                                      )
-                                    : const Text('已经看到这里的全部剧集'),
-                              ),
-                            ),
-                          );
-                        }
-                        final padding = constraints.maxWidth < 600
-                            ? CinemaTokens.pageGutter
-                            : 24.0;
-                        return RefreshIndicator(
-                          onRefresh: _refreshCatalog,
-                          child: CustomScrollView(
-                            controller: _scroll,
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            slivers: [
-                              SliverPadding(
-                                padding: EdgeInsets.fromLTRB(
-                                  padding,
-                                  0,
-                                  padding,
-                                  16,
-                                ),
-                                sliver: SliverGrid(
-                                  gridDelegate: dramaGridDelegate(
-                                    context,
-                                    constraints.maxWidth - 2 * padding,
-                                  ),
-                                  delegate: SliverChildBuilderDelegate(
-                                    (_, index) => _catalogTile(items[index]),
-                                    childCount: items.length,
-                                  ),
-                                ),
-                              ),
-                              SliverToBoxAdapter(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(bottom: 24),
-                                  child: Center(
-                                    child: _loadingMore
-                                        ? const CircularProgressIndicator()
-                                        : _hasMore
-                                        ? OutlinedButton.icon(
-                                            onPressed: () => _load(more: true),
-                                            icon: const Icon(
-                                              Icons.expand_more_rounded,
-                                            ),
-                                            label: const Text('加载更多'),
-                                          )
-                                        : Text(
-                                            '已经看到这里的全部剧集',
-                                            style: TextStyle(
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurfaceVariant,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+              child: LayoutBuilder(
+                builder: (context, constraints) => television
+                    ? _televisionCatalogContent(
+                        items,
+                        constraints.maxWidth,
+                        hideEmptyLoading,
+                      )
+                    : _mobileCatalogScroll(
+                        items,
+                        constraints.maxWidth,
+                        hideEmptyLoading,
+                      ),
+              ),
             ),
           ),
           if (_selectionMode && selectionInBody)
             _selectionBar(safeBottom: false),
         ],
       ],
+    );
+  }
+
+  /// [+192] 「继续观看」横卡：最近未看完的两条，纯本地绘制、不发网络请求，
+  /// 也不使用 DramaCover / DramaTile（见 cinema_sections.dart 文件头注释：
+  /// interface_test 会跨 tab 数封面）。无记录时组件返回零尺寸。
+  /// 目录态（手机滚动区）与推荐态（作为 leading sliver）都复用它。
+  Widget _continueWatching() => ContinueWatchingStrip(
+    key: const ValueKey('continue-watching-strip'),
+    entries: widget.store.history
+        .where((entry) => !entry.finished)
+        .take(2)
+        .toList(),
+    onOpen: (drama) => _openDrama(drama, resume: true),
+    onViewAll: () => _changeTab(2),
+  );
+
+  /// [+192] 目录态的「为你推荐 / 换一批」标题行。推荐态的标题行由
+  /// RecommendationsScreen 自己在内嵌模式渲染（档位按钮要读它的 _genre /
+  /// _load），这里只负责目录态，避免两侧各维护一套状态。
+  Widget _catalogHeader() => CinemaSectionHeader(
+    title: '为你推荐',
+    actions: [
+      CinemaTextLink(
+        label: '换一批',
+        icon: Icons.refresh_rounded,
+        tooltip: '换一批剧集',
+        onTap: (_loading || _loadingMore) ? null : () => _load(force: true),
+      ),
+    ],
+  );
+
+  /// 目录态「无内容」占位（加载中 / 加载失败 / 空搜索），电视与手机共用，
+  /// 手机端会把它包进 SliverFillRemaining。返回 null 表示有内容该渲染网格。
+  Widget? _catalogPlaceholder(List<Drama> items, bool hideEmptyLoading) {
+    if (_loading && _items.isEmpty) {
+      // 重载分组有自己的遮罩，这里再渲染一份「正在加载剧集」会从半透明
+      // 遮罩底下透出来重影。
+      return hideEmptyLoading
+          ? const SizedBox.shrink()
+          : const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 18),
+                  Text('正在加载剧集'),
+                ],
+              ),
+            );
+    }
+    if (_items.isEmpty && _error != null) {
+      return StatusPanel(
+        title: '暂时无法加载',
+        message: _error!,
+        onRetry: () => _load(force: true),
+        secondaryAction: _errorSecondaryActions,
+        icon: _errorNeedsVerification
+            ? Icons.verified_user_outlined
+            : Icons.wifi_off_rounded,
+      );
+    }
+    if (items.isEmpty) {
+      return StatusPanel(
+        title: '没有找到匹配的短剧',
+        message: _hideVip
+            ? '可以换个搜索词，或显示 VIP 内容。'
+            : widget.store.sources.length > 1
+            ? '可以换个搜索词或切换站源。'
+            : '可以换个搜索词，或刷新后重试。',
+        onRetry:
+            _hasMore &&
+                !_loadingMore &&
+                (!_onlineSearch ||
+                    _search.text.isEmpty ||
+                    _group.sources.any((source) => source.pagedSearch))
+            ? () => _load(more: true)
+            : null,
+        action: '加载更多',
+      );
+    }
+    return null;
+  }
+
+  /// 电视端目录内容：占位或自带 controller 的遥控器网格（保持 +191 行为）。
+  Widget _televisionCatalogContent(
+    List<Drama> items,
+    double width,
+    bool hideEmptyLoading,
+  ) {
+    final placeholder = _catalogPlaceholder(items, hideEmptyLoading);
+    if (placeholder != null) return placeholder;
+    return _televisionGrid(
+      items,
+      width,
+      key: 'catalog-${_group.id}-$_category-$_submittedQuery',
+      controller: _scroll,
+      footer: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+        child: Center(
+          child: _loadingMore
+              ? const CircularProgressIndicator()
+              : _hasMore
+              ? RemoteButton(
+                  label: '加载更多',
+                  icon: Icons.expand_more,
+                  onPressed: () => _load(more: true),
+                )
+              : const Text('已经看到这里的全部剧集'),
+        ),
+      ),
+    );
+  }
+
+  /// [+192] 手机端目录态统一滚动区：继续观看横卡与「为你推荐」标题行作为
+  /// 前两个 sliver，和海报网格一起向上滚走；站源栏（AppBar）与分类 tag 栏
+  /// 仍在固定 Column 里常驻。_scroll 继续负责分页加载与切分类回顶。
+  Widget _mobileCatalogScroll(
+    List<Drama> items,
+    double width,
+    bool hideEmptyLoading,
+  ) {
+    final padding = width < 600 ? CinemaTokens.pageGutter : 24.0;
+    final placeholder = _catalogPlaceholder(items, hideEmptyLoading);
+    return RefreshIndicator(
+      onRefresh: _refreshCatalog,
+      child: CustomScrollView(
+        controller: _scroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: _continueWatching()),
+          SliverToBoxAdapter(child: _catalogHeader()),
+          if (placeholder != null)
+            SliverFillRemaining(hasScrollBody: false, child: placeholder)
+          else ...[
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(padding, 0, padding, 0),
+              sliver: SliverGrid(
+                gridDelegate: dramaGridDelegate(context, width - 2 * padding),
+                delegate: SliverChildBuilderDelegate(
+                  (_, index) => _catalogTile(items[index]),
+                  childCount: items.length,
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Center(
+                  child: _loadingMore
+                      ? const CircularProgressIndicator()
+                      : _hasMore
+                      ? OutlinedButton.icon(
+                          onPressed: () => _load(more: true),
+                          icon: const Icon(Icons.expand_more_rounded),
+                          label: const Text('加载更多'),
+                        )
+                      : Text(
+                          '已经看到这里的全部剧集',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+          // 底部浮岛叠在内容之上（Scaffold.extendBody），留白让最后一行
+          // 海报能滚到浮岛上方，同时浮岛半透明处透出的是海报而非纯黑托盘。
+          const SliverToBoxAdapter(
+            child: SizedBox(height: CinemaTokens.floatingNavClearance),
+          ),
+        ],
+      ),
     );
   }
 

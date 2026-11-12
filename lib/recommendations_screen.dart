@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'app_layout.dart';
 import 'cinema_sections.dart';
 import 'cinema_tokens.dart';
 import 'core_bridge.dart';
@@ -16,10 +17,16 @@ class RecommendationsScreen extends StatefulWidget {
     required this.repository,
     required this.store,
     this.embedded = false,
+    this.leading,
   });
   final AppRepository repository;
   final LocalStore store;
   final bool embedded;
+
+  /// [+192] 首页内嵌时，由调用方传进来的「继续观看」横卡。它和「为你推荐」
+  /// 标题行一起作为滚动区的前两个 sliver，下滑时随内容向上滚走。独立推荐页
+  /// 与电视端不传（继续观看由首页固定区渲染）。
+  final Widget? leading;
 
   @override
   State<RecommendationsScreen> createState() => _RecommendationsScreenState();
@@ -164,6 +171,151 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     _load();
   }
 
+  /// 内嵌态「为你推荐」标题行：档位文字按钮 + 换一批。独立页与内嵌滚动区
+  /// 共用这一份，避免两处各维护一套状态。
+  Widget _embeddedHeader() => CinemaSectionHeader(
+    title: '为你推荐',
+    actions: [
+      _genreMenu(),
+      CinemaTextLink(
+        label: '换一批',
+        icon: Icons.refresh_rounded,
+        tooltip: '换一批推荐',
+        onTap: _loading || _more ? null : () => _load(force: true),
+      ),
+    ],
+  );
+
+  /// [+192] 手机端内嵌态统一滚动视图：继续观看横卡（leading）、「为你推荐」
+  /// 标题行、进度 / 错误提示、推荐网格全部作为 sliver，下滑时一起向上滚走。
+  /// 站源栏与分类 tag 栏由首页固定 Column 常驻，不在这里。_scroll 仍负责
+  /// 切档位回顶（jumpTo(0) 会回到继续观看顶部）。
+  Widget _embeddedScroll() => LayoutBuilder(
+    builder: (context, constraints) {
+      final hasItems = _items.isNotEmpty;
+      final padding = CinemaTokens.pageGutter;
+      return RefreshIndicator(
+        onRefresh: () => _load(force: true),
+        child: CustomScrollView(
+          controller: _scroll,
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            if (widget.leading != null)
+              SliverToBoxAdapter(child: widget.leading!),
+            SliverToBoxAdapter(child: _embeddedHeader()),
+            if (_loading && hasItems)
+              const SliverToBoxAdapter(
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+            if (_error != null && hasItems)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _error!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _loading || _more
+                            ? null
+                            : () => _load(
+                                more: _failedMore,
+                                force: !_failedMore,
+                              ),
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (!widget.store.allowsSource('hongguo'))
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: StatusPanel(
+                  title: '当前用户未开放红果',
+                  message: '可在用户管理中调整站源权限。',
+                ),
+              )
+            else if (_loading && !hasItems)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (!hasItems)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: StatusPanel(
+                  title: _error == null ? '暂无推荐' : '推荐暂时无法加载',
+                  message: _error ?? '稍后刷新可获取新的推荐。',
+                  onRetry: () => _load(force: true),
+                ),
+              )
+            else ...[
+              SliverPadding(
+                padding: EdgeInsets.all(padding),
+                sliver: SliverGrid(
+                  gridDelegate: dramaGridDelegate(
+                    context,
+                    constraints.maxWidth - 2 * padding,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final drama = _items[index];
+                      return DramaTile(
+                        key: ValueKey(drama.id),
+                        drama: drama,
+                        repository: widget.repository,
+                        onTap: () => unawaited(
+                          openPlaybackDirectly(
+                            context,
+                            drama: drama,
+                            repository: widget.repository,
+                            store: widget.store,
+                          ),
+                        ),
+                      );
+                    },
+                    childCount: _items.length,
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  child: Center(
+                    child: _more
+                        ? const CircularProgressIndicator()
+                        : _hasMore
+                        ? OutlinedButton.icon(
+                            onPressed: () => _load(more: true),
+                            icon: const Icon(Icons.auto_awesome_rounded),
+                            label: const Text('继续推荐'),
+                          )
+                        : TextButton(
+                            onPressed: () => _load(force: true),
+                            child: const Text('本轮推荐已看完，刷新获取新推荐'),
+                          ),
+                  ),
+                ),
+              ),
+            ],
+            // 底部浮岛叠在内容之上（Scaffold.extendBody），留白让最后一行
+            // 推荐海报能滚到浮岛上方。
+            const SliverToBoxAdapter(
+              child: SizedBox(height: CinemaTokens.floatingNavClearance),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+
   @override
   Widget build(BuildContext context) {
     final refresh = RefreshAction(
@@ -177,19 +329,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         // 「为你推荐」标题行里的「档位文字按钮 + 换一批文字链接」，首页不再
         // 出现双行筛选。独立推荐页没有这个标题行语境，档位与刷新都放到
         // AppBar（见下面的 Scaffold 分支）。
-        if (widget.embedded)
-          CinemaSectionHeader(
-            title: '为你推荐',
-            actions: [
-              _genreMenu(),
-              CinemaTextLink(
-                label: '换一批',
-                icon: Icons.refresh_rounded,
-                tooltip: '换一批推荐',
-                onTap: _loading || _more ? null : () => _load(force: true),
-              ),
-            ],
-          ),
+        if (widget.embedded) _embeddedHeader(),
         if (_loading && _items.isNotEmpty)
           const LinearProgressIndicator(minHeight: 2),
         if (_error != null && _items.isNotEmpty)
@@ -289,6 +429,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         ),
       ],
     );
+    // [+192] 手机端首页内嵌：把「继续观看」横卡、标题行、错误行、网格统一
+    // 放进一个 CustomScrollView，下滑时这些模块随内容向上滚走。之前标题行
+    // 固定在 Column 顶部、只有网格自己滚，首页再钉一条继续观看就占掉半屏。
+    // 电视端保留原 Column（遥控器焦点需要稳定锚点），独立推荐页也不变。
+    if (widget.embedded && !AppLayout.isTelevision(context)) {
+      return _embeddedScroll();
+    }
     if (widget.embedded) return content;
     return Scaffold(
       appBar: AppBar(

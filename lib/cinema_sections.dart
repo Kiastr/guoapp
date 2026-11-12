@@ -37,11 +37,13 @@ class CinemaSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
+      // [+192] 对齐定稿 `.section { margin:24px 0 12px }`：标题行上下留白
+      // 逐段累积是最明显的顶部错位来源，这里按定稿值收敛。
       padding: const EdgeInsets.fromLTRB(
         CinemaTokens.pageGutter,
-        20,
+        24,
         CinemaTokens.pageGutter,
-        10,
+        12,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -344,19 +346,23 @@ class _ContinueCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          // [+192] 对齐定稿 `.card-title`（11px/500）与 `.card-meta`（9px）；
+          // 之前走 bodySmall 的 12px/600 让卡片标题和区块标题抢视觉重量，
+          // 也是拼图里实机字号整体偏大的来源之一。
           Text(
             entry.drama.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w600,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             '看到 ${(progress * 100).round()}%',
             style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: 10,
+              fontSize: 9,
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),

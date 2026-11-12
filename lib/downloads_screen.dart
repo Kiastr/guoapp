@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
+import 'cinema_tokens.dart';
 import 'core_bridge.dart';
 import 'download_collections.dart';
 import 'local_store.dart';
@@ -710,7 +711,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   icon: Icons.download_outlined,
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+                  // [+192] 内嵌在首页时底部浮岛叠在内容上（extendBody），
+                  // 留白让最后一条任务能滚到浮岛上方；独立页没有浮岛，
+                  // 保持原来的 20。
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    4,
+                    12,
+                    widget.embedded ? CinemaTokens.floatingNavClearance : 20,
+                  ),
                   itemCount: rows.length,
                   itemBuilder: (_, index) => switch (rows[index]) {
                     DownloadCollection collection => _collection(collection),
