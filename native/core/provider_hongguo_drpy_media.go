@@ -113,6 +113,14 @@ func (downloader *Downloader) hgDrpyVideoModelWith(ctx context.Context, payload 
 			continue
 		}
 		signedURL, headers := hgDrpySignedVideoRequestWithDevice(payload, time.Now(), api, identity.InstallID, identity.DeviceID)
+		// 【真签名接入（+186）】旧的 6 神签名里 x-argus/x-ladon 只是 base64(时间戳)
+		// 占位，x-gorgon/x-helios/x-medusa 是伪造头；2026-11-11 起服务端对播放模型
+		// 校验真签名，这一组头会被判不可信并静默返回 200 空体。保留 URL/UA/query/
+		// body（branch 抖动与设备身份都不动），只把签名头换成 551 Argus/Ladon 真签名。
+		// query 已由 hgDrpySignedVideoRequestWithDevice 定稿，签名必须基于这份最终 URL。
+		if hongguoPlaybackRealSignature {
+			headers = hongguoPlaybackHeadersForURL(signedURL, payload, headers)
+		}
 		body, err := hgDrpyRequestJSON(ctx, http.MethodPost, signedURL, headers, payload)
 		if err == nil {
 			hongguoRoutesHealth.noteOK(key)

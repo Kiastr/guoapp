@@ -313,7 +313,7 @@ func TestHongguoClassifyFailureKinds(t *testing.T) {
 		err  error
 		want hongguoFailKind
 	}{
-		{name: "空 body 是风控", err: errHongguoEmptyBody, want: hongguoFailRisk},
+		{name: "空 body 是签名/门禁", err: errHongguoEmptyBody, want: hongguoFailSignature},
 		{name: "超时是网络", err: context.DeadlineExceeded, want: hongguoFailNetwork},
 		{name: "未知归其它", err: errors.New("something odd"), want: hongguoFailOther},
 	}
@@ -420,22 +420,27 @@ func TestHongguoHealthUsesKindSpecificCooldown(t *testing.T) {
 
 // ---- 风控视角的三项增强 ----
 
-func TestHongguoDrpyEmptyBodyClassifiesAsRisk(t *testing.T) {
-	// drpys 空响应必须归 risk（1 分钟冷却），若落到 parse 会变成 30 分钟
-	// ——主力线路被误锁，分类冷却的收益就没了。
+func TestHongguoDrpyEmptyBodyClassifiesAsSignature(t *testing.T) {
+	// 空响应必须归 signature（30 分钟），不能落到 risk（1 分钟）。
+	// 依据（2026-11-11 上游两仓同步修复）：服务端开始校验真签名后，播放模型
+	// 接口对「签名不被认可」的请求返回 200 空体——与匿名门禁同形，但不会自愈。
+	// 若沿用 1 分钟冷却，等于每分钟白试一次，持续给风控加压。
 	// （drpys 有域名白名单，本地 httptest 地址会被拒，故测纯函数 hongguoMediaBodyOrRisk）
 	if err := hongguoMediaBodyOrRisk([]byte("")); !errors.Is(err, errHongguoEmptyBody) {
-		t.Fatalf("空 body 应归一为设备级风控错误, 实际 %v", err)
+		t.Fatalf("空 body 应归一为静默拒绝错误, 实际 %v", err)
 	}
 	if err := hongguoMediaBodyOrRisk([]byte("{}")); !errors.Is(err, errHongguoEmptyBody) {
-		t.Fatalf("空 JSON 对象应归一为设备级风控错误, 实际 %v", err)
+		t.Fatalf("空 JSON 对象应归一为静默拒绝错误, 实际 %v", err)
 	}
 	if err := hongguoMediaBodyOrRisk([]byte(`{"data":{"video_model":{}}}`)); err != nil {
 		t.Fatalf("有内容的响应不应判为空: %v", err)
 	}
-	// 关键断言：归一后的错误必须分类为 risk
-	if got := hongguoClassifyFailure(hongguoMediaBodyOrRisk([]byte(""))); got != hongguoFailRisk {
-		t.Fatalf("drpys 空响应分类 = %q, 期望 risk（否则冷却错配到 30 分钟）", got)
+	// 关键断言：归一后的错误必须分类为 signature
+	if got := hongguoClassifyFailure(hongguoMediaBodyOrRisk([]byte(""))); got != hongguoFailSignature {
+		t.Fatalf("drpys 空响应分类 = %q, 期望 signature", got)
+	}
+	if got := hongguoClassifyFailure(errors.New("红果接口返回空内容")); got != hongguoFailSignature {
+		t.Fatalf("文本兜底的空响应分类 = %q, 期望 signature", got)
 	}
 }
 
@@ -488,5 +493,40 @@ func TestHongguoPlaybackFailureFlowsBackToRouteHealth(t *testing.T) {
 	}
 	if !hongguoRoutesHealth.skip(choice.route, time.Now()) {
 		t.Fatalf("播放层连续回流失败后，线路应被熔断")
+	}
+}
+
+// ---- 静态禁用：上游已确认停用的线路不再白试 ----
+
+func TestHongguoRouteDjapiStaticallyDisabled(t *testing.T) {
+	// djapi（djapi.999888456.xyz）上游停用后一直未恢复：实网探测在 TLS 握手阶段
+	// 即失败。它不是抖动，冷却期过了也一样不通，故用静态禁用而不是健康度熔断。
+	// 约束：必须保留表项（错误聚合仍要输出「已禁用」而不是「未尝试该线路」）。
+	var found bool
+	for _, route := range hongguoRoutes {
+		if route.Name != hongguoRouteDjapi {
+			if route.Disabled {
+				t.Fatalf("线路 %q 不应被静态禁用（本次只禁 djapi）", route.Name)
+			}
+			continue
+		}
+		found = true
+		if !route.Disabled {
+			t.Fatalf("djapi 应为静态禁用状态")
+		}
+		if strings.TrimSpace(route.DisabledReason) == "" {
+			t.Fatalf("静态禁用必须写明原因，否则错误聚合只剩「已禁用」无从排查")
+		}
+		if route.Resolve == nil {
+			t.Fatalf("静态禁用也应保留 Resolve，便于上游复活时一键恢复")
+		}
+	}
+	if !found {
+		t.Fatalf("注册表缺少 djapi 表项：错误聚合依赖它输出备用线路状态")
+	}
+	// 静态禁用不计入健康度：跳过判定不应因为它而改变
+	resetHongguoRouteHealth(t)
+	if hongguoRoutesHealth.skip(hongguoRouteDjapi, time.Now()) {
+		t.Fatalf("静态禁用不应走健康度熔断（两者语义不同）")
 	}
 }

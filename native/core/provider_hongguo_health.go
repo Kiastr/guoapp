@@ -50,10 +50,14 @@ const (
 	// ---- 分类冷却：不同失败「自行恢复」的速度差了一个数量级，
 	//      用同一个冷却值会同时犯两种错：该快的等太久、该慢的反复试 ----
 	//
-	// hongguoHealthCooldownRisk 风控类（200 空 body / 明确拒绝）。
-	// 取**短**值：风控随登录态、网络出口、设备身份变化而解除——
-	// 用户登录后往往立刻恢复，冷却太长就白白等掉这段时间。
+	// hongguoHealthCooldownRisk 风控类：可确认会随登录态/出口/设备身份
+	// 立刻解除的短时拒绝。
+	// 取**短**值：用户登录后往往立刻恢复，冷却太长就白白等掉这段时间。
 	// 半开试探只在用户主动触发取流时才发生，不是额外探测，故短冷却安全。
+	//
+	// 【注意】空 body 自 2026-11-11 起改归 signature（见 hongguoClassifyFailure），
+	// 本常量当前**没有自动产生点**，保留给可明确识别为「短时风控」的信号
+	// （例如带明确风控文案的拒绝），不要删：删了将来无处分档。
 	hongguoHealthCooldownRisk = 1 * time.Minute
 	// hongguoHealthCooldownNetwork 网络类（超时/连接失败/DNS）。抖动通常较快自愈。
 	hongguoHealthCooldownNetwork = 3 * time.Minute
@@ -74,8 +78,10 @@ type hongguoFailKind string
 
 const (
 	hongguoFailNone hongguoFailKind = ""
-	// hongguoFailRisk 设备级风控：HTTP 200 空 body / 明确拒绝。
+	// hongguoFailRisk 短时风控：可确认随登录/出口解除的拒绝。
 	// 处置：换线路或换端点，**绝不原地重试**。
+	// 【当前没有自动产生点】曾经由「200 空 body」产生；11-11 起空 body 改归
+	// signature，因为签名失效与匿名门禁同形且都不会在 1 分钟内自愈。
 	hongguoFailRisk hongguoFailKind = "risk"
 	// hongguoFailNetwork 网络类：超时、连接失败、DNS。
 	// 处置：可退避重试（同一对象）。
@@ -113,16 +119,22 @@ func (kind hongguoFailKind) cooldown() time.Duration {
 	return hongguoHealthCooldownDefault
 }
 
-// errHongguoEmptyBody 红果返回 HTTP 200 但 body 为 0 字节——设备级风控的匿名拒绝信号。
-// 各取流线路拿到 200 响应后应先用 hongguoMediaBodyOrRisk 归一到本错误，
-// 否则空响应会被当成解析失败（"不会自愈"类）而误取长冷却。
+// errHongguoEmptyBody 红果返回 HTTP 200 但 body 为空——「请求被静默拒绝」的信号。
+//
+// 【两种成因，同形不可区分】
+//   - 匿名设备门禁（登录后解除）
+//   - 播放模型接口不认可当前签名（2026-11-11 起服务端校验真签名）
+//
+// 各取流线路拿到 200 响应后应先用 hongguoMediaBodyOrRisk 归一到本错误：
+// 否则「空响应」会以「JSON 解析失败」的形式冒泡，报错指向解析器，
+// 把真正的原因（签名/门禁）藏起来，用户按错误文案排查会走错方向。
 var errHongguoEmptyBody = errors.New("红果接口返回空内容")
 
-// hongguoMediaBodyOrRisk 校验取流响应体：内容为空即归一为设备级风控错误。
+// hongguoMediaBodyOrRisk 校验取流响应体：内容为空即归一为「静默拒绝」错误。
 //
 // 【调用点】各取流线路拿到 200 响应后先过这一层。app 线路早已有
 // errHongguoEmptyBody，drpys 原先缺这一层——空 body 会掉进 JSON 解析失败，
-// 被归成 parse（"不会自愈"，30 分钟冷却）而非 risk（1 分钟）。
+// 报错文案指向「解析」而非「被拒」，误导排查方向。
 //
 // 【为什么抽成纯函数】drpys 有域名白名单（hgDrpyAPIDomains），
 // 本地 httptest 地址会被拒绝，无法走网络路径验证；抽成纯函数后可脱离网络单测。
@@ -135,15 +147,22 @@ func hongguoMediaBodyOrRisk(payload []byte) error {
 
 // hongguoClassifyFailure 把取流错误归入失败类别。
 //
-// 判定顺序有讲究：先判最特异的（空 body 风控），再判网络（error 链），
+// 判定顺序有讲究：先判最特异的（空 body），再判网络（error 链），
 // 最后才按文本兜底——文本匹配最不可靠，只用来兜住没有类型信息的错误。
+//
+// 【2026-11-11 语义变更：空 body 不再归 risk，改归 signature】
+// 过去空 body 等价于「匿名设备被门禁」，随登录/换出口可立刻解除，故用 1 分钟短冷却。
+// 但服务端自 11-11 起对播放模型接口校验**真签名**，空 body 的主因变成了
+// 「签名不被认可」——这类失效不会自愈，用 1 分钟冷却等于每分钟白试探一次，
+// 反而持续给风控加压。两类现象同形（都是 HTTP 200 空体），无法从响应上区分，
+// 按更保守的一侧处理：归类 signature（30 分钟），靠半开试探在用户主动取流时重验。
 func hongguoClassifyFailure(err error) hongguoFailKind {
 	if err == nil {
 		return hongguoFailNone
 	}
-	// 1) 设备级风控：空 body（app 线路已用 errHongguoEmptyBody 表达）
+	// 1) 空 body（app/drpys 线路已用 errHongguoEmptyBody 表达）
 	if errors.Is(err, errHongguoEmptyBody) {
-		return hongguoFailRisk
+		return hongguoFailSignature
 	}
 	// 2) 网络类：超时 / 连接错误 / DNS
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -157,7 +176,7 @@ func hongguoClassifyFailure(err error) hongguoFailKind {
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "空内容") || strings.Contains(message, "空响应"):
-		return hongguoFailRisk
+		return hongguoFailSignature
 	case strings.Contains(message, "context deadline exceeded") || strings.Contains(message, "timeout"):
 		return hongguoFailNetwork
 	case strings.Contains(message, "403") || strings.Contains(message, "签名"):

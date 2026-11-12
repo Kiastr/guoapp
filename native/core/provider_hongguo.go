@@ -293,6 +293,12 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 	// 不额外发起探测请求。
 	errs := make(map[string]error, len(hongguoRoutes))
 	for _, route := range hongguoRoutes {
+		// 静态禁用：上游已证实停用，连冷却探测都不做（见表项注释）。
+		// 不记账：确定不通不是「本次失败」，记进去只会污染健康度统计。
+		if route.Disabled {
+			errs[route.Name] = fmt.Errorf("%w：%s", errHongguoRouteDisabled, route.DisabledReason)
+			continue
+		}
 		if hongguoRoutesHealth.skip(route.Name, time.Now()) {
 			errs[route.Name] = errHongguoRouteSkipped
 			continue

@@ -27,6 +27,15 @@ const hongguoAppUserAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN
 // 用 context 值可以只让取流链路生效，其余路径零改动。
 type hongguoAnonIdentityKey struct{}
 
+// hongguoPlaybackSignKey 标记「本次 hongguoAppRequest 是播放模型请求」。
+//
+// 【为什么单独加一个 key】hongguoAppRequest 被目录/详情/搜索/弹幕/取流共用，
+// 其中只有播放模型接口从 2026-11-11 起校验真 551 签名，其余接口仍用原有签名
+// （上游 6.9 明确「只调整模型签名族；搜索/目录/账号签名保留」）。
+// 已有 hongguoAnonIdentityKey 表达的是「注入注册身份」，语义不同，不复用它来
+// 判断签名方式，避免以后给别的链路也注入身份时误换签名。
+type hongguoPlaybackSignKey struct{}
+
 type hongguoCatalogCursor struct {
 	Offset        int       `json:"offset"`
 	SessionID     string    `json:"sessionId,omitempty"`
@@ -199,6 +208,9 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 		if payload != nil {
 			request.Header.Set("Content-Type", "application/json; charset=utf-8")
 		}
+		// 播放模型请求专用标记：由 hongguoAppVideoModelAt 经 context 注入。
+		// 只有它换成真 551 签名，目录/详情/搜索仍走 signHongguoRequest。
+		playback, _ := ctx.Value(hongguoPlaybackSignKey{}).(bool)
 		response, err := downloader.doPreparedCatalogRequest(request, 20*time.Second, func(prepared *http.Request) {
 			now := time.Now()
 			if comment {
@@ -223,7 +235,16 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 						break
 					}
 				}
-				signHongguoRequest(prepared, body, now)
+				if playback && hongguoPlaybackRealSignature {
+					// 【真签名接入（+186）】branch 抖动后最终 query 已定稿，按这份
+					// RawQuery 生成 551 Argus/Ladon 真头；x-khronos 取 _rticket/1000
+					// 与 URL 同源（上游明确要求，否则签名与 query 对不上）。
+					// 重试/换号都会重新进入本回调，签名随之重算，不会复用旧串。
+					finalTicket := hongguoPlaybackTicketFromURL(prepared.URL.String())
+					hongguoPlaybackApplyHeaders(prepared, body, finalTicket/1000, finalTicket)
+				} else {
+					signHongguoRequest(prepared, body, now)
+				}
 			}
 		})
 		if err != nil {
@@ -277,5 +298,7 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 // path 参数化只为给将来多端点留口子，当前只有 hongguoAppPlaybackPath 一个取值。
 func (downloader *Downloader) hongguoAppVideoModelAt(ctx context.Context, path string, payload any, identity hongguoAnonDevice) (map[string]any, error) {
 	scoped := context.WithValue(ctx, hongguoAnonIdentityKey{}, identity)
+	// 让共用的 hongguoAppRequest 知道这是播放模型请求，从而换用真 551 签名。
+	scoped = context.WithValue(scoped, hongguoPlaybackSignKey{}, true)
 	return downloader.hongguoAppRequest(scoped, http.MethodPost, path, nil, payload)
 }

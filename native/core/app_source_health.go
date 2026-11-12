@@ -51,6 +51,22 @@ func observeSourceResponse(ctx context.Context, response *http.Response) {
 	trace.mu.Unlock()
 }
 
+// sourcePlaybackHint 给「取流失败」补一句可操作的下一步。
+//
+// 【为什么拼在错误文案里】站源体检的步骤行直接渲染 publicError(err) 的结果，
+// 这是普通用户在 app 内唯一能看到取流失败原因的地方。只抛原始错误的话，
+// 红果会显示成「App 取流失败：…；网页取流失败：…；备用取流失败：…」——
+// 用户看到的是三条线路全挂，却不知道该做什么。
+//
+// 【只给红果加】其它站源的取流失败原因各不相同（多数是登录态或站点改版），
+// 套用红果的引导会把人带偏。
+func sourcePlaybackHint(source string, err error) error {
+	if source != sourceHongguo {
+		return err
+	}
+	return fmt.Errorf("%w。若目录能打开、只有取流失败：多为当前网络出口被红果风控，或服务端又调整了签名校验——换网络（Wi-Fi／流量互换）后重试，仍不行请更新到最新版本", err)
+}
+
 func (engine *nativeEngine) checkSource(ctx context.Context, source string, selected nativeDrama, playback bool) error {
 	report := nativeSourceHealth{CheckedAt: time.Now(), State: "checking", Steps: []nativeHealthStep{}}
 	trace := &sourceResponseTrace{}
@@ -149,7 +165,7 @@ func (engine *nativeEngine) checkSource(ctx context.Context, source string, sele
 		var err error
 		media, err = engine.downloader.resolveProviderMedia(ctx, Task{DramaID: drama.ID, Chapter: chapter, Index: 1})
 		if err != nil {
-			return "", err
+			return "", sourcePlaybackHint(source, err)
 		}
 		ctx = providerMediaContext(ctx, media.credentials)
 		keyURL, segmentURL, err = engine.downloader.sourceProbeResources(ctx, media)

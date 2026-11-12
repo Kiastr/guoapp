@@ -60,6 +60,15 @@ type hongguoRoute struct {
 	// 更糟的是它会被记一次 risk 失败，把「没登录」误记成「线路坏了」。
 	// 因此未登录时跳过，并把原因写进错误聚合，而不是假装它失败过。
 	NeedsSession bool
+	// Disabled 静态禁用：该线路已被上游证实停用（不是抖动），不该再花一次请求去试。
+	//
+	// 【与冷却的区别】skip() 是运行时判断（失败 N 次后在冷却期内跳过，会自愈），
+	// 本字段是编译期事实（上游接口已下线，冷却期过了也一样不通）。
+	// 两者都只是「跳过」，不删除表项——注册表仍保留该行用于错误聚合与后续复查，
+	// 上游若复活只需把本字段改回 false，无需恢复被删的代码。
+	Disabled bool
+	// DisabledReason 禁用原因（写进错误聚合，让用户看到「已知不可用」而非「本次失败」）。
+	DisabledReason string
 	// Resolve 执行取流。统一签名为 (seriesID, videoID)，
 	// 各线路实际用不到的参数在下面适配时忽略。
 	Resolve func(ctx context.Context, d *Downloader, seriesID, videoID string) (providerMedia, error)
@@ -96,8 +105,14 @@ var hongguoRoutes = []hongguoRoute{
 		},
 	},
 	{
-		Name:   hongguoRouteDjapi,
-		Signer: "none",
+		// 【静态禁用】djapi（djapi.999888456.xyz）自上游停用后一直未恢复：
+		// 实网探测为 TLS 握手阶段即失败（域名不可达），不是签名问题、也不会自愈。
+		// 保留在末位仅作登记与错误聚合，不再实际发起请求——每次白试都要等一次
+		// 握手超时，等于给「其他线路都失败」的场景额外叠加等待。
+		Name:           hongguoRouteDjapi,
+		Signer:         "none",
+		Disabled:       true,
+		DisabledReason: "上游已停用（域名不可达）",
 		Resolve: func(ctx context.Context, d *Downloader, seriesID, videoID string) (providerMedia, error) {
 			return d.resolveHongguoPlaybackAPI(ctx, seriesID, videoID)
 		},
@@ -188,6 +203,9 @@ var (
 	// 改造前这种情况会被当成成功返回，导致上层拿着空 media 去下载；
 	// 这里一律按失败处理，继续回退到下一条线路。
 	errHongguoRouteEmptyMedia = errors.New("红果取流未返回播放地址")
+	// errHongguoRouteDisabled 该线路已被静态禁用（上游证实停用）。
+	// 与 skip（运行时冷却）区分：这是确定事实，不参与健康度记账。
+	errHongguoRouteDisabled = errors.New("该线路已禁用")
 )
 
 // routeErrorOrSkip 把「未执行」的占位错误补成可读文案。
