@@ -15,6 +15,7 @@ class SearchInput extends StatefulWidget {
     this.suggestions,
     this.onCancel,
     this.autofocus = false,
+    this.onFocusChange,
   });
   final TextEditingController controller;
   final String hint;
@@ -23,6 +24,10 @@ class SearchInput extends StatefulWidget {
   final Future<List<String>> Function(String)? suggestions;
   final VoidCallback? onCancel;
   final bool autofocus;
+
+  /// [+190] 输入框焦点变化。首页搜索框改为常驻后，「最近搜索」不再跟着
+  /// 展开状态常显，只在用户真的点进输入框时出现，避免首屏被挤高。
+  final ValueChanged<bool>? onFocusChange;
   @override
   State<SearchInput> createState() => _SearchInputState();
 }
@@ -34,6 +39,14 @@ class _SearchInputState extends State<SearchInput> {
   int _generation = 0;
   bool _selected = false;
   final _cache = <String, List<String>>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(_notifyFocus);
+  }
+
+  void _notifyFocus() => widget.onFocusChange?.call(_focus.hasFocus);
 
   void _cancel() {
     _timer?.cancel();

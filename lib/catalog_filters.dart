@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'app_layout.dart';
+import 'cinema_tokens.dart';
 import 'models.dart';
 import 'pinyin_sort.dart';
 import 'remote_widgets.dart';
@@ -130,6 +131,8 @@ class _CatalogFiltersState extends State<CatalogFilters> {
   @override
   Widget build(BuildContext context) {
     final television = AppLayout.isTelevision(context);
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return SizedBox(
       height: television
           ? 64
@@ -184,6 +187,44 @@ class _CatalogFiltersState extends State<CatalogFilters> {
                                 selected: entry.id == widget.category,
                                 showCheckmark: false,
                                 onSelected: (_) => widget.onCategory(entry.id),
+                                // [+190] 对齐定稿 .chip：未选中是近黑淡底 +
+                                // 弱描边的轻量胶囊，选中才 8% 主色底 + 20%
+                                // 主色内描边，避免一整排实心 chip 把首屏压重。
+                                backgroundColor: dark
+                                    ? const Color(0xFF141418)
+                                    : scheme.surfaceContainerHighest,
+                                selectedColor:
+                                    CinemaTokens.accentDark.withValues(
+                                  alpha: .08,
+                                ),
+                                side: BorderSide(
+                                  color: entry.id == widget.category
+                                      ? CinemaTokens.accentDark.withValues(
+                                          alpha: .2,
+                                        )
+                                      : scheme.outlineVariant.withValues(
+                                          alpha: .5,
+                                        ),
+                                ),
+                                shape: const StadiumBorder(),
+                                labelStyle: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: entry.id == widget.category
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
+                                  color: entry.id == widget.category
+                                      ? const Color(0xFFFF8A79)
+                                      : dark
+                                      ? CinemaTokens.mutedDark
+                                      : scheme.onSurfaceVariant,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 13,
+                                  vertical: 6,
+                                ),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
                               ),
                       ),
                   ],

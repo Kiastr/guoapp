@@ -261,7 +261,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
                 child: Text(
                   '影院视觉以深色为基准，封面与播放画面保留更多纯黑；'
-                  '底部四个入口使用同一套线性图标，选中时只改变颜色与状态圆点，不再切换图形。',
+                  '底部四个入口使用同一套线性图标，选中时只改变颜色与状态圆点。'
+                  '首页搜索框常驻，「继续观看」横卡与「为你推荐 / 换一批」标题行随手可及；'
+                  '红果推荐的三个档位收进标题行的文字按钮，点开菜单切换，其他站源不显示该按钮。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

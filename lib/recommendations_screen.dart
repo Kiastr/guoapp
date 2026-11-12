@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'catalog_filters.dart';
+import 'cinema_sections.dart';
 import 'cinema_tokens.dart';
 import 'core_bridge.dart';
 import 'local_store.dart';
@@ -123,6 +123,36 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return '推荐';
   }
 
+  /// [+190] 三档推荐模式：原本是第二行 ChoiceChip，现收编为标题行里的
+  /// 文字超链接按钮，点击弹菜单，当前档打勾。passthrough 让外层
+  /// PopupMenuButton 接管点击（见 cinema_sections.dart 注释）；tooltip 传空串
+  /// 避免两层 Tooltip 抢手势。
+  Widget _genreMenu() => PopupMenuButton<String>(
+    key: const ValueKey('recommend-genre-menu'),
+    tooltip: '切换推荐模式',
+    onSelected: _select,
+    itemBuilder: (_) => [
+      for (final genre in _genres)
+        PopupMenuItem<String>(
+          value: genre.id,
+          child: Row(
+            children: [
+              Expanded(child: Text(genre.name)),
+              if (genre.id == _genre)
+                const Icon(Icons.check_rounded, size: 18),
+            ],
+          ),
+        ),
+    ],
+    child: CinemaTextLink(
+      label: _genreLabel,
+      icon: Icons.expand_more_rounded,
+      tooltip: '',
+      emphasis: true,
+      passthrough: true,
+    ),
+  );
+
   void _select(String genre) {
     if (_genre == genre) return;
     setState(() {
@@ -143,45 +173,23 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     );
     final content = Column(
       children: [
-        CatalogFilters(
-          categories: _genres,
-          category: _genre,
-          onCategory: _select,
-          onRetry: () => _load(force: true),
-          trailing: widget.embedded ? refresh : null,
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$_genreLabel · 已加载 ${_items.length} 部',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                // [+180] app 内引导：只说明当前档位，不写实现细节。默认档
-                // feed_behavior 已改名「个性推荐」，实验档 feed_personal 改名
-                // 「账号推荐（实验）」；两档文案都必须跟 _genres 的显示名对应。
-                if (_genre == 'feed_behavior')
-                  Text(
-                    '按浏览与换批行为调序，无需登录',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  )
-                else if (_genre == 'feed_personal')
-                  Text(
-                    '实验档：带红果账号 Cookie 取流，效果未验证',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-              ],
-            ),
+        // [+190] 首页 IA：原本的第二行三档 chips 与两行说明文字收编为
+        // 「为你推荐」标题行里的「档位文字按钮 + 换一批文字链接」，首页不再
+        // 出现双行筛选。独立推荐页没有这个标题行语境，档位与刷新都放到
+        // AppBar（见下面的 Scaffold 分支）。
+        if (widget.embedded)
+          CinemaSectionHeader(
+            title: '为你推荐',
+            actions: [
+              _genreMenu(),
+              CinemaTextLink(
+                label: '换一批',
+                icon: Icons.refresh_rounded,
+                tooltip: '换一批推荐',
+                onTap: _loading || _more ? null : () => _load(force: true),
+              ),
+            ],
           ),
-        ),
         if (_loading && _items.isNotEmpty)
           const LinearProgressIndicator(minHeight: 2),
         if (_error != null && _items.isNotEmpty)
@@ -283,7 +291,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     );
     if (widget.embedded) return content;
     return Scaffold(
-      appBar: AppBar(title: const Text('红果推荐'), actions: [refresh]),
+      appBar: AppBar(
+        title: const Text('红果推荐'),
+        actions: [_genreMenu(), refresh],
+      ),
       body: SafeArea(top: false, child: content),
     );
   }

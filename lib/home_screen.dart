@@ -12,6 +12,7 @@ import 'catalog_browser.dart';
 import 'catalog_sort.dart';
 import 'catalog_sort_sheet.dart';
 import 'cinema_icons.dart';
+import 'cinema_sections.dart';
 import 'cinema_tokens.dart';
 import 'recommendations_screen.dart';
 import 'rankings_screen.dart';
@@ -100,7 +101,11 @@ class _HomeScreenState extends State<HomeScreen> {
   String _submittedQuery = '';
   final _categorySelections = <String, String>{};
   late final CatalogBrowser _browser;
-  bool _searchVisible = false;
+
+  /// [+190] 首页搜索框常驻，不再有「展开 / 收起」状态；这里只记输入框是否
+  /// 获得焦点，用来决定「最近搜索」要不要出现，避免常驻搜索框之外再常显
+  /// 一行历史把首屏挤高。电视端不走页面输入框（用对话框），此值恒 false。
+  bool _searchFocused = false;
   bool _categoriesLoading = false;
   String? _categoriesError;
   int _categoryGeneration = 0;
@@ -393,7 +398,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectionMode = false;
         _selectedDramas.clear();
         _search.clear();
-        _searchVisible = false;
         _submittedQuery = '';
       });
       return;
@@ -431,19 +435,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _toggleSearch() {
-    if (AppLayout.isTelevision(context)) {
-      _televisionSearch();
-      return;
-    }
-    if (_showRecommendations) _changeCategory('');
-    final hadQuery = _search.text.isNotEmpty;
-    setState(() {
-      _searchVisible = !_searchVisible;
-      if (!_searchVisible) _search.clear();
-    });
-    if (!_searchVisible && hadQuery) _searchChanged('');
-  }
+  /// [+190] 手机 / 桌面搜索框已常驻，AppBar 不再放放大镜；这个入口只在电视端
+  /// 保留——遥控器无法在页面输入框里打字，仍走对话框搜索（与 +190 前一致）。
+  void _toggleSearch() => unawaited(_televisionSearch());
 
   void _openRankings() {
     _pauseCatalog();
@@ -1254,11 +1248,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Flexible(
+                            // [+190] 品牌头按定稿保留「站源名 + 点开切源」，
+                            // 不用设计稿的「发现好剧」大标题；只把字重 / 字距
+                            // 往定稿 h2 的粗体质感靠。PopupMenuButton 与
+                            // ValueKey('source-switch') 一律不动（多个 widget
+                            // test 依赖它）。
                             child: Text(
                               _group.name,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
+                                fontSize: 21,
                                 fontWeight: FontWeight.w800,
+                                letterSpacing: -.5,
                               ),
                             ),
                           ),
@@ -1327,16 +1328,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: () => setState(() => _selectionMode = true),
                       icon: const Icon(Icons.checklist_rounded),
                     ),
-                  IconButton(
-                    key: const ValueKey('toggle-search'),
-                    tooltip: _searchVisible ? '收起搜索' : '搜索',
-                    icon: Icon(
-                      _searchVisible
-                          ? Icons.search_off_rounded
-                          : Icons.search_rounded,
+                  // [+190] 手机 / 桌面搜索框常驻，放大镜入口只在电视端保留
+                  // （遥控器仍走对话框搜索）。
+                  if (television)
+                    IconButton(
+                      key: const ValueKey('toggle-search'),
+                      tooltip: '搜索',
+                      icon: const Icon(Icons.search_rounded),
+                      onPressed: _toggleSearch,
                     ),
-                    onPressed: _toggleSearch,
-                  ),
                 ],
                 if (_tab == 0 &&
                     !_showRecommendations &&
@@ -1745,18 +1745,20 @@ class _HomeScreenState extends State<HomeScreen> {
     final television = AppLayout.isTelevision(context);
     return Column(
       children: [
-        if (_searchVisible && !television)
+        // [+190] 搜索框常驻（电视端仍走对话框，不在页面上放输入框）。
+        if (!television)
           Padding(
             padding: const EdgeInsets.fromLTRB(
               CinemaTokens.pageGutter,
-              4,
+              10,
               CinemaTokens.pageGutter,
               4,
             ),
             child: SearchInput(
               key: ValueKey('search-${_group.id}'),
               controller: _search,
-              autofocus: true,
+              // 常驻输入框不能一进页面就弹键盘。
+              autofocus: false,
               hint: _searchHint,
               suggestions: _searchSuggestions
                   ? widget.repository.suggestions
@@ -1764,9 +1766,16 @@ class _HomeScreenState extends State<HomeScreen> {
               onChanged: _searchChanged,
               onCancel: () => unawaited(widget.repository.cancelSuggestions()),
               onSearch: _submitSearch,
+              onFocusChange: (focused) {
+                if (mounted && _searchFocused != focused) {
+                  setState(() => _searchFocused = focused);
+                }
+              },
             ),
           ),
-        if (_searchVisible &&
+        // [+190] 最近搜索只在输入框获得焦点时出现，避免常驻搜索框之外
+        // 再常显一行历史把首屏挤高。
+        if (_searchFocused &&
             _search.text.trim().isEmpty &&
             widget.store.recentSearches.isNotEmpty)
           Padding(
@@ -1833,6 +1842,36 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        // [+190] 「继续观看」横卡：最近未看完的两条，纯本地绘制、不发网络
+        // 请求，也不使用 DramaCover / DramaTile（见 cinema_sections.dart
+        // 文件头注释：interface_test 会跨 tab 数封面）。无记录时组件返回
+        // 零尺寸，不占首屏一行空白。
+        ContinueWatchingStrip(
+          key: const ValueKey('continue-watching-strip'),
+          entries: widget.store.history
+              .where((entry) => !entry.finished)
+              .take(2)
+              .toList(),
+          onOpen: (drama) => _openDrama(drama, resume: true),
+          onViewAll: () => _changeTab(2),
+        ),
+        // [+190] 目录态的「为你推荐 / 换一批」标题行。推荐态的标题行由
+        // RecommendationsScreen 自己在内嵌模式渲染（档位按钮要读它的
+        // _genre / _load），这里只负责目录态，避免两侧各维护一套状态。
+        if (!_showRecommendations)
+          CinemaSectionHeader(
+            title: '为你推荐',
+            actions: [
+              CinemaTextLink(
+                label: '换一批',
+                icon: Icons.refresh_rounded,
+                tooltip: '换一批剧集',
+                onTap: (_loading || _loadingMore)
+                    ? null
+                    : () => _load(force: true),
+              ),
+            ],
+          ),
         if (_showRecommendations)
           Expanded(
             child: GestureDetector(

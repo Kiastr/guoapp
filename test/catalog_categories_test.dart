@@ -7,7 +7,6 @@ import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/main.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/ranking_models.dart';
-import 'package:duanju_app/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -131,7 +130,7 @@ void main() {
   }
 
   for (final width in [390.0, 320.0]) {
-    testWidgets('compact home keeps search collapsed at $width', (
+    testWidgets('compact home keeps a persistent search field at $width', (
       tester,
     ) async {
       await mount(
@@ -140,22 +139,26 @@ void main() {
         width: width,
         scale: width == 320 ? 2 : 1,
       );
-      expect(find.byType(TextField), findsNothing);
-      final coverTop = tester.getTopLeft(find.byType(DramaCover).first).dy;
-      expect(coverTop, lessThan(150));
+      // [+190] 搜索框改为常驻：不再靠 AppBar 的放大镜折叠 / 展开，手机端
+      // 也不再渲染 toggle-search 入口（只有电视端保留对话框搜索）。
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.byKey(const ValueKey('toggle-search')), findsNothing);
+      // 常驻搜索框必须在分类标签栏之上；新增的标题行 / 继续观看横卡
+      // 不能把它挤到分类下面去。
+      expect(
+        tester.getTopLeft(find.byType(TextField)).dy,
+        lessThan(
+          tester
+              .getTopLeft(find.byKey(const ValueKey('catalog-categories')))
+              .dy,
+        ),
+      );
       final switcher = find.byKey(const ValueKey('source-switch'));
       final rankings = find.byKey(const ValueKey('open-rankings'));
       expect(
         tester.getCenter(switcher).dy,
         closeTo(tester.getCenter(rankings).dy, 2),
       );
-      await tester.tap(find.byKey(const ValueKey('toggle-search')));
-      await tester.pumpAndSettle();
-      expect(find.byType(TextField), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('toggle-search')));
-      await tester.pumpAndSettle();
-      expect(find.byType(TextField), findsNothing);
-      expect(tester.getTopLeft(find.byType(DramaCover).first).dy, coverTop);
       expect(tester.takeException(), isNull);
     });
   }
