@@ -257,6 +257,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               _section(context, '外观与交互'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+                child: Text(
+                  '影院视觉以深色为基准，封面与播放画面保留更多纯黑；'
+                  '底部四个入口使用同一套线性图标，选中时只改变颜色与状态圆点，不再切换图形。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
               ListTile(
                 key: const ValueKey('theme-setting'),
                 leading: const Icon(Icons.palette_outlined),

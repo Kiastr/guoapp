@@ -11,6 +11,7 @@ import 'catalog_filters.dart';
 import 'catalog_browser.dart';
 import 'catalog_sort.dart';
 import 'catalog_sort_sheet.dart';
+import 'cinema_icons.dart';
 import 'recommendations_screen.dart';
 import 'rankings_screen.dart';
 import 'detail_screen.dart';
@@ -1472,23 +1473,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     groupAlignment: -.8,
                     destinations: [
                       NavigationRailDestination(
-                        icon: Icon(Icons.explore_outlined),
-                        selectedIcon: Icon(Icons.explore),
+                        icon: CinemaIcon(CinemaSymbol.discover),
+                        selectedIcon: CinemaIcon(CinemaSymbol.discover),
                         label: Text('发现'),
                       ),
                       NavigationRailDestination(
-                        icon: Icon(Icons.bookmark_border_rounded),
-                        selectedIcon: Icon(Icons.bookmark_rounded),
+                        icon: CinemaIcon(CinemaSymbol.follow),
+                        selectedIcon: CinemaIcon(CinemaSymbol.follow),
                         label: Text('追剧'),
                       ),
                       NavigationRailDestination(
-                        icon: Icon(Icons.history_rounded),
+                        icon: CinemaIcon(CinemaSymbol.history),
+                        selectedIcon: CinemaIcon(CinemaSymbol.history),
                         label: Text('最近观看'),
                       ),
                       if (widget.store.canDownload)
                         NavigationRailDestination(
-                          icon: Icon(Icons.download_outlined),
-                          selectedIcon: Icon(Icons.download_rounded),
+                          icon: CinemaIcon(CinemaSymbol.download),
+                          selectedIcon: CinemaIcon(CinemaSymbol.download),
                           label: Text('下载'),
                         ),
                     ],
@@ -1538,23 +1540,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   onDestinationSelected: _onNavSelected,
                   destinations: [
                     NavigationDestination(
-                      icon: Icon(Icons.explore_outlined),
-                      selectedIcon: Icon(Icons.explore),
+                      icon: CinemaIcon(CinemaSymbol.discover),
                       label: '发现',
                     ),
                     NavigationDestination(
-                      icon: Icon(Icons.bookmark_border_rounded),
-                      selectedIcon: Icon(Icons.bookmark_rounded),
+                      icon: CinemaIcon(CinemaSymbol.follow),
                       label: '追剧',
                     ),
                     NavigationDestination(
-                      icon: Icon(Icons.history_rounded),
+                      icon: CinemaIcon(CinemaSymbol.history),
                       label: '最近观看',
                     ),
                     if (widget.store.canDownload)
                       NavigationDestination(
-                        icon: Icon(Icons.download_outlined),
-                        selectedIcon: Icon(Icons.download_rounded),
+                        icon: CinemaIcon(CinemaSymbol.download),
                         label: '下载',
                       ),
                   ],

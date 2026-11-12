@@ -5,6 +5,7 @@ import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'cinema_tokens.dart';
 import 'lan_controller.dart';
 import 'player_interactions.dart';
 import 'widgets.dart';
@@ -328,16 +329,7 @@ class _PlayerControlsState extends State<PlayerControls> {
                       const IgnorePointer(
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Color(0xAA000000),
-                                Colors.transparent,
-                                Color(0xE6000000),
-                              ],
-                              stops: [0, .45, 1],
-                            ),
+                            gradient: CinemaTokens.playerScrim,
                           ),
                         ),
                       ),
@@ -515,9 +507,16 @@ class _PlayerControlsState extends State<PlayerControls> {
           ),
           const SizedBox(width: 12),
         ],
-        IconButton.filledTonal(
+        IconButton.filled(
           tooltip: playing ? '暂停播放' : '开始播放',
-          iconSize: 38,
+          iconSize: 30,
+          constraints: const BoxConstraints.tightFor(width: 64, height: 64),
+          padding: EdgeInsets.zero,
+          style: IconButton.styleFrom(
+            shape: const CircleBorder(),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          ),
           onPressed: () {
             widget.onTogglePlayback();
             _show();
@@ -740,11 +739,8 @@ class _PlayerControlsState extends State<PlayerControls> {
         ? scheme.primary
         : Colors.white.withValues(alpha: enabled ? .92 : .36);
     final background = selected
-        ? scheme.primary.withValues(alpha: .20)
-        : Colors.black.withValues(alpha: .22);
-    final border = selected
-        ? scheme.primary.withValues(alpha: .62)
-        : Colors.white.withValues(alpha: .08);
+        ? scheme.primary.withValues(alpha: .12)
+        : Colors.transparent;
     final targetWidth = visualWidth < 40 ? 48.0 : visualWidth + 8;
     return Tooltip(
       message: tooltip,
@@ -767,8 +763,7 @@ class _PlayerControlsState extends State<PlayerControls> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: background,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: border),
+                  borderRadius: BorderRadius.circular(14),
                 ),
                 child: IconTheme.merge(
                   data: IconThemeData(color: foreground, size: 22),
@@ -1002,7 +997,15 @@ class _PlayerControlsState extends State<PlayerControls> {
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 0),
-      child: _clusteredToolRow(tools),
+      // 手机工具行按可用宽度均布；不再把所有按钮挤到右下角。
+      // 每个按钮再包一层 Flexible：工具是固定宽度的 SizedBox，窄屏或大字体下
+      // 合计可能超过可用宽度，直接放进 Row 会触发 RenderFlex 溢出。FlexFit.loose
+      // 下按钮仍取自身宽度，只有真的放不下时才被压缩；剩余空间由 spaceBetween
+      // 分到间隙，视觉上仍是均布。
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [for (final tool in tools) Flexible(child: tool)],
+      ),
     );
   }
 

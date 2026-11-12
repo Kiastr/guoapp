@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'core_bridge.dart';
 import 'app_layout.dart';
+import 'cinema_tokens.dart';
 import 'models.dart';
 import 'remote_widgets.dart';
 
@@ -92,7 +93,7 @@ class DramaCover extends StatelessWidget {
     super.key,
     required this.drama,
     required this.repository,
-    this.radius = 14,
+    this.radius = CinemaTokens.posterRadius,
   });
   final Drama drama;
   final AppRepository repository;
