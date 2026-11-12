@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'catalog_filters.dart';
+import 'cinema_tokens.dart';
 import 'core_bridge.dart';
 import 'local_store.dart';
 import 'models.dart';
@@ -224,11 +225,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       physics: const AlwaysScrollableScrollPhysics(),
                       slivers: [
                         SliverPadding(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(CinemaTokens.pageGutter),
                           sliver: SliverGrid(
                             gridDelegate: dramaGridDelegate(
                               context,
-                              constraints.maxWidth - 32,
+                              constraints.maxWidth -
+                                  2 * CinemaTokens.pageGutter,
                             ),
                             delegate: SliverChildBuilderDelegate((
                               context,

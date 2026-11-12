@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_layout.dart';
 import 'catalog_sort.dart';
+import 'cinema_tokens.dart';
 import 'core_bridge.dart';
 import 'drama_actions.dart';
 import 'follow_state.dart';
@@ -150,7 +151,12 @@ class _SavedLibraryState extends State<SavedLibrary> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          padding: const EdgeInsets.fromLTRB(
+            CinemaTokens.pageGutter,
+            0,
+            CinemaTokens.pageGutter,
+            8,
+          ),
           child: TextField(
             key: ValueKey(
               widget.history ? 'history-search' : 'favorites-search',
@@ -174,7 +180,12 @@ class _SavedLibraryState extends State<SavedLibrary> {
         if (!widget.history)
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            padding: const EdgeInsets.fromLTRB(
+              CinemaTokens.pageGutter,
+              0,
+              CinemaTokens.pageGutter,
+              8,
+            ),
             child: Row(
               children: [
                 for (final filter in [
@@ -197,7 +208,12 @@ class _SavedLibraryState extends State<SavedLibrary> {
           ),
         if (resume != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            padding: const EdgeInsets.fromLTRB(
+              CinemaTokens.pageGutter,
+              0,
+              CinemaTokens.pageGutter,
+              12,
+            ),
             child: Card(
               margin: EdgeInsets.zero,
               child: ListTile(
@@ -265,7 +281,9 @@ class _SavedLibraryState extends State<SavedLibrary> {
               ],
             );
           }
-          final padding = constraints.maxWidth < 600 ? 16.0 : 24.0;
+          final padding = constraints.maxWidth < 600
+              ? CinemaTokens.pageGutter
+              : 24.0;
           return CustomScrollView(
             key: PageStorageKey(
               'saved-${widget.history}-$_filter-${_search.text}',

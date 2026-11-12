@@ -12,6 +12,7 @@ import 'catalog_browser.dart';
 import 'catalog_sort.dart';
 import 'catalog_sort_sheet.dart';
 import 'cinema_icons.dart';
+import 'cinema_tokens.dart';
 import 'recommendations_screen.dart';
 import 'rankings_screen.dart';
 import 'detail_screen.dart';
@@ -1746,7 +1747,12 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         if (_searchVisible && !television)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            padding: const EdgeInsets.fromLTRB(
+              CinemaTokens.pageGutter,
+              4,
+              CinemaTokens.pageGutter,
+              4,
+            ),
             child: SearchInput(
               key: ValueKey('search-${_group.id}'),
               controller: _search,
@@ -1764,7 +1770,12 @@ class _HomeScreenState extends State<HomeScreen> {
             _search.text.trim().isEmpty &&
             widget.store.recentSearches.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            padding: const EdgeInsets.fromLTRB(
+              CinemaTokens.pageGutter,
+              0,
+              CinemaTokens.pageGutter,
+              8,
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -1910,7 +1921,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           );
                         }
                         final padding = constraints.maxWidth < 600
-                            ? 16.0
+                            ? CinemaTokens.pageGutter
                             : 24.0;
                         return RefreshIndicator(
                           onRefresh: _refreshCatalog,

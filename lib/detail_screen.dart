@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
+import 'cinema_tokens.dart';
 import 'core_bridge.dart';
 import 'download_picker.dart';
 import 'downloads_screen.dart';
@@ -401,7 +402,12 @@ class _DetailScreenState extends State<DetailScreen> {
                     slivers: [
                       SliverToBoxAdapter(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                          padding: const EdgeInsets.fromLTRB(
+                            CinemaTokens.pageGutter,
+                            12,
+                            CinemaTokens.pageGutter,
+                            8,
+                          ),
                           child: _overview(drama),
                         ),
                       ),
@@ -431,7 +437,12 @@ class _DetailScreenState extends State<DetailScreen> {
                             ),
                           ),
                           SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                            padding: const EdgeInsets.fromLTRB(
+                              CinemaTokens.pageGutter,
+                              4,
+                              CinemaTokens.pageGutter,
+                              24,
+                            ),
                             sliver: SliverGrid(
                               gridDelegate:
                                   SliverGridDelegateWithFixedCrossAxisCount(
@@ -446,8 +457,9 @@ class _DetailScreenState extends State<DetailScreen> {
                                           ).scale(20) +
                                           30,
                                     ),
-                                    crossAxisSpacing: 10,
-                                    mainAxisSpacing: 10,
+                                    crossAxisSpacing:
+                                        CinemaTokens.gridSpacing,
+                                    mainAxisSpacing: CinemaTokens.gridSpacing,
                                   ),
                               delegate: SliverChildBuilderDelegate((
                                 context,
@@ -482,7 +494,14 @@ class _DetailScreenState extends State<DetailScreen> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1000),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                  // 与上方内容区左右留白保持一致（同为 pageGutter），
+                  // 否则底部按钮栏会比内容窄 2px。
+                  padding: const EdgeInsets.fromLTRB(
+                    CinemaTokens.pageGutter,
+                    10,
+                    CinemaTokens.pageGutter,
+                    12,
+                  ),
                   child: Row(
                     children: [
                       if (widget.repository.supportsDownloads &&
@@ -558,7 +577,12 @@ class _DetailScreenState extends State<DetailScreen> {
     final colors = Theme.of(context).colorScheme;
     final current = currentNumber == null ? '' : ' · 当前第 $currentNumber 集';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      padding: const EdgeInsets.fromLTRB(
+        CinemaTokens.pageGutter,
+        8,
+        CinemaTokens.pageGutter,
+        8,
+      ),
       child: Material(
         color: colors.surfaceContainer,
         borderRadius: BorderRadius.circular(8),
@@ -902,7 +926,12 @@ class _DetailScreenState extends State<DetailScreen> {
     final colors = Theme.of(context).colorScheme;
     final notices = widget.store.following(drama.id)?.seriesSeasons ?? const {};
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+      padding: const EdgeInsets.fromLTRB(
+        CinemaTokens.pageGutter,
+        10,
+        CinemaTokens.pageGutter,
+        8,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -994,7 +1023,7 @@ class _DetailScreenState extends State<DetailScreen> {
               color: state == null
                   ? Theme.of(context).colorScheme.surfaceContainerHighest
                   : Theme.of(context).colorScheme.secondaryContainer,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(CinemaTokens.panelRadius),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,

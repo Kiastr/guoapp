@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'cinema_tokens.dart';
+
 class SearchInput extends StatefulWidget {
   const SearchInput({
     super.key,
@@ -182,7 +184,7 @@ class _SearchInputState extends State<SearchInput> {
           alignment: Alignment.topLeft,
           child: Material(
             elevation: 8,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(CinemaTokens.panelRadius),
             clipBehavior: Clip.antiAlias,
             child: SizedBox(
               width: constraints.maxWidth,

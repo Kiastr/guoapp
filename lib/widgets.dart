@@ -132,18 +132,14 @@ class DramaCover extends StatelessWidget {
               repository: repository,
               placeholder: placeholder,
             ),
+          // 封面上的「共 N 集」白字必须靠遮罩保证可读。原先这里内联了一段
+          // 与 CinemaTokens.coverScrim 几乎相同的渐变；统一走设计系统后，
+          // 主页 / 追剧 / 榜单 / 详情页小封面共用同一套参数，将来只改 token。
           Positioned.fill(
             child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.center,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withValues(alpha: .78),
-                    ],
-                  ),
+                  gradient: CinemaTokens.coverScrim,
                 ),
               ),
             ),
@@ -485,7 +481,7 @@ class DramaTile extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress ?? onMore,
         onSecondaryTap: onMore,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(CinemaTokens.posterRadius),
         child: content,
       ),
     );
@@ -553,10 +549,15 @@ class StatusPanel extends StatelessWidget {
 
 SliverGridDelegate dramaGridDelegate(BuildContext context, double width) {
   final columns = width < 600 ? 3 : (width / 180).floor().clamp(4, 9);
-  final spacing = width < 600 ? 10.0 : 18.0;
+  // 手机端横向间距走设计系统（A · 影院 12px）；宽屏保留 18px——列数更多、
+  // 海报更大时 12px 会显得拥挤。spacing 同时决定 tileWidth，改它会让列宽
+  // 同步重算，属预期行为。
+  final spacing = width < 600 ? CinemaTokens.gridSpacing : 18.0;
   final tileWidth = (width - (columns - 1) * spacing) / columns;
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: columns,
+    // 纵向留白刻意大于横向：海报卡片下方还有标题 / 状态文字，套用
+    // gridSpacing(12) 会让下一行封面贴到上一行标题。故保持 22，不随 token 变。
     mainAxisSpacing: 22,
     crossAxisSpacing: spacing,
     mainAxisExtent: DramaTile.extentFor(context, tileWidth),
