@@ -605,7 +605,11 @@ class _PlayerControlsState extends State<PlayerControls> {
 
   double _bottomChromeInset() {
     if (widget.fullscreen) {
-      return (MediaQuery.viewPaddingOf(context).bottom + 24).clamp(64.0, 104.0);
+      // 全屏横屏下屏幕逻辑高度往往只有 360dp 左右，旧值 clamp(64,104)
+      // 会把工具行与进度条整体抬到画面中部。这里只保留避开系统手势区的
+      // 最小余量：viewPadding.bottom 本身已含底部安全区，额外加 8 即可。
+      // 顶部 inset 不受影响，进度条因此贴近底边而不是浮在中间。
+      return (MediaQuery.viewPaddingOf(context).bottom + 8).clamp(16.0, 32.0);
     }
     return 0;
   }

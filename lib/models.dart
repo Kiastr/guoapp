@@ -74,6 +74,26 @@ class SourceSite {
   /// 默认可见的站源：红果、韩小圈、鬼片网、青空次元。
   static const primaryValues = [hongguo, hanxiaoquan, guipian, sorani];
 
+  /// [+191] 暂时停用的内置站源。
+  ///
+  /// 背景：青空次元上游在 2026-10 中旬给 play 接口加了登录门槛，游客请求
+  /// 一律返回 canPlay=false / playUrl=null（实测 7 个不同剧集、游客 key
+  /// 请求头、会话 Cookie、网页 SSR 数据全部如此），匿名取流已不可用。为避免
+  /// 用户反复点开却只拿到报错，先把它从片源选择里停掉。
+  ///
+  /// 这是「可见性停用」，不是删除：
+  ///  - [primaryValues] / [defaultFavoriteSourceIds] / [allValues] 仍保留
+  ///    sorani 的定义，[byId] 与 [isKnown] 照常工作；历史记录、收藏、
+  ///    已缓存目录与原生（Go）取流代码一行未动，本地数据不会丢。
+  ///  - 过滤只发生在 [values]：[visibleValues] 基于它生成片源列表，
+  ///    [isAvailable] 基于它判定源是否可用，而 LocalStore.allowsSource 又以
+  ///    [isAvailable] 作为第一道闸门，于是目录聚合、继续观看、收藏里的青空
+  ///    内容也随之隐藏。
+  ///  - 恢复方法（上游恢复匿名访问、或接入账号凭据后）：把 'sorani' 从这个
+  ///    集合里移除即可，无需改其它代码、无需迁移数据、无需改用
+  ///    [primaryValues] 直接构造的静态分组测试。
+  static const disabledSourceIds = <String>{'sorani'};
+
   /// 出厂默认收藏的内置站源（+155）。
   ///
   /// 收藏的源在首页独占一组、与红果同级；取消收藏后回落到所属分组的子级
@@ -83,8 +103,13 @@ class SourceSite {
   ///
   /// 只保留青空：韩小圈本身就在「预制源集合」里，默认收藏会让它多占一个
   /// 与红果同级的位置，反而把预制源集合拆成两处；不收藏则整组仍是一个入口。
+  ///
+  /// [+191] 青空停用期间这一项刻意保留：[SourceGroup.fromSources] 只遍历
+  /// 实际可见的源，收藏集合里留一个已停用 id 不会生成「幽灵」独占分组；
+  /// 恢复时把 id 从 [disabledSourceIds] 移除，默认收藏也随之自动回来，
+  /// 不必再改这里。
   static const defaultFavoriteSourceIds = <String>{
-    'sorani', // 青空 · 动漫源集合
+    'sorani', // 青空 · 动漫源集合（+191 起停用，保留以便恢复）
   };
 
   /// 敏感站源：默认隐藏，输入解锁密码后才显示。
@@ -130,8 +155,15 @@ class SourceSite {
   }
 
   /// 运行时 + 内置的全部可见站源。
+  ///
+  /// [+191] 这里统一剔除 [disabledSourceIds]：停用的源既不出现在片源选择
+  /// （[visibleValues] 基于本列表），也不被 [isAvailable] 判定为可用，于是
+  /// LocalStore.allowsSource 连带把该源的历史 / 收藏 / 目录内容一起隐藏。
+  /// 只需维护这一处开关，恢复时移除 id 即可全链路还原。
   static List<SourceSite> get values => [
-    ...(allSourcesEnabled ? knownValues : [hongguo]),
+    ...(allSourcesEnabled ? knownValues : [hongguo]).where(
+      (site) => !disabledSourceIds.contains(site.id),
+    ),
     ...runtimeValues,
   ];
 

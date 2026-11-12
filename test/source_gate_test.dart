@@ -1,5 +1,6 @@
 import 'package:duanju_app/app_build.dart';
 import 'package:duanju_app/local_store.dart';
+import 'package:duanju_app/models.dart';
 import 'package:duanju_app/source_gate_dialog.dart';
 import 'package:duanju_app/source_gate_taps.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fixtures.dart';
+
+// [+191] 停用源后可见源数各减 1。用「出厂常量 - 停用个数」而不是写死数字：
+// 恢复青空（把 id 从 SourceSite.disabledSourceIds 移除）后断言自动还原。
+// 前提：停用项原本都计入解锁后的可见源（当前仅青空，属默认主源）。
+int get _visibleSources => 4 - SourceSite.disabledSourceIds.length;
+int get _unlockedSources => 11 - SourceSite.disabledSourceIds.length;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -24,11 +31,11 @@ void main() {
     final store = await create();
     expect(store.sourceGateEnabled, isFalse);
     expect(store.sourcesUnlocked, isFalse);
+    // [+191] 青空次元上游要求登录、已停用：默认可见的主源少一个。
+    // 恢复时把 'sorani' 从 SourceSite.disabledSourceIds 移除，这里加回即可。
     expect(
       store.sources.map((site) => site.id),
-      allSourcesEnabled
-          ? ['hongguo', 'hanxiaoquan', 'guipian', 'sorani']
-          : ['hongguo'],
+      allSourcesEnabled ? ['hongguo', 'hanxiaoquan', 'guipian'] : ['hongguo'],
     );
     expect(store.allowsSource('huangdou'), isFalse);
     expect(store.allowsSource('hongguo'), isTrue);
@@ -42,20 +49,21 @@ void main() {
     await store.enableSourceGate('666');
     expect(store.sourceGateEnabled, isTrue);
     expect(store.sourcesUnlocked, isTrue);
-    expect(store.sources.length, allSourcesEnabled ? 11 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _unlockedSources : 1);
 
     store.lockSources();
     expect(store.sourcesUnlocked, isFalse);
-    expect(store.sources.length, allSourcesEnabled ? 4 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _visibleSources : 1);
     expect(store.allowsSource('huangdou'), isFalse);
     expect(store.allowsSource('hongguo'), isTrue);
-    if (allSourcesEnabled) expect(store.allowsSource('sorani'), isTrue);
+    // [+191] 青空停用后，即便解锁也不再放行（isAvailable 变 false）。
+    if (allSourcesEnabled) expect(store.allowsSource('sorani'), isFalse);
 
     await expectLater(store.unlockSources('777'), throwsStateError);
     expect(store.sourcesUnlocked, isFalse);
     await store.unlockSources('666');
     expect(store.sourcesUnlocked, isTrue);
-    expect(store.sources.length, allSourcesEnabled ? 11 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _unlockedSources : 1);
   });
 
   test('a saved gate hides sources again after restart', () async {
@@ -66,7 +74,7 @@ void main() {
     addTearDown(restarted.dispose);
     expect(restarted.sourceGateEnabled, isTrue);
     expect(restarted.sourcesUnlocked, isFalse);
-    expect(restarted.sources.length, allSourcesEnabled ? 4 : 1);
+    expect(restarted.sources.length, allSourcesEnabled ? _visibleSources : 1);
     await restarted.unlockSources('666');
     expect(restarted.sourcesUnlocked, isTrue);
   });
@@ -78,7 +86,7 @@ void main() {
     await store.disableSourceGate();
     expect(store.sourceGateEnabled, isFalse);
     expect(store.sourcesUnlocked, isTrue);
-    expect(store.sources.length, allSourcesEnabled ? 11 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _unlockedSources : 1);
   });
 
   test('an invalid pin must be 3 to 12 digits', () async {
@@ -120,7 +128,7 @@ void main() {
     expect(store.configurationError, isNull);
     expect(store.sourceGateEnabled, isFalse);
     expect(store.sourcesUnlocked, isFalse);
-    expect(store.sources.length, allSourcesEnabled ? 4 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _visibleSources : 1);
   });
 
   test('a user-disabled gate keeps every compiled source visible', () async {
@@ -130,7 +138,7 @@ void main() {
     });
     expect(store.sourceGateEnabled, isFalse);
     expect(store.sourcesUnlocked, isTrue);
-    expect(store.sources.length, allSourcesEnabled ? 11 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _unlockedSources : 1);
   });
 
   test('passwordless toggle hides and shows sources without a pin', () async {
@@ -141,7 +149,7 @@ void main() {
     // 无需密码即可显示全部站源。
     await store.setPasswordlessSourceHidden(false);
     expect(store.sourcesUnlocked, isTrue);
-    expect(store.sources.length, allSourcesEnabled ? 11 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _unlockedSources : 1);
 
     // 状态落盘，重启后仍是"显示全部"。
     final restarted = testStore(store.preferences);
@@ -151,7 +159,7 @@ void main() {
     // 再切回隐藏，同样不需要密码。
     await restarted.setPasswordlessSourceHidden(true);
     expect(restarted.sourcesUnlocked, isFalse);
-    expect(restarted.sources.length, allSourcesEnabled ? 4 : 1);
+    expect(restarted.sources.length, allSourcesEnabled ? _visibleSources : 1);
     expect(restarted.allowsSource('huangdou'), isFalse);
   });
 
@@ -257,7 +265,7 @@ void main() {
     await tester.tap(find.text('显示全部站源'));
     await settle(tester);
     expect(store.sourcesUnlocked, isTrue);
-    expect(store.sources.length, allSourcesEnabled ? 11 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _unlockedSources : 1);
 
     // 再次打开（仍无密码）：按钮变为「隐藏敏感站源」。
     await tester.tap(find.text('打开'));
@@ -266,6 +274,6 @@ void main() {
     await tester.tap(find.text('隐藏敏感站源'));
     await settle(tester);
     expect(store.sourcesUnlocked, isFalse);
-    expect(store.sources.length, allSourcesEnabled ? 4 : 1);
+    expect(store.sources.length, allSourcesEnabled ? _visibleSources : 1);
   }, timeout: const Timeout(Duration(seconds: 60)));
 }

@@ -91,7 +91,7 @@ class _SourceGateDialogState extends State<SourceGateDialog> {
                   gateOff
                       ? '当前未使用密码，已显示全部站源。'
                       : '当前未使用密码，'
-                            '${SourceSite.primaryValues.map((site) => site.name).join('、')}'
+                            '${SourceSite.primaryValues.where((site) => !SourceSite.disabledSourceIds.contains(site.id)).map((site) => site.name).join('、')}'
                             ' 之外的站源已隐藏。',
                 ),
                 const SizedBox(height: 8),

@@ -359,6 +359,16 @@ func (d *Downloader) resolveSoraniMedia(ctx context.Context, task Task) (provide
 	row, _ := soraniPayload(value).(map[string]any)
 	address := mapString(row, "playUrl", "url")
 	if address == "" {
+		// 上游 2026-10 中旬起对 play 接口加了登录门槛：游客请求仍返回
+		// code=200，但 data 里是 canPlay=false / playUrl=null / message=请先登录。
+		// 旧文案「暂无可用播放地址」会被误读成线路或解析坏了，这里把上游
+		// 原因透出来，让用户知道是账号态问题而不是换线路能解决。
+		if message := strings.TrimSpace(mapString(row, "message", "msg")); message != "" {
+			return providerMedia{}, fmt.Errorf(
+				"青空次元该分集暂时无法播放：%s（线路 %s）",
+				truncate(message, 60), lineCode,
+			)
+		}
 		return providerMedia{}, fmt.Errorf("青空次元该分集暂无可用播放地址（线路 %s）", lineCode)
 	}
 	media := providerMedia{URL: address, Referer: soraniSiteBaseURL + "/"}
