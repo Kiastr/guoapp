@@ -46,20 +46,18 @@ const (
 )
 
 // hongguoRoute 一条取流线路。
+//
+// 【为什么不设「需要登录」字段】曾经有 NeedsSession 标记 app 线路「匿名必然被拒」，
+// 但那是 2026-10-15 门禁期的结论：分发循环从没读过它（字段空转），且 2026-11-11
+// 改真签名后 app 线路走 hongguoAnonPlayback 匿名设备注册即可取流——实网无登录态
+// 验证 variants=2。结论已过期，字段连同配套错误一起删除。
+// 若将来某条线路真的要求登录，请同时补上「分发循环里的检查」，不要只声明不读。
 type hongguoRoute struct {
 	// Name 线路标识，用于健康度记账与错误聚合。
 	Name string
 	// Signer 该线路期望使用的签名方案名（插槽位，见 hongguoSigner 说明）。
 	// 在分发逻辑落地前，本字段仅作登记用途，不改变任何请求行为。
 	Signer string
-	// NeedsSession 该线路是否必须有登录态才可能成功。
-	//
-	// 【风控视角特有】红果自 2026-10-15 起对匿名请求施加设备级门禁：
-	// App 线路（video_model）在匿名下**必然**返回 200 空 body。
-	// 未登录时去试它，等于白花一次请求 + 拖慢到达网页线路的时间；
-	// 更糟的是它会被记一次 risk 失败，把「没登录」误记成「线路坏了」。
-	// 因此未登录时跳过，并把原因写进错误聚合，而不是假装它失败过。
-	NeedsSession bool
 	// Disabled 静态禁用：该线路已被上游证实停用（不是抖动），不该再花一次请求去试。
 	//
 	// 【与冷却的区别】skip() 是运行时判断（失败 N 次后在冷却期内跳过，会自愈），
@@ -90,9 +88,8 @@ var hongguoRoutes = []hongguoRoute{
 		},
 	},
 	{
-		Name:         hongguoRouteApp,
-		Signer:       "app-sixhead",
-		NeedsSession: true,
+		Name:   hongguoRouteApp,
+		Signer: "app-sixhead",
 		Resolve: func(ctx context.Context, d *Downloader, seriesID, videoID string) (providerMedia, error) {
 			return d.resolveHongguoAppMedia(ctx, videoID)
 		},
@@ -196,9 +193,6 @@ func hongguoHostKey(route, host string) string {
 var (
 	// errHongguoRouteSkipped 该线路近期连续失败，命中冷却期被跳过。
 	errHongguoRouteSkipped = errors.New("该线路近期连续失败，冷却期内暂不重试")
-	// errHongguoRouteNeedsLogin 该线路必须有登录态，而当前未登录。
-	// 与「线路坏了」区分开：不计入健康度，避免把缺登录误记成线路故障。
-	errHongguoRouteNeedsLogin = errors.New("该线路需要红果登录态，当前未登录")
 	// errHongguoRouteEmptyMedia 线路返回成功但没给播放地址。
 	// 改造前这种情况会被当成成功返回，导致上层拿着空 media 去下载；
 	// 这里一律按失败处理，继续回退到下一条线路。

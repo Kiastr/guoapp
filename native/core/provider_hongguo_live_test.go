@@ -48,6 +48,8 @@ func TestLiveHongguoPublicRecovery(t *testing.T) {
 	}
 	t.Logf("drpys 取流成功 variants=%d", len(drpy.Variants))
 
+	// 全程无登录态：app 线路走 hongguoAnonPlayback 匿名设备注册，
+	// 这里成功即证明它不依赖登录（曾一度被误标为「必须登录」，见 routes.go 注释）。
 	app, err := downloader.resolveHongguoAppMedia(ctx, videoID)
 	if err != nil {
 		t.Fatalf("app 线路取流失败（批量端点或注册身份策略可能变化）: %v", err)

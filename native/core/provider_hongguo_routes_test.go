@@ -444,27 +444,6 @@ func TestHongguoDrpyEmptyBodyClassifiesAsSignature(t *testing.T) {
 	}
 }
 
-func TestHongguoAppRouteRequiresSession(t *testing.T) {
-	// App 线路在匿名下必然被门禁拒绝，应标记需要登录态
-	for _, route := range hongguoRoutes {
-		if route.Name != hongguoRouteApp {
-			continue
-		}
-		if !route.NeedsSession {
-			t.Fatalf("app 线路应标记 NeedsSession（匿名下必然 200 空 body）")
-		}
-	}
-	// 其它线路不应被误标
-	for _, route := range hongguoRoutes {
-		if route.Name == hongguoRouteApp {
-			continue
-		}
-		if route.NeedsSession {
-			t.Fatalf("线路 %q 不需要登录态，不应标记 NeedsSession", route.Name)
-		}
-	}
-}
-
 func TestHongguoMediaCarriesSourceRoute(t *testing.T) {
 	// media 带上来源线路，播放层探活失败才能回流给线路健康度
 	media := providerMedia{URL: "https://cdn.example.com/a.mp4", Variants: []providerMedia{{URL: "https://cdn.example.com/b.mp4"}}}
