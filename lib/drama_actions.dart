@@ -123,6 +123,57 @@ Future<void> showDramaActions(
   }
 }
 
+Future<String?> showBatchDramaActions(
+  BuildContext context, {
+  required int count,
+}) async {
+  final choices = <(String, String, IconData)>[
+    ('favoriteAdd', '批量加入追剧', Icons.bookmark_add_outlined),
+    ('favoriteRemove', '批量取消追剧', Icons.bookmark_remove_outlined),
+    for (final status in FollowStatus.values)
+      (
+        'status:${status.name}',
+        '标记${status.label}',
+        switch (status) {
+          FollowStatus.planned => Icons.bookmark_add_outlined,
+          FollowStatus.watching => Icons.play_circle_outline,
+          FollowStatus.watched => Icons.check_circle_outline,
+        },
+      ),
+    ('read', '标记更新已读', Icons.mark_email_read_outlined),
+    ('favoriteSourceAdd', '收藏涉及的站源', Icons.star_border_rounded),
+    ('favoriteSourceRemove', '取消收藏涉及的站源', Icons.star_rounded),
+    ('removeHistory', '删除观看记录', Icons.history_toggle_off),
+  ];
+  return showDialog<String>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text('批量操作 · 已选 $count 部'),
+      children: [
+        for (final entry in choices)
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, entry.$1),
+            child: Row(
+              children: [
+                Icon(entry.$3, size: 22),
+                const SizedBox(width: 14),
+                Expanded(child: Text(entry.$2)),
+              ],
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 10, 24, 8),
+          child: Text(
+            '只对已选中且当前用户可以访问的短剧生效；每条操作会跳过状态已经符合的短剧。'
+            '「继续观看」和「下载选集」仍是单部动作，不在批量菜单里。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class DramaActionButton extends StatelessWidget {
   const DramaActionButton({
     super.key,

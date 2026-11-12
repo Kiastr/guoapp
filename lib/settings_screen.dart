@@ -8,10 +8,10 @@ import 'package:path_provider/path_provider.dart';
 
 import 'core_bridge.dart';
 import 'app_theme.dart';
+import 'app_layout.dart';
 import 'background_downloads.dart';
 import 'local_store.dart';
 import 'profiles_screen.dart';
-import 'app_build.dart';
 import 'sources_screen.dart';
 import 'widgets.dart';
 import 'resource_settings_screen.dart';
@@ -20,6 +20,8 @@ import 'webdav_screen.dart';
 import 'diary_service.dart';
 import 'hongguo_login_dialog.dart';
 import 'hongguo_account_sync.dart';
+import 'playback_settings_screen.dart';
+import 'site_verification_list_screen.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -169,6 +171,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Widget _section(BuildContext context, String title) => Padding(
+    padding: const EdgeInsets.fromLTRB(0, 20, 0, 6),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 1),
+        const SizedBox(height: 12),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _chooseDisplayMode() async {
+    final selection = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('界面模式'),
+        children: [
+          RadioGroup<String>(
+            groupValue: widget.store.displayMode,
+            onChanged: (value) => Navigator.pop(context, value),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final mode in const {
+                  'auto': '自动识别设备',
+                  'television': '电视 / 遥控器',
+                  'standard': '手机 / 电脑',
+                }.entries)
+                  RadioListTile<String>(
+                    value: mode.key,
+                    autofocus: mode.key == widget.store.displayMode,
+                    title: Text(mode.value),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selection != null && mounted) {
+      await saveUserChange(
+        context,
+        () => widget.store.setDisplayMode(selection),
+      );
+    }
+  }
+
+  Future<void> _about() async => showAboutDialog(
+    context: context,
+    applicationName: appName,
+    applicationVersion: AppLayout.versionOf(context),
+    applicationIcon: const Icon(
+      Icons.play_circle_filled_rounded,
+      size: 48,
+      color: Color(0xFFFF765F),
+    ),
+    children: const [
+      Text('独立运行，打开即可浏览和播放。观看记录与追剧收藏保存在当前设备。'),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.store,
@@ -180,30 +249,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
+                child: Text(
+                  '按用途分组。播放类偏好也可以在播放器底部「播放设置」里改。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              _section(context, '外观与交互'),
               ListTile(
-                key: const ValueKey('lan-settings'),
-                leading: const Icon(Icons.devices_rounded),
-                title: const Text('设备互联'),
-                subtitle: const Text('局域网自动同步追剧与推送播放'),
+                key: const ValueKey('theme-setting'),
+                leading: const Icon(Icons.palette_outlined),
+                title: const Text('外观主题'),
+                subtitle: Text(AppTheme.label(widget.store.themeMode)),
                 trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => openLanSync(context),
+                onTap: _chooseTheme,
               ),
               ListTile(
-                key: const ValueKey('webdav-settings'),
-                leading: const Icon(Icons.cloud_sync_outlined),
-                title: const Text('WebDAV 同步'),
-                subtitle: const Text('通过 WebDAV 网盘在多设备间同步追剧、观看记录、片源与收藏状态'),
+                key: const ValueKey('display-mode-setting'),
+                leading: const Icon(Icons.devices_outlined),
+                title: const Text('界面模式'),
+                subtitle: const Text('自动识别设备 / 电视遥控器 / 手机电脑'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: _chooseDisplayMode,
+              ),
+              _section(context, '播放'),
+              ListTile(
+                key: const ValueKey('playback-settings'),
+                leading: const Icon(Icons.tune_rounded),
+                title: const Text('播放偏好与画质增强'),
+                subtitle: const Text('倍速、长按倍速、清晰度、弹幕、连播、预加载、画质增强'),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) => WebDavSyncScreen(
-                      store: widget.store,
-                      repository: widget.repository,
-                    ),
+                    builder: (_) => PlaybackSettingsScreen(store: widget.store),
                   ),
                 ),
               ),
+              _section(context, '内容源'),
               if (widget.repository.supportsSourceManagement)
                 ListTile(
                   leading: const Icon(Icons.dns_outlined),
@@ -221,68 +305,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               ListTile(
-                key: const ValueKey('theme-setting'),
-                leading: const Icon(Icons.palette_outlined),
-                title: const Text('外观主题'),
-                subtitle: Text(AppTheme.label(widget.store.themeMode)),
+                key: const ValueKey('site-verification-setting'),
+                leading: const Icon(Icons.verified_user_outlined),
+                title: const Text('站点验证'),
+                subtitle: const Text('Cloudflare 挑战页验证、重新验证与清除凭据'),
                 trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: _chooseTheme,
-              ),
-              ListTile(
-                leading: const Icon(Icons.people_outline),
-                title: const Text('用户管理'),
-                subtitle: Text('当前：${widget.store.profile.name}'),
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) => ProfilesScreen(store: widget.store),
+                    builder: (_) => SiteVerificationListScreen(
+                      repository: widget.repository,
+                    ),
                   ),
                 ),
               ),
-              if (widget.repository.supportsSourceManagement)
-                ListTile(
-                  key: const ValueKey('hongguo-account'),
-                  leading: const Icon(Icons.qr_code_2_rounded),
-                  title: const Text('红果账号'),
-                  subtitle: const Text('扫码登录，用于同步账号收藏与观看记录'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () =>
-                      openHongguoLogin(context, widget.repository),
-                ),
-              if (widget.repository.supportsSourceManagement)
-                SwitchListTile(
-                  key: const ValueKey('hongguo-account-auto-sync'),
-                  secondary: const Icon(Icons.sync_rounded),
-                  title: const Text('打开应用时同步账号'),
-                  subtitle: const Text('启动后自动拉一次收藏与观看记录'),
-                  value: widget.store.hongguoAccountAutoSync,
-                  onChanged: (value) =>
-                      widget.store.setHongguoAccountAutoSync(value),
-                ),
-              if (widget.repository.supportsSourceManagement)
-                ListTile(
-                  key: const ValueKey('hongguo-account-sync-now'),
-                  leading: const Icon(Icons.cloud_download_outlined),
-                  title: const Text('立即同步'),
-                  subtitle: Text(_accountSyncLabel()),
-                  trailing: _syncingAccount
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.chevron_right_rounded),
-                  onTap: _syncingAccount ? null : _syncAccount,
-                ),
-              ListTile(
-                key: const ValueKey('diary-setting'),
-                leading: const Icon(Icons.receipt_long_rounded),
-                title: const Text('播放调试日记'),
-                subtitle: const Text('查看并复制应用运行与播放器的详细事件日志'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => DiaryService.showDiaryDialog(context),
-              ),
-              if (widget.store.canDownload)
+              _section(context, '下载与存储'),
+              if (widget.store.canDownload) ...[
                 ListTile(
                   leading: const Icon(Icons.download_outlined),
                   title: const Text('下载偏好'),
@@ -296,7 +334,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
-              if (widget.store.canDownload)
                 ListTile(
                   leading: const Icon(Icons.folder_outlined),
                   title: const Text('下载目录与空间'),
@@ -311,7 +348,116 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
+              ],
               if (widget.store.profile.admin) ...[
+                SwitchListTile(
+                  value: widget.store.autoExport,
+                  title: const Text('下载完成后自动导出 Emby'),
+                  subtitle: const Text(
+                    '在下载目录的 exports 中生成视频和海报 URL 元数据，可将该目录加入 Emby 媒体库。',
+                  ),
+                  onChanged: _busy
+                      ? null
+                      : (value) async {
+                          setState(() => _busy = true);
+                          await BackgroundDownloads.ensureStarted();
+                          if (!context.mounted) return;
+                          await saveUserChange(
+                            context,
+                            () => widget.store.setAutoExport(value),
+                          );
+                          if (mounted) setState(() => _busy = false);
+                        },
+                ),
+                SwitchListTile(
+                  value: widget.store.exportPosters,
+                  title: const Text('同时导出海报文件'),
+                  subtitle: const Text(
+                    '默认只写海报 URL。源站海报需要解密或外部读取失败时可开启。',
+                  ),
+                  onChanged: _busy
+                      ? null
+                      : (value) => saveUserChange(
+                          context,
+                          () => widget.store.setExportPosters(value),
+                        ),
+                ),
+              ],
+              _section(context, '账号与同步'),
+              ListTile(
+                key: const ValueKey('lan-settings'),
+                leading: const Icon(Icons.devices_rounded),
+                title: const Text('设备互联'),
+                subtitle: const Text('局域网自动同步追剧与推送播放'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => openLanSync(context),
+              ),
+              ListTile(
+                key: const ValueKey('webdav-settings'),
+                leading: const Icon(Icons.cloud_sync_outlined),
+                title: const Text('WebDAV 同步'),
+                subtitle: const Text(
+                  '通过 WebDAV 网盘在多设备间同步追剧、观看记录、片源与收藏状态',
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => WebDavSyncScreen(
+                      store: widget.store,
+                      repository: widget.repository,
+                    ),
+                  ),
+                ),
+              ),
+              if (widget.repository.supportsSourceManagement) ...[
+                ListTile(
+                  key: const ValueKey('hongguo-account'),
+                  leading: const Icon(Icons.qr_code_2_rounded),
+                  title: const Text('红果账号'),
+                  subtitle: const Text('扫码登录，用于同步账号收藏与观看记录'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => openHongguoLogin(context, widget.repository),
+                ),
+                SwitchListTile(
+                  key: const ValueKey('hongguo-account-auto-sync'),
+                  secondary: const Icon(Icons.sync_rounded),
+                  value: widget.store.hongguoAccountAutoSync,
+                  title: const Text('打开应用时同步账号'),
+                  subtitle: const Text('启动后自动拉一次收藏与观看记录'),
+                  onChanged: (value) => saveUserChange(
+                    context,
+                    () => widget.store.setHongguoAccountAutoSync(value),
+                  ),
+                ),
+                ListTile(
+                  key: const ValueKey('hongguo-account-sync-now'),
+                  leading: const Icon(Icons.cloud_download_outlined),
+                  title: const Text('立即同步'),
+                  subtitle: Text(_accountSyncLabel()),
+                  trailing: _syncingAccount
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chevron_right_rounded),
+                  onTap: _syncingAccount ? null : _syncAccount,
+                ),
+              ],
+              ListTile(
+                leading: const Icon(Icons.people_outline),
+                title: const Text('用户管理'),
+                subtitle: Text('当前：${widget.store.profile.name}'),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => ProfilesScreen(store: widget.store),
+                  ),
+                ),
+              ),
+              _section(context, '高级与维护'),
+              if (widget.store.profile.admin)
                 ListTile(
                   leading: const Icon(Icons.settings_ethernet_rounded),
                   title: const Text('网络与资源'),
@@ -327,38 +473,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
-                SwitchListTile(
-                  value: widget.store.autoExport,
-                  title: const Text('下载完成后自动导出 Emby'),
-                  subtitle: const Text(
-                    '在下载目录的 exports 中生成视频和海报 URL 元数据，可将该目录加入 Emby 媒体库。',
-                  ),
-                  onChanged: _busy
-                      ? null
-                      : (value) async {
-                          try {
-                            if (value) {
-                              await BackgroundDownloads.ensureStarted();
-                            }
-                            await widget.store.setAutoExport(value);
-                          } catch (error) {
-                            if (mounted) {
-                              setState(() => _message = error.toString());
-                            }
-                          }
-                        },
-                ),
-                SwitchListTile(
-                  value: widget.store.exportPosters,
-                  title: const Text('同时导出海报文件'),
-                  subtitle: const Text('默认只写海报 URL。源站海报需要解密或外部读取失败时可开启。'),
-                  onChanged: _busy
-                      ? null
-                      : (value) => saveUserChange(
-                          context,
-                          () => widget.store.setExportPosters(value),
-                        ),
-                ),
+              ListTile(
+                key: const ValueKey('diary-setting'),
+                leading: const Icon(Icons.receipt_long_rounded),
+                title: const Text('播放调试日记'),
+                subtitle: const Text('查看并复制应用运行与播放器的详细事件日志'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => DiaryService.showDiaryDialog(context),
+              ),
+              if (widget.store.profile.admin) ...[
                 ListTile(
                   leading: const Icon(Icons.backup_outlined),
                   title: const Text('导出配置备份'),
@@ -371,10 +494,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: _busy ? null : () => _backup(true),
                 ),
               ],
+              ListTile(
+                leading: const Icon(Icons.info_outline_rounded),
+                title: Text('关于$appName'),
+                onTap: _about,
+              ),
               if (Platform.isIOS)
                 const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text('iOS 下载和媒体处理需要保持应用在前台；切到后台会暂停，回到前台后可继续。'),
+                  child: Text(
+                    'iOS 下载和媒体处理需要保持应用在前台；切到后台会暂停，回到前台后可继续。',
+                  ),
                 ),
               if (_busy) const LinearProgressIndicator(),
               if (_message != null)

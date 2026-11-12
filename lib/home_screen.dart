@@ -33,6 +33,7 @@ import 'sources_screen.dart';
 import 'batch_download_screen.dart';
 import 'batch_downloads.dart';
 import 'drama_actions.dart';
+import 'follow_state.dart';
 import 'library_updater.dart';
 import 'saved_library.dart';
 
@@ -997,16 +998,12 @@ class _HomeScreenState extends State<HomeScreen> {
   });
 
   void _selectDrama(Drama drama) {
-    if (!widget.store.canDownload ||
-        !widget.repository.supportsDownloads ||
-        !widget.store.allowsSource(drama.source)) {
-      return;
-    }
+    if (!widget.store.allowsSource(drama.source)) return;
     if (!_selectedDramas.containsKey(drama.id) &&
         _selectedDramas.length >= BatchDownloads.maxDramas) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('一次最多选择 50 部短剧，请分批下载')));
+      ).showSnackBar(const SnackBar(content: Text('一次最多选择 50 部短剧，请分批处理')));
       return;
     }
     setState(() {
@@ -1032,6 +1029,92 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _batchAction() async {
+    if (_selectedDramas.isEmpty) return;
+    final choice = await showBatchDramaActions(
+      context,
+      count: _selectedDramas.length,
+    );
+    if (choice == null || !mounted) return;
+    final store = widget.store;
+    final epoch = store.profileEpoch;
+    final dramas = _selectedDramas.values
+        .where((drama) => store.allowsSource(drama.source))
+        .toList();
+    final label = switch (choice) {
+      'favoriteAdd' => '批量加入追剧',
+      'favoriteRemove' => '批量取消追剧',
+      'read' => '标记更新已读',
+      'favoriteSourceAdd' => '收藏站源',
+      'favoriteSourceRemove' => '取消收藏站源',
+      'removeHistory' => '删除观看记录',
+      _ when choice.startsWith('status:') =>
+        '标记${FollowStatus.values.firstWhere((value) => choice == 'status:${value.name}').label}',
+      _ => '批量操作',
+    };
+    var applied = 0;
+    try {
+      if (choice.startsWith('status:')) {
+        final status = FollowStatus.values.firstWhere(
+          (value) => choice == 'status:${value.name}',
+        );
+        for (final drama in dramas) {
+          await store.setFollowStatus(drama, status);
+          applied++;
+        }
+      } else {
+        switch (choice) {
+          case 'favoriteAdd':
+            for (final drama in dramas) {
+              if (store.following(drama.id) != null) continue;
+              await store.toggleFavorite(drama);
+              applied++;
+            }
+          case 'favoriteRemove':
+            for (final drama in dramas) {
+              if (store.following(drama.id) == null) continue;
+              await store.toggleFavorite(drama);
+              applied++;
+            }
+          case 'read':
+            for (final drama in dramas) {
+              if (store.following(drama.id)?.hasUpdates != true) continue;
+              await store.markUpdatesRead(drama.id);
+              applied++;
+            }
+          case 'favoriteSourceAdd':
+          case 'favoriteSourceRemove':
+            final add = choice == 'favoriteSourceAdd';
+            final ids = <String>{for (final drama in dramas) drama.source};
+            for (final id in ids) {
+              if (store.isFavoriteSource(id) == add) continue;
+              await store.toggleFavoriteSource(id);
+              applied++;
+            }
+          case 'removeHistory':
+            for (final drama in dramas) {
+              if (store.watched(drama.id) == null) continue;
+              await store.removeHistory(drama.id);
+              applied++;
+            }
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('批量操作失败：$error')));
+      }
+      return;
+    }
+    if (!mounted || epoch != store.profileEpoch) return;
+    _cancelSelection();
+    final unit = choice.startsWith('favoriteSource') ? '个站源' : '部短剧';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label：已处理 $applied $unit')));
+  }
+
   void _dramaActions(Drama drama) => showDramaActions(
     context,
     drama: drama,
@@ -1051,8 +1134,7 @@ class _HomeScreenState extends State<HomeScreen> {
     VoidCallback? onFocus,
   }) {
     final following = widget.store.following(drama.id);
-    final canSelect =
-        widget.store.canDownload && widget.repository.supportsDownloads;
+    final canSelect = widget.store.allowsSource(drama.source);
     return DramaTile(
       key: ValueKey(drama.id),
       drama: drama,
@@ -1236,12 +1318,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         : _openRankings,
                     icon: const Icon(Icons.leaderboard_outlined),
                   ),
-                  if (!_showRecommendations &&
-                      widget.store.canDownload &&
-                      widget.repository.supportsDownloads)
+                  if (!_showRecommendations)
                     IconButton(
                       key: const ValueKey('select-catalog-dramas'),
-                      tooltip: '多选下载',
+                      tooltip: '多选',
                       onPressed: () => setState(() => _selectionMode = true),
                       icon: const Icon(Icons.checklist_rounded),
                     ),
@@ -1915,6 +1995,9 @@ class _HomeScreenState extends State<HomeScreen> {
           minimum: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: LayoutBuilder(
             builder: (context, constraints) {
+              final canDownload =
+                  widget.store.canDownload &&
+                  widget.repository.supportsDownloads;
               final summary = Semantics(
                 liveRegion: true,
                 child: Column(
@@ -1922,7 +2005,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      count == 0 ? '点选要下载的短剧' : '已选 $count 部',
+                      count == 0 ? '长按卡片或点选短剧' : '已选 $count 部',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -1930,8 +2013,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 4),
                     Text(
                       count == 0
-                          ? '最多 ${BatchDownloads.maxDramas} 部'
-                          : '下一步选择分集和画质',
+                          ? '可批量追剧、标记状态、清理记录${canDownload ? '，或批量下载' : ''}'
+                          : '选「批量操作」处理选中项${canDownload ? '，或点「下一步」下载' : ''}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -1939,31 +2022,53 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               );
-              final next = FilledButton(
-                key: const ValueKey('download-selected-dramas'),
-                onPressed: count == 0 ? null : _downloadSelected,
-                style: FilledButton.styleFrom(
+              final batch = OutlinedButton.icon(
+                key: const ValueKey('batch-drama-actions'),
+                onPressed: count == 0 ? null : _batchAction,
+                icon: const Icon(Icons.more_horiz_rounded, size: 18),
+                label: const Text('批量操作'),
+                style: OutlinedButton.styleFrom(
                   minimumSize: const Size(96, 48),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
+                    horizontal: 16,
                     vertical: 12,
                   ),
                 ),
-                child: const Text('下一步'),
+              );
+              final next = canDownload
+                  ? FilledButton(
+                      key: const ValueKey('download-selected-dramas'),
+                      onPressed: count == 0 ? null : _downloadSelected,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(96, 48),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: const Text('下一步'),
+                    )
+                  : null;
+              final actions = Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [batch, if (next != null) next],
               );
               if (constraints.maxWidth < 320 ||
                   MediaQuery.textScalerOf(context).scale(14) > 21) {
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [summary, const SizedBox(height: 12), next],
+                  children: [summary, const SizedBox(height: 12), actions],
                 );
               }
               return Row(
                 children: [
                   Expanded(child: summary),
                   const SizedBox(width: 16),
-                  next,
+                  actions,
                 ],
               );
             },

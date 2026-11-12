@@ -27,6 +27,7 @@ class PlayerControls extends StatefulWidget {
     required this.onEpisodes,
     required this.onSpeed,
     required this.onQuality,
+    required this.onSettings,
     required this.speed,
     required this.qualityLabel,
     required this.onFocusSurface,
@@ -59,6 +60,7 @@ class PlayerControls extends StatefulWidget {
   final Future<void> Function() onEpisodes;
   final Future<void> Function() onSpeed;
   final Future<void> Function() onQuality;
+  final Future<void> Function() onSettings;
   final double speed;
   final String qualityLabel;
   final VoidCallback onFocusSurface;
@@ -691,24 +693,6 @@ class _PlayerControlsState extends State<PlayerControls> {
     );
   }
 
-  /// 「填充」按钮：适应 → 裁剪铺满 → 拉伸铺满 循环切换。
-  ///
-  /// 竖屏剧（9:16）在横屏容器里用 `contain` 只能占中间窄窄一条，
-  /// 上下全是黑边；`cover` 按高度铺满、裁掉左右，`fill` 直接拉伸铺满。
-  Widget _fillModeTool(Key key) {
-    final (icon, label) = switch (widget.fillMode) {
-      BoxFit.cover => (Icons.crop_rounded, '裁剪铺满'),
-      BoxFit.fill => (Icons.open_in_full_rounded, '拉伸铺满'),
-      _ => (Icons.fit_screen_rounded, '适应屏幕'),
-    };
-    return _toolIcon(
-      key: key,
-      tooltip: '画面：$label',
-      icon: icon,
-      onPressed: widget.enabled ? widget.onFillMode : null,
-    );
-  }
-
   Widget _toolIcon({
     required Key key,
     required String tooltip,
@@ -809,49 +793,90 @@ class _PlayerControlsState extends State<PlayerControls> {
   Widget _toolGroup(List<Widget> children) =>
       Row(mainAxisSize: MainAxisSize.min, children: children);
 
-  Widget _lanPushTool(Key key) {
-    final link = LanController.current;
-    if (link == null) return const SizedBox.shrink();
-    return AnimatedBuilder(
-      animation: link,
-      builder: (context, _) => _toolButton(
-        key: key,
-        tooltip: link.connection == null
-            ? '推送'
-            : '推送到 ${link.connection!.peer.name}',
-        onPressed: widget.enabled ? () => _panel(widget.onPush!) : null,
-        child: link.pushing
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(
-                link.connection == null
-                    ? Icons.cast_rounded
-                    : Icons.cast_connected_rounded,
-                size: 22,
-              ),
+  Widget _clusteredToolRow(List<Widget> tools) {
+    if (tools.isEmpty) return const SizedBox.shrink();
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [_toolGroup(tools)],
+    );
+  }
+
+  Widget _overflowTool({
+    required bool showPush,
+    required bool showCompare,
+    required bool showVolume,
+    required double volume,
+  }) {
+    final enhancement = widget.enhancement;
+    final fillLabel = switch (widget.fillMode) {
+      BoxFit.cover => '裁剪铺满',
+      BoxFit.fill => '拉伸铺满',
+      _ => '适应屏幕',
+    };
+    final items = <PopupMenuEntry<String>>[
+      if (showPush && LanController.current != null)
+        const PopupMenuItem(value: 'push', child: Text('推送到设备')),
+      if (showCompare && (enhancement?.canCompare ?? false))
+        PopupMenuItem(
+          value: 'compare',
+          child: Text(enhancement!.comparing ? '恢复增强画面' : '原画对比'),
+        ),
+      if (showVolume)
+        PopupMenuItem(
+          value: 'volume',
+          child: Text(volume == 0 ? '音量（已静音）' : '音量 · ${volume.round()}%'),
+        ),
+      if (widget.onFillMode != null)
+        PopupMenuItem(value: 'fill', child: Text('画面：$fillLabel（点击切换）')),
+      if (widget.onPictureInPicture != null)
+        const PopupMenuItem(value: 'pip', child: Text('画中画')),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
+    return PopupMenuButton<String>(
+      key: const ValueKey('player-overflow'),
+      tooltip: '更多播放操作',
+      onSelected: (value) => _onOverflowSelected(value, volume),
+      itemBuilder: (_) => items,
+      child: Container(
+        width: 48,
+        height: 48,
+        alignment: Alignment.center,
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: .22),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white.withValues(alpha: .08)),
+          ),
+          child: const Icon(
+            Icons.more_horiz_rounded,
+            size: 22,
+            color: Colors.white,
+          ),
+        ),
       ),
     );
   }
 
-  Widget _clusteredToolRow(List<Widget> tools) {
-    if (tools.isEmpty) return const SizedBox.shrink();
-    if (tools.length <= 5) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [_toolGroup(tools)],
-      );
+  Future<void> _onOverflowSelected(String value, double volume) async {
+    switch (value) {
+      case 'push':
+        if (widget.onPush != null) await _panel(widget.onPush!);
+      case 'compare':
+        widget.interactions.cancel();
+        await widget.enhancement?.toggleCompare();
+        _show();
+      case 'volume':
+        await _panel(() => _openVolume(volume));
+      case 'fill':
+        widget.onFillMode?.call();
+        _show();
+      case 'pip':
+        if (widget.onPictureInPicture != null) {
+          await _panel(widget.onPictureInPicture!);
+        }
     }
-    final leftCount = tools.length ~/ 2;
-    return Row(
-      children: [
-        _toolGroup(tools.take(leftCount).toList()),
-        const Spacer(),
-        _toolGroup(tools.skip(leftCount).toList()),
-      ],
-    );
   }
 
   Widget _danmakuTool() => _toolButton(
@@ -905,7 +930,6 @@ class _PlayerControlsState extends State<PlayerControls> {
           width: 52,
         ),
       ],
-      if (showPush) _lanPushTool(const ValueKey('fullscreen-lan-push')),
       if (showEpisodes)
         _toolIcon(
           key: const ValueKey('player-episodes'),
@@ -913,31 +937,18 @@ class _PlayerControlsState extends State<PlayerControls> {
           icon: Icons.grid_view_rounded,
           onPressed: widget.enabled ? () => _panel(widget.onEpisodes) : null,
         ),
-      if (showCompare) _enhancementCompareButton(),
-      if (showVolume)
-        _toolIcon(
-          key: const ValueKey('player-volume'),
-          tooltip: '音量',
-          icon: volume == 0
-              ? Icons.volume_off_rounded
-              : Icons.volume_up_rounded,
-          onPressed: widget.enabled
-              ? () => _panel(() => _openVolume(volume))
-              : null,
-        ),
-      // 「填充」放在工具行末尾：插在中间会改变遥控器左右键的遍历路径，
-      // TV 上「从倍速往右两下到选集」的习惯会被打断。
-      if (widget.onFillMode != null)
-        _fillModeTool(const ValueKey('player-fill-mode')),
-      if (widget.onPictureInPicture != null)
-        _toolIcon(
-          key: const ValueKey('player-picture-in-picture'),
-          tooltip: '画中画',
-          icon: Icons.picture_in_picture_alt_rounded,
-          onPressed: widget.enabled
-              ? () => _panel(widget.onPictureInPicture!)
-              : null,
-        ),
+      _toolIcon(
+        key: const ValueKey('player-settings'),
+        tooltip: '播放设置',
+        icon: Icons.tune_rounded,
+        onPressed: widget.enabled ? () => _panel(widget.onSettings) : null,
+      ),
+      _overflowTool(
+        showPush: showPush,
+        showCompare: showCompare,
+        showVolume: showVolume,
+        volume: volume,
+      ),
       _toolIcon(
         key: const ValueKey('player-fullscreen'),
         tooltip: fullscreen ? '退出全屏' : '旋转与全屏',
@@ -969,8 +980,6 @@ class _PlayerControlsState extends State<PlayerControls> {
         onPressed: widget.enabled ? () => _panel(widget.onQuality) : null,
         width: 52,
       ),
-      if (widget.onPush != null)
-        _lanPushTool(const ValueKey('fullscreen-lan-push')),
       if (fullscreen)
         _toolIcon(
           key: const ValueKey('player-episodes'),
@@ -978,17 +987,18 @@ class _PlayerControlsState extends State<PlayerControls> {
           icon: Icons.grid_view_rounded,
           onPressed: widget.enabled ? () => _panel(widget.onEpisodes) : null,
         ),
-      if (widget.onPictureInPicture != null)
-        _toolIcon(
-          key: const ValueKey('player-picture-in-picture'),
-          tooltip: '画中画',
-          icon: Icons.picture_in_picture_alt_rounded,
-          onPressed: widget.enabled
-              ? () => _panel(widget.onPictureInPicture!)
-              : null,
-        ),
-      if (widget.onFillMode != null)
-        _fillModeTool(const ValueKey('player-fill-mode')),
+      _toolIcon(
+        key: const ValueKey('player-settings'),
+        tooltip: '播放设置',
+        icon: Icons.tune_rounded,
+        onPressed: widget.enabled ? () => _panel(widget.onSettings) : null,
+      ),
+      _overflowTool(
+        showPush: widget.onPush != null,
+        showCompare: false,
+        showVolume: false,
+        volume: widget.player.state.volume,
+      ),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 0),
@@ -1105,30 +1115,6 @@ class _PlayerControlsState extends State<PlayerControls> {
               child: child,
             ),
           ),
-    );
-  }
-
-  Widget _enhancementCompareButton() {
-    final enhancement = widget.enhancement;
-    if (enhancement == null) return const SizedBox.shrink();
-    return AnimatedBuilder(
-      animation: enhancement,
-      builder: (_, _) {
-        if (!enhancement.canCompare) return const SizedBox.shrink();
-        return _toolIcon(
-          key: const ValueKey('player-enhancement-compare'),
-          tooltip: enhancement.comparing ? '原画对比中，点击恢复增强' : '原画对比',
-          icon: Icons.compare_rounded,
-          onPressed: widget.enabled
-              ? () {
-                  widget.interactions.cancel();
-                  unawaited(enhancement.toggleCompare());
-                  _show();
-                }
-              : null,
-          selected: enhancement.comparing,
-        );
-      },
     );
   }
 
