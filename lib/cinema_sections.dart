@@ -220,14 +220,18 @@ class _ContinueCard extends StatelessWidget {
   final WatchEntry entry;
   final VoidCallback onTap;
 
-  // 设计稿 wide-art 的几组低饱和深色渐变。按剧 id 稳定取色，同一部剧每次
-  // 出现颜色一致；不使用真实封面，理由见文件头注释。
+  // [+193] 对齐设计稿 wide-art 的 arts 六组三色渐变（145deg / 中段 55%）。
+  // 原来用的是「深棕→近黑」双色暗渐变，叠上底部 70% 黑遮罩后整块几乎
+  // 发黑，实机看起来像没有图案的纯色板；换成设计稿的亮色三色渐变后，
+  // 上半部能明显看出色彩层次。按剧 id 稳定取色，同一部剧每次颜色一致；
+  // 不使用真实封面，理由见文件头注释（interface_test 跨 tab 数封面）。
   static const _arts = <List<Color>>[
-    [Color(0xFF6B4A32), Color(0xFF2A1C14)],
-    [Color(0xFF3B4A63), Color(0xFF161E2B)],
-    [Color(0xFF3D5A4C), Color(0xFF16231D)],
-    [Color(0xFF6A3B46), Color(0xFF26151A)],
-    [Color(0xFF5C4A6B), Color(0xFF201B2B)],
+    [Color(0xFF2D4059), Color(0xFF708090), Color(0xFFB5835A)],
+    [Color(0xFF361522), Color(0xFF914F53), Color(0xFFD4A373)],
+    [Color(0xFF243B35), Color(0xFF52685B), Color(0xFFB08968)],
+    [Color(0xFF22223B), Color(0xFF4A4E69), Color(0xFF9A8C98)],
+    [Color(0xFF432818), Color(0xFF99582A), Color(0xFFBB9457)],
+    [Color(0xFF293241), Color(0xFF3D5A80), Color(0xFF98C1D9)],
   ];
 
   @override
@@ -261,6 +265,8 @@ class _ContinueCard extends StatelessWidget {
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                             colors: colors,
+                            // 中段色落在 55%，和设计稿 145deg 渐变一致。
+                            stops: const [0, .55, 1],
                           ),
                         ),
                       ),

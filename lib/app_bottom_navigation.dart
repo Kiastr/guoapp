@@ -30,7 +30,11 @@ class AppBottomNavigation extends StatelessWidget {
 
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      // [+193] 浮岛矩形按设计稿收缩：这里把底部外边距 12→20，配合内层
+      // padding 7→3 让卡片同时变矮 8。两者增减量相等，slot 总高不变——
+      // 顶边距屏底保持 86 不动、底边上提 8、高度从 74 收到 66，修掉
+      // 「下限比设计稿低」的观感。数值含图标文字基线，非设计稿 px 绝对值。
+      minimum: const EdgeInsets.fromLTRB(16, 0, 16, 20),
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(CinemaTokens.navigationRadius),
@@ -59,7 +63,10 @@ class AppBottomNavigation extends StatelessWidget {
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+                // [+193] 纵向内边距 7→3，浮岛卡片高度 74→66；配合外层
+                // minimum bottom 12→20，slot 总高 86 不变：顶边不动、底边
+                // 上提 8。图标区本身 minHeight 54 不变（theme_test 断言 ≥48）。
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 child: Row(
                   children: [
                     for (final (index, destination) in destinations.indexed)

@@ -1468,6 +1468,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           body: SafeArea(
             top: false,
+            // [+193] 手机端正常态是半透明磨砂浮岛，必须让 body 内容延伸到浮岛
+            // 背后，BackdropFilter 才有海报可糊、也不会露出一条横贯全宽的纯
+            // scaffoldBackgroundColor（深色纯黑 / 浅色纯白）。extendBody 已经
+            // 把 body 高度撑到浮岛背后，但 SafeArea 默认 bottom=true 会按注入
+            // 的 padding.bottom(=浮岛高度) 再撑一条等高空白，正好把它抵消掉，
+            // 这就是「底部栏下方一道横贯纯黑/白背景」的根因。各 tab 滚动区末尾
+            // 都有 floatingNavClearance 留白，关掉后最后一行仍能滚到浮岛上方。
+            // 桌面 / 电视 / 多选态没有浮岛（或 _selectionBar 是实心条），保留
+            // 底部避让，避免内容伸进系统手势栏。
+            bottom: desktop || television || _selectionMode,
             child: Row(
               children: [
                 if (television) ...[
