@@ -160,8 +160,9 @@ class CinemaTextLink extends StatelessWidget {
 
 /// 「继续观看」横卡区：标题行 + 横向滚动的 16:10 卡片。
 ///
-/// [entries] 由调用方筛好（未看完、按更新时间倒序、最多 2 条），组件本身不碰
-/// LocalStore，保持纯展示；这样 widget test 里可以直接喂假数据。
+/// [entries] 由调用方筛好（未看完、按更新时间倒序），组件本身不碰 LocalStore，
+/// 保持纯展示；这样 widget test 里可以直接喂假数据。整体条数由可用宽度决定
+/// （见下方 LayoutBuilder），调用方不再截断。
 /// 无记录时返回零尺寸，不占首屏一行空白。
 class ContinueWatchingStrip extends StatelessWidget {
   const ContinueWatchingStrip({
@@ -193,9 +194,10 @@ class ContinueWatchingStrip extends StatelessWidget {
           ],
         ),
         // [+195] 横卡数量与宽度按可用宽度算，不再固定 2 条 / 174 宽。
-        // 之前竖屏 2 条还能凑满一行，横屏平板上右侧会空出一大片；现在
-        // 竖屏仍是 2 条但铺满（每张 171），平板横屏约 5 条、超宽屏封顶
-        // 8 条，卡片等宽均分可用宽度。实际条数仍受未看完记录数限制。
+        // 之前竖屏 2 条还能凑满一行，横屏平板上右侧会空出一大片；现在竖屏
+        // 仍是 2 条但铺满，平板横屏约 5 条、超宽屏封顶 8 条，卡片等宽均分。
+        // [+196] 卡片**等比缩放**：宽度变了高度按 174×106 的比例跟着变，
+        // 不做「宽度拉长、高度不动」的拉伸（那样横屏会变成又扁又长的一条）。
         LayoutBuilder(
           builder: (context, constraints) {
             final available =
@@ -203,10 +205,11 @@ class ContinueWatchingStrip extends StatelessWidget {
             // 目标卡片宽 174 + 间距 12（设计稿 `wide-art` 尺寸）。
             final target = ((available + 12) / (174 + 12)).floor().clamp(2, 8);
             // 宽度按**目标列数**均分而不是实际条数：只有 2 条历史时也保持
-            // 正常卡片宽度左对齐，不会把两张卡拉成超宽色块。
+            // 正常卡片宽度左对齐，不会把两张卡拉成超宽色块。上限 200 是
+            // 防止电视/超宽屏把卡片放得比设计稿大太多。
             final cardWidth = ((available - 12 * (target - 1)) / target).clamp(
               140.0,
-              240.0,
+              200.0,
             );
             final count = math.min(target, entries.length);
             return SingleChildScrollView(
@@ -273,6 +276,9 @@ class _ContinueCard extends StatelessWidget {
         ? (entry.position / entry.duration).clamp(0.0, 1.0)
         : 0.0;
     final rounded = BorderRadius.circular(CinemaTokens.posterRadius);
+    // [+196] 海报高度随宽度等比（设计稿 174×106）。宽度变化时比例不变，
+    // 不会出现「宽度拉长、高度固定 106」的横向拉伸。
+    final artHeight = width * 106 / 174;
     return SizedBox(
       width: width,
       child: Column(
@@ -285,7 +291,7 @@ class _ContinueCard extends StatelessWidget {
             child: InkWell(
               onTap: onTap,
               child: SizedBox(
-                height: 106,
+                height: artHeight,
                 child: Stack(
                   children: [
                     Positioned.fill(
