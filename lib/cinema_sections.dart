@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'cinema_tokens.dart';
+import 'core_bridge.dart';
 import 'models.dart';
+import 'widgets.dart';
 
 // A · 影院首页的「区块标题行 / 文字链接 / 继续观看横卡」。
 //
@@ -14,10 +16,10 @@ import 'models.dart';
 // 一律走 ColorScheme 语义色（onSurfaceVariant / primary），浅色主题下也能读。
 // 业务语义（错误色、VIP 色等）不在这里定义。
 //
-// 【测试约束】继续观看横卡刻意**不使用 DramaCover / DramaTile**：设计稿的
-// wide-art 本来就是渐变色块，且 interface_test 会用 find.byType(DramaCover)
-// 跨 tab 数封面，若横卡里塞真实封面会把计数从 3 变成 5，断言会挂。
-// 同理横卡不发起任何网络请求，纯本地绘制。
+// 【封面】横卡用 CachedCoverImage 拉真实海报（与目录卡共用同一套本地缓存
+// 与并发闸门），渐变块只作占位 / 兜底：无封面、加载中、加载失败时露出。
+// 刻意不套 DramaCover：interface_test 会用 find.byType(DramaCover) 跨 tab
+// 数封面，横卡引入该类型会把计数从 3 变成 5，断言会挂。
 
 /// 区块标题行：左侧标题，右侧一组文字超链接按钮。
 ///
@@ -159,18 +161,20 @@ class CinemaTextLink extends StatelessWidget {
 /// 「继续观看」横卡区：标题行 + 横向滚动的 16:10 卡片。
 ///
 /// [entries] 由调用方筛好（未看完、按更新时间倒序），组件本身不碰 LocalStore，
-/// 保持纯展示；这样 widget test 里可以直接喂假数据。列数由可用宽度决定
+/// 保持纯展示；[repository] 只用于取封面缓存。列数由可用宽度决定
 /// （见下方 LayoutBuilder），条目本身不截断，多出的可横向滑动。
 /// 无记录时返回零尺寸，不占首屏一行空白。
 class ContinueWatchingStrip extends StatelessWidget {
   const ContinueWatchingStrip({
     super.key,
     required this.entries,
+    required this.repository,
     required this.onOpen,
     required this.onViewAll,
   });
 
   final List<WatchEntry> entries;
+  final AppRepository repository;
   final ValueChanged<Drama> onOpen;
   final VoidCallback onViewAll;
 
@@ -226,6 +230,7 @@ class ContinueWatchingStrip extends StatelessWidget {
                       child: _ContinueCard(
                         entry: entry,
                         width: cardWidth,
+                        repository: repository,
                         onTap: () => onOpen(entry.drama),
                       ),
                     ),
@@ -243,6 +248,7 @@ class _ContinueCard extends StatelessWidget {
   const _ContinueCard({
     required this.entry,
     required this.width,
+    required this.repository,
     required this.onTap,
   });
 
@@ -250,6 +256,9 @@ class _ContinueCard extends StatelessWidget {
 
   /// [+195] 由 [ContinueWatchingStrip] 按可用宽度均分传入（原来固定 174）。
   final double width;
+
+  /// [+198] 取封面缓存用；海报只做展示，不改动剧集数据。
+  final AppRepository repository;
 
   final VoidCallback onTap;
 
@@ -279,6 +288,18 @@ class _ContinueCard extends StatelessWidget {
     // [+196] 海报高度随宽度等比（设计稿 174×106）。宽度变化时比例不变，
     // 不会出现「宽度拉长、高度固定 106」的横向拉伸。
     final artHeight = width * 106 / 174;
+    // [+198] 渐变块只作封面占位：加载中、无封面、加载失败时露出。
+    final fallback = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: colors,
+          // 中段色落在 55%，和设计稿 145deg 渐变一致。
+          stops: const [0, .55, 1],
+        ),
+      ),
+    );
     return SizedBox(
       width: width,
       child: Column(
@@ -294,19 +315,19 @@ class _ContinueCard extends StatelessWidget {
                 height: artHeight,
                 child: Stack(
                   children: [
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: colors,
-                            // 中段色落在 55%，和设计稿 145deg 渐变一致。
-                            stops: const [0, .55, 1],
+                    // 真实海报（本地缓存，失败时自动回落到下面的渐变）。
+                    Positioned.fill(child: fallback),
+                    if (entry.drama.id.isNotEmpty)
+                      Positioned.fill(
+                        child: CachedCoverImage(
+                          key: ValueKey(
+                            '${entry.drama.id}\u0000${entry.drama.cover}',
                           ),
+                          drama: entry.drama,
+                          repository: repository,
+                          placeholder: fallback,
                         ),
                       ),
-                    ),
                     // 右上角柔光 + 底部渐深，保证白色文字在任何一组底色上可读。
                     Positioned.fill(
                       child: DecoratedBox(

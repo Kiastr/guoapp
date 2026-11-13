@@ -2042,16 +2042,17 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// [+192] 「继续观看」横卡：最近未看完的两条，纯本地绘制、不发网络请求，
-  /// 也不使用 DramaCover / DramaTile（见 cinema_sections.dart 文件头注释：
-  /// interface_test 会跨 tab 数封面）。无记录时组件返回零尺寸。
-  /// 目录态（手机滚动区）与推荐态（作为 leading sliver）都复用它。
+  /// [+192] 「继续观看」横卡：最近未看完的记录。封面走 CachedCoverImage
+  /// 的本地缓存，加载中 / 失败时回落渐变块；仍然不使用 DramaCover /
+  /// DramaTile（见 cinema_sections.dart 文件头注释：interface_test 会跨 tab
+  /// 数封面）。无记录时组件返回零尺寸，目录态与推荐态都复用它。
   Widget _continueWatching() => ContinueWatchingStrip(
     key: const ValueKey('continue-watching-strip'),
     // [+195] 不再在这里 take(2)：横屏平板 / 桌面一屏能放 5~8 张，固定 2 条
     // 会让右侧空一大片。条数与卡片宽度由横卡组件按可用宽度自己算，只取
     // 未看完的记录（继续观看的语义不变）。
     entries: widget.store.history.where((entry) => !entry.finished).toList(),
+    repository: widget.repository,
     onOpen: (drama) => _openDrama(drama, resume: true),
     onViewAll: () => _changeTab(2),
   );
