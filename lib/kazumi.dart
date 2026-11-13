@@ -15,6 +15,7 @@ class KazumiRuleSite {
     this.host = '',
     this.sourceUrl = '',
     this.webview = false,
+    this.playApi = false,
     this.count = 0,
   });
 
@@ -34,6 +35,9 @@ class KazumiRuleSite {
   /// 嗅探才能拿到真实视频地址（下载链路拿不到）。
   final bool webview;
 
+  /// [+199] 规则带 playApiConfig：Go 侧能把播放页换成直链，不必嗅探。
+  final bool playApi;
+
   /// 本机已缓存的剧集数（站源管理里展示）。
   final int count;
 
@@ -49,9 +53,12 @@ class KazumiRuleSite {
 
   String get versionLabel => version.isEmpty ? '规则' : '规则 v$version';
 
-  /// App 内引导文案：需要 WebView 的规则源要提前说清限制。
-  String get hint =>
-      webview ? '该规则的分集是播放页，需内置浏览器嗅探真实地址（不支持下载）' : '该规则的分集是直链，可直接播放与下载';
+  /// App 内引导文案：有取流接口的规则全平台可播；否则按是否需嗅探区分。
+  String get hint => playApi
+      ? '该规则的播放页可直连取流，全平台可播、支持下载'
+      : webview
+      ? '该规则的分集是播放页，需内置浏览器嗅探真实地址（不支持下载）'
+      : '该规则的分集是直链，可直接播放与下载';
 
   SourceSite toSourceSite() =>
       SourceSite(sourceId, name, 'Kazumi $versionLabel · $detailLabel');
@@ -63,6 +70,7 @@ class KazumiRuleSite {
     host: json['host'] as String? ?? '',
     sourceUrl: json['sourceUrl'] as String? ?? '',
     webview: json['webview'] == true,
+    playApi: json['playApi'] == true,
     count: intValue(json['count']),
   );
 }
@@ -74,15 +82,32 @@ class KazumiOfficialRule {
     required this.url,
     this.version = '',
     this.deprecated = false,
+    this.mode = 'unknown',
+    this.supported = false,
   });
 
   final String name;
   final String url;
   final String version;
 
-  /// 官方是否标记废弃。规则库 86 条里大部分已废弃或依赖 XPath，
-  /// 导入失败（不支持的模式）时要有心理预期。
+  /// 官方是否标记废弃（2026-11 起 index.json 已不带该字段，恒为 false）。
   final bool deprecated;
+
+  /// [+199] 规则模式快照：api / api/xpath / xpath / legacy / unknown。
+  /// 由 Go 侧按官方库正文实测后下发，客户端据此把能导入的排在前面。
+  final String mode;
+
+  /// 搜索与分集是否都是 api 模式（本项目解释器唯一支持的形态）。
+  final bool supported;
+
+  /// 列表副标题：把「为什么这条不能导入」写清楚，避免用户白点。
+  String get capabilityLabel => switch (mode) {
+    'api' => '可直接导入 · 搜索与分集均为 JSON 接口',
+    'api/xpath' => '搜索可用，分集需 XPath 网页解析（暂不支持）',
+    'xpath' => '需 XPath 网页解析（暂不支持）',
+    'legacy' => '网页规则 / 无 api 模式（暂不支持）',
+    _ => '模式未确认，导入时会校验',
+  };
 
   factory KazumiOfficialRule.fromJson(Map<String, dynamic> json) =>
       KazumiOfficialRule(
@@ -90,6 +115,8 @@ class KazumiOfficialRule {
         url: json['url'] as String? ?? '',
         version: json['version'] as String? ?? '',
         deprecated: json['deprecated'] == true,
+        mode: json['mode'] as String? ?? 'unknown',
+        supported: json['supported'] == true,
       );
 }
 
@@ -102,6 +129,7 @@ class KazumiImportResult {
     this.host = '',
     this.sourceUrl = '',
     this.webview = false,
+    this.playApi = false,
     this.added = true,
   });
 
@@ -111,6 +139,7 @@ class KazumiImportResult {
   final String host;
   final String sourceUrl;
   final bool webview;
+  final bool playApi;
 
   /// 是否新增（false 表示覆盖导入了同 key 的旧规则）。
   final bool added;
@@ -122,6 +151,7 @@ class KazumiImportResult {
     host: host,
     sourceUrl: sourceUrl,
     webview: webview,
+    playApi: playApi,
   );
 
   factory KazumiImportResult.fromJson(Map<String, dynamic> json) =>
@@ -132,6 +162,7 @@ class KazumiImportResult {
         host: json['host'] as String? ?? '',
         sourceUrl: json['sourceUrl'] as String? ?? '',
         webview: json['webview'] == true,
+        playApi: json['playApi'] == true,
         added: json['added'] == true,
       );
 }

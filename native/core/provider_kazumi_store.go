@@ -125,6 +125,8 @@ func loadKazumiStore(directory string) *kazumiStore {
 			Raw:       raw,
 		}
 	}
+	// [+199] 老索引里的内置规则若还是无取流接口的旧快照，按出厂版本补齐。
+	kazumiUpgradeSeeds(store)
 	return store
 }
 
@@ -249,15 +251,26 @@ func (store *kazumiStore) list() []kazumiSite {
 	return out
 }
 
+// kazumiSeedSpecs 出厂内置规则快照，首次写入与老版本升级共用一份。
+type kazumiSeedSpec struct {
+	name string
+	url  string
+	raw  string
+}
+
+func kazumiSeedSpecs() []kazumiSeedSpec {
+	return []kazumiSeedSpec{
+		{name: "xfdmnext", url: kazumiRuleURL("xfdmnext"), raw: kazumiSeedXfdmnext},
+		{name: "giriGiriLove", url: kazumiRuleURL("giriGiriLove"), raw: kazumiSeedGiriGiriLove},
+	}
+}
+
 // kazumiSeedDefaults 写入出厂内置规则（只在索引缺失时调用）。
 //
 // 这两条是官方库里目前可直接使用的 api 模式规则（其余要么已废弃、
 // 要么章节取值依赖 XPath）。规则正文原样保存，保留 sourceUrl 便于后续升级。
 func kazumiSeedDefaults(store *kazumiStore) {
-	for _, seed := range []struct{ name, url, raw string }{
-		{name: "xfdmnext", url: kazumiRuleURL("xfdmnext"), raw: kazumiSeedXfdmnext},
-		{name: "giriGiriLove", url: kazumiRuleURL("giriGiriLove"), raw: kazumiSeedGiriGiriLove},
-	} {
+	for _, seed := range kazumiSeedSpecs() {
 		var raw map[string]any
 		if json.Unmarshal([]byte(seed.raw), &raw) != nil {
 			continue
@@ -280,6 +293,36 @@ func kazumiSeedDefaults(store *kazumiStore) {
 		if _, err := store.put(site); err != nil {
 			continue
 		}
+	}
+}
+
+// kazumiUpgradeSeeds [+199] 老版本落盘的 xfdmnext 快照没有 playApiConfig，
+// 升级 App 后仍然只能靠 WebView 嗅探。这里只在「sourceUrl 指向官方库、
+// 正文确实缺该字段」时覆盖，用户自己粘贴导入的同名规则不动；索引里的
+// key / file / 收藏与历史关联都保持不变。
+func kazumiUpgradeSeeds(store *kazumiStore) {
+	for _, seed := range kazumiSeedSpecs() {
+		var raw map[string]any
+		if json.Unmarshal([]byte(seed.raw), &raw) != nil || raw["playApiConfig"] == nil {
+			continue
+		}
+		rule, err := kazumiRuleFromMap(raw)
+		if err != nil {
+			continue
+		}
+		site, ok := store.get(kazumiSourceID(kazumiKeyForRule(rule.Name)))
+		if !ok || site.Raw["playApiConfig"] != nil {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(site.SourceURL), seed.url) {
+			continue
+		}
+		site.Version = rule.Version
+		site.Host = kazumiHostFromRule(rule)
+		site.Rule = rule
+		site.Raw = raw
+		site.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		_, _ = store.put(site)
 	}
 }
 
@@ -385,8 +428,10 @@ func (engine *nativeEngine) importKazumiRule(ctx context.Context, raw, sourceURL
 		"file":      site.File,
 		"sourceUrl": site.SourceURL,
 		"webview":   parsed.UseWebview,
-		"added":     !existed,
-		"total":     1,
+		// [+199] 有取流接口的规则全平台可播 / 可下载，UI 据此换提示。
+		"playApi": parsed.Play.Request.URL != "",
+		"added":   !existed,
+		"total":   1,
 	}, nil
 }
 
@@ -445,17 +490,50 @@ func (engine *nativeEngine) kazumiSiteList() []map[string]any {
 			"file":      site.File,
 			"sourceUrl": site.SourceURL,
 			// webview=true 表示分集要经 WebView 嗅探才能拿到真实地址，
-			// UI 据此提示「下载不可用」。
+			// UI 据此提示「下载不可用」；playApi=true 时已由取流接口兜住。
 			"webview": site.Rule.UseWebview,
+			"playApi": site.Rule.Play.Request.URL != "",
 		})
 	}
 	return out
 }
 
+// kazumiOfficialModes [+199] 官方库规则模式快照（2026-11-13 实测 index.json
+// 的 18 条规则正文）。index.json 只给 name / version / lastUpdate，不带
+// searchMode / chapterMode；每次打开「从官方库挑选」都并发拉 18 份正文会把
+// 弹窗拖到十几秒，这里存一份带日期的快照。表里没有的规则标 unknown，
+// 导入时仍由 kazumiRuleFromMap 做最终判定（非 api 模式会明确拒绝）。
+//
+// 实测结论：完整 api 模式只有 giriGiriLove / xfdmnext / sorani 三条；
+// dalvdm / LMM / mgnacg / moonci / TvTFun 是「搜索 api + 分集 xpath」；
+// 其余为 xpath / legacy 网页规则。这也解释了为什么官方库看着条目多、
+// 实际能接进来的没几条。
+var kazumiOfficialModes = map[string]string{
+	"7sefun":       "legacy",
+	"aafun":        "legacy",
+	"AGE":          "legacy",
+	"akianime":     "legacy",
+	"baimao":       "legacy",
+	"dalvdm":       "api/xpath",
+	"DM84":         "unknown",
+	"ezdmw":        "xpath",
+	"giriGiriLove": "api",
+	"LMM":          "api/xpath",
+	"mgnacg":       "api/xpath",
+	"moonci":       "api/xpath",
+	"mutefun":      "xpath",
+	"MXdm":         "unknown",
+	"sorani":       "api",
+	"TvTFun":       "api/xpath",
+	"xfdmneo":      "unknown",
+	"xfdmnext":     "api",
+}
+
 // kazumiOfficialRules 拉取 Kazumi 官方规则库索引，供「从官方库导入」使用。
 //
-// 官方库 86 条里多数是非 api 模式或已废弃，这里把 searchMode/chapterMode
-// 一并返回，客户端据此标记「可用 / 需要 XPath」，避免用户导入了才发现不支持。
+// 返回 mode / supported 让客户端把「可直接导入」与「需网页解析」分开，
+// 避免用户挑了 15 条、导入时才发现 14 条跑不了（注释里旧写的 86 条
+// 是 2024 年的库容，2026-11 官方已精简到 18 条）。
 func (engine *nativeEngine) kazumiOfficialRules(ctx context.Context) (any, error) {
 	status, body, err := ruleGetWithHeaders(ctx, engine.downloader, kazumiOfficialIndexURL,
 		map[string]string{"User-Agent": userAgent})
@@ -479,22 +557,29 @@ func (engine *nativeEngine) kazumiOfficialRules(ctx context.Context) (any, error
 		if name == "" {
 			continue
 		}
+		mode := firstNonEmpty(kazumiOfficialModes[name], "unknown")
 		out = append(out, map[string]any{
 			"name":       name,
 			"version":    strings.TrimSpace(entry.Version),
 			"url":        kazumiRuleURL(name),
 			"deprecated": entry.Deprecated || strings.EqualFold(strings.TrimSpace(entry.Version), "deprecated"),
+			"mode":       mode,
+			"supported":  mode == "api",
 		})
 	}
 	if len(out) == 0 {
 		return nil, errors.New("官方规则库为空，请稍后重试")
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		left, right := out[i]["deprecated"] == true, out[j]["deprecated"] == true
-		if left != right {
-			return right
+		left, right := out[i], out[j]
+		// 可导入的排最前，其次是没有明确废弃标记的，最后按名字排。
+		if left["supported"] != right["supported"] {
+			return left["supported"] == true
 		}
-		return strings.ToLower(kazumiText(out[i]["name"])) < strings.ToLower(kazumiText(out[j]["name"]))
+		if left["deprecated"] != right["deprecated"] {
+			return right["deprecated"] == true
+		}
+		return strings.ToLower(kazumiText(left["name"])) < strings.ToLower(kazumiText(right["name"]))
 	})
 	return map[string]any{"rules": out}, nil
 }
@@ -506,6 +591,12 @@ func (engine *nativeEngine) kazumiOfficialRules(ctx context.Context) (any, error
 // sorani 与我们内置的同名站源重复，因此这里只内置 xfdmnext 与 giriGiriLove：
 //   - xfdmnext：1080p 优先，分集给的是播放页（需 WebView 嗅探）；
 //   - giriGiriLove：直链 mp4，纯 Go 即可播放 / 下载。
+//
+// [+199] xfdmnext 快照里加了项目扩展字段 playApiConfig：稀饭 Next 的分集
+// 是 SPA 播放页，官方 Kazumi 靠 WebView 嗅探，Windows / 下载链路拿不到地址。
+// 站点另有公开的取流接口，播放时按分集 ID（播放页 URL 末段）换带签名 mp4
+// 直链，签名只在取流那一刻生成、不会因详情缓存放久了过期。body 写成字符串
+// 模板，@episodeUrl 会替换成不带引号的数字（实测传字符串接口会 400）。
 //
 // 规则里的 apikey / Authorization 是上游站点的公开匿名凭证（官方仓库明文
 // 提供，Kazumi App 也是照抄整份规则），不属于本项目凭据；此处原样保存，
@@ -573,6 +664,19 @@ const kazumiSeedXfdmnext = `{
       "url": "https://next.xifanacg.com/anime/@source/play/@episodeUrl",
       "query": {}
     }
+  },
+  "playApiConfig": {
+    "request": {
+      "method": "POST",
+      "url": "https://api.xifanacg.com/functions/v1/issue-web-playback",
+      "headers": {
+        "apikey": "sb_publishable_OBIVAWACIX6lPXrO98_z24_HcsmalkA",
+        "Authorization": "Bearer sb_publishable_OBIVAWACIX6lPXrO98_z24_HcsmalkA"
+      },
+      "bodyType": "json",
+      "body": "{\"action\":\"fallback\",\"episode_id\":@episodeUrl}"
+    },
+    "urlPath": "$.url"
   },
   "antiCrawlerConfig": {
     "enabled": false,

@@ -1091,6 +1091,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     // LibreTV 源：解析方式由用户在站源管理里选，只有 type 0/4 才需要嗅探。
     // Kazumi 源：不看解析配置，非直链就嗅探。其余源不处理。
     if (isLibretv ? parse == null : !isKazumi) return episode;
+    // [+199] 规则带 playApiConfig 时，Go 侧会按分集 ID 把播放页换成直链；
+    // 这里跳过嗅探，Windows 与下载链路才不会被「当前平台不支持」挡住。
+    if (isKazumi && episode.raw['playApi'] == true) return episode;
     final address = (episode.raw['videoUrl'] as String? ?? '').trim();
     if (address.isEmpty || WebViewSniffer.looksLikeMediaUrl(address)) {
       return episode;

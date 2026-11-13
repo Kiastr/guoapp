@@ -77,6 +77,9 @@ type Chapter struct {
 	MediaSize      int64           `json:"mediaSize"`
 	PageURL        string          `json:"pageUrl,omitempty"`
 	Referer        string          `json:"referer,omitempty"`
+	// PlayAPI [+199] Kazumi 规则配了 playApiConfig：VideoURL 是播放页，
+	// 但 Go 侧能按分集 ID 兑换直链，Flutter 不必再调 WebView 嗅探。
+	PlayAPI bool `json:"playApi,omitempty"`
 }
 
 func (c Chapter) EpisodeString(fallback int) string {

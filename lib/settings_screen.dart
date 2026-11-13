@@ -307,7 +307,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: const Icon(Icons.dns_outlined),
                   title: const Text('站源管理'),
-                  subtitle: const Text('独立更新、连接与播放检测'),
+                  subtitle: const Text(
+                    '独立更新、连接与播放检测；Kazumi 官方规则库按可导入性标级，'
+                    '稀饭动漫 Next 已支持全平台直连取流与下载',
+                  ),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => Navigator.push(
                     context,

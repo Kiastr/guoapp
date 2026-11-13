@@ -6,11 +6,12 @@ package core
 // 为什么单独做一层，而不是接进现有 drpy / XBPQ / 海阔？
 //   - Kazumi 规则不是 JS（不需要 goja），也不是猫系选择器链
 //     （position XPath / CSS 选择器），它是一份「请求 + JSON 路径」的描述；
-//   - 官方库 86 条规则里只有 4 条是完整的 api 模式（searchMode/chapterMode
-//     均为 api），其余要么已废弃，要么章节取值依赖 XPath 页面解析
+//   - 官方规则库 2026-11 实测只剩 18 条，其中完整 api 模式（searchMode /
+//     chapterMode 均为 api）只有 3 条：giriGiriLove、xfdmnext、sorani；
+//     其余要么章节取值依赖 XPath 页面解析，要么是 legacy 网页规则
 //     （本项目没有 XPath 求值器，导入时明确拒绝而不是静默失败）。
 //
-// api 模式的三段结构（以 xfdmnext / giriGiriLove 为样本）：
+// api 模式的四段结构（以 xfdmnext / giriGiriLove 为样本）：
 //   1. searchApiConfig：请求一个 JSON 接口，按 listPath 取列表，
 //      每项用 namePath / sourcePath 取「剧名 / 源内 ID」；
 //   2. chapterApiConfig：按源内 ID 请求详情，取线路与分集。两种形态：
@@ -19,7 +20,11 @@ package core
 //          MacCMS 的 vod_play_from / vod_play_url，「$$$/#/$」三层分隔）；
 //   3. 播放：分集值可能是直链（giriGiriLove 的 mp4），也可能只是一个
 //      「分集标识」，需要拼进 episodePage 模板得到播放页 URL，再交给
-//      WebView 嗅探真实地址（xfdmnext，规则里 useWebview=true）。
+//      WebView 嗅探真实地址（xfdmnext，规则里 useWebview=true）；
+//   4. playApiConfig（+199，本项目扩展字段，官方 Kazumi 规则没有）：
+//      部分站点另有公开的「按分集 ID 换直链」接口，规则里配了这段就由
+//      Go 在播放 / 下载时直接兑换，Windows 与无 WebView 的链路也能播，
+//      不必依赖嗅探；兑换失败才回落到原来的静态嗅探与浏览器兜底。
 //
 // 目录浏览：Kazumi 规则没有分类 / 首页接口，官方 App 也是「只有搜索」。
 // 本项目把「空关键词 + 分页」当作最近更新列表，首页才不至于空白。
@@ -34,6 +39,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,6 +93,38 @@ type kazumiRule struct {
 	UseWebview bool
 	Search     kazumiSearchConfig
 	Chapter    kazumiChapterConfig
+	// Play [+199] 可选的直链兑换接口（项目扩展字段 playApiConfig）。
+	// 为空时维持原行为：播放页交给 WebView 嗅探或静态抓直链。
+	Play kazumiPlayConfig
+}
+
+// kazumiPlayConfig 「播放页 → 直链」的兑换接口。
+//
+// 官方 Kazumi 规则靠 App 内 WebView 嗅探，本项目 WebViewSniffer 只支持
+// Android / iOS，Windows 与下载链路拿不到地址。稀饭 Next 这类站点另有
+// 公开的取流 API，配好后 Go 侧在取流那一刻兑换，签名直链不会因详情缓存
+// 放久了过期。请求描述复用 kazumiRequestSpec：body 用原始字符串模板，
+// @episodeUrl 会被替换成纯数字集号（接口要求 JSON number，不能带引号）。
+type kazumiPlayConfig struct {
+	Request kazumiRequestSpec
+	// URLPath 直链在响应里的 JSON 路径，默认 $.url。
+	URLPath string
+}
+
+// kazumiPlayFromMap 解析可选的 playApiConfig；缺配置 / 缺地址时返回零值。
+func kazumiPlayFromMap(value any) kazumiPlayConfig {
+	row := kazumiMap(value)
+	if len(row) == 0 {
+		return kazumiPlayConfig{}
+	}
+	config := kazumiPlayConfig{
+		Request: kazumiRequestFrom(row["request"]),
+		URLPath: firstNonEmpty(kazumiText(row["urlPath"]), "$.url"),
+	}
+	if config.Request.URL == "" {
+		return kazumiPlayConfig{}
+	}
+	return config
 }
 
 // kazumiSearchConfig 搜索 / 目录接口。
@@ -176,6 +214,8 @@ func kazumiRuleFromMap(raw map[string]any) (kazumiRule, error) {
 			EpisodeSep:   firstNonEmpty(kazumiText(chapter["episodeSeparator"]), "#"),
 			FieldSep:     firstNonEmpty(kazumiText(chapter["fieldSeparator"]), "$"),
 		},
+		// [+199] 可选：播放页按分集 ID 换直链，绕过 WebView 嗅探。
+		Play: kazumiPlayFromMap(raw["playApiConfig"]),
 	}
 	if rule.Search.Request.URL == "" {
 		return kazumiRule{}, errors.New("Kazumi 规则缺少搜索接口地址")
@@ -854,6 +894,13 @@ func (d *Downloader) kazumiDetail(ctx context.Context, site kazumiSite, sourceID
 	lines := kazumiLines(site.Rule, root, sourceID)
 	chapters := ruleChapters(kazumiSourceID(site.Key), sourceID,
 		firstNonEmpty(site.Rule.Referer, strings.TrimRight(site.Rule.BaseURL, "/")+"/"), lines)
+	// [+199] 打了这个标记的分集，Flutter 侧会跳过 WebView 嗅探，把播放页
+	// URL 原样交给 Go 侧的 resolveKazumiMedia 兑换直链（见下方）。
+	if site.Rule.Play.Request.URL != "" {
+		for index := range chapters {
+			chapters[index].PlayAPI = true
+		}
+	}
 	if len(chapters) == 0 {
 		return Drama{}, nil, errors.New("Kazumi 规则未取到可播放分集")
 	}
@@ -1051,16 +1098,54 @@ func (d *Downloader) resolveKazumiMedia(ctx context.Context, task Task) (provide
 	if kazumiLooksLikeMedia(address) {
 		return d.finishProviderMedia(ctx, providerMedia{URL: address, Referer: referer}, source)
 	}
+	// [+199] 规则自带取流接口时优先兑换：签名直链在取流这一刻才生成，
+	// 不会因为详情缓存放久了过期；Windows / 下载链路也不需要 WebView。
+	var playErr error
+	if site.Rule.Play.Request.URL != "" {
+		if resolved, err := d.kazumiPlayURL(ctx, site, address); err == nil {
+			return d.finishProviderMedia(ctx, providerMedia{URL: resolved, Referer: referer}, source)
+		} else {
+			playErr = err
+		}
+	}
 	// 播放页：先静态嗅探（抓 HTML / JSON 里的直链），失败给明确提示而不是
 	// 把网页塞给播放器。
 	sniffed, err := d.drpySniffPlayPage(ctx, address, referer)
 	if err != nil {
+		if playErr != nil {
+			return providerMedia{}, fmt.Errorf("%w（取流接口：%v）", err, playErr)
+		}
 		return providerMedia{}, err
 	}
 	if !kazumiLooksLikeMedia(sniffed) {
 		return providerMedia{}, errors.New("该 Kazumi 站源需要浏览器嗅探真实地址，请在播放页播放（下载暂不支持）")
 	}
 	return d.finishProviderMedia(ctx, providerMedia{URL: sniffed, Referer: referer}, source)
+}
+
+// kazumiPlayURL [+199] 播放页 → 直链：取 URL 末段的分集 ID，按规则的
+// playApiConfig 发一次请求。body 用字符串模板，@episodeUrl 被替换成不带
+// 引号的纯数字（实测稀饭的 issue-web-playback 传字符串会 400）。
+func (d *Downloader) kazumiPlayURL(ctx context.Context, site kazumiSite, pageURL string) (string, error) {
+	config := site.Rule.Play
+	parsed, err := url.Parse(strings.TrimSpace(pageURL))
+	if err != nil || parsed.Hostname() == "" {
+		return "", errors.New("Kazumi 播放页地址无效")
+	}
+	episodeID := path.Base(strings.TrimRight(parsed.Path, "/"))
+	if episodeID == "" || episodeID == "." || episodeID == "/" {
+		return "", errors.New("Kazumi 播放页缺少分集 ID")
+	}
+	payload, err := d.kazumiRequest(ctx, site, config.Request,
+		map[string]string{"episodeUrl": episodeID, "source": ""})
+	if err != nil {
+		return "", fmt.Errorf("取流接口请求失败：%w", err)
+	}
+	address := strings.TrimSpace(kazumiText(kazumiJSONPath(payload, config.URLPath)))
+	if !kazumiLooksLikeMedia(address) {
+		return "", errors.New("取流接口未返回有效播放地址")
+	}
+	return address, nil
 }
 
 // kazumiSourceID 完整源 ID：kazumi:<key>。

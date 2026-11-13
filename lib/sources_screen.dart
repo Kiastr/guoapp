@@ -700,17 +700,18 @@ class _SourcesScreenState extends State<SourcesScreen> {
         subtitle: Text(
           rules.isEmpty
               ? '导入 Kazumi 官方规则库的 api 模式规则'
-              : '已导入 ${rules.length} 条规则${rules.any((rule) => rule.webview) ? ' · 含需嗅探的规则' : ''}',
+              : '已导入 ${rules.length} 条规则${rules.any((rule) => rule.webview && !rule.playApi) ? ' · 含需嗅探的规则' : ''}',
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           Text(
             'Kazumi 开源动漫 App 的站源由一份 JSON 规则描述。这里只支持其中的'
             '「api 模式」（搜索与分集都走 JSON 接口、按 JSON 路径取字段）——'
-            '依赖 XPath 页面解析的规则无法在本项目里运行，导入时会被明确拒绝，'
-            '不会静默失败。出厂内置 xfdmnext（1080p 优先，需内置浏览器嗅探）与'
-            'giriGiriLove（直链 mp4，可下载）两条；官方库其余规则多为已废弃或'
-            '需 XPath，导入前先看列表上的标记。',
+            '依赖 XPath 页面解析的规则无法在本项目里运行，导入时会被明确拒绝。'
+            '出厂内置 xfdmnext 与 giriGiriLove 两条：xfdmnext 的分集是播放页，'
+            '已接入站点取流接口直接换直链，全平台可播、支持下载；'
+            'giriGiriLove 本来就是直链 mp4。官方库 2026-11 精简到 18 条，'
+            '其中完整 api 模式仅 3 条，导入列表会标清哪些可用。',
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -752,12 +753,18 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 contentPadding: EdgeInsets.zero,
                 leading: Tooltip(
                   message: rule.hint,
-                  child: Icon(rule.webview ? Icons.public : Icons.rule),
+                  child: Icon(
+                    rule.playApi
+                        ? Icons.bolt_rounded
+                        : rule.webview
+                        ? Icons.public
+                        : Icons.rule,
+                  ),
                 ),
                 title: Row(
                   children: [
                     Flexible(child: Text(rule.name)),
-                    if (rule.webview) ...[
+                    if (rule.playApi || rule.webview) ...[
                       const SizedBox(width: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -769,7 +776,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          '需嗅探',
+                          rule.playApi ? '可直连' : '需嗅探',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: theme.colorScheme.onSecondaryContainer,
                           ),
@@ -863,7 +870,12 @@ class _SourcesScreenState extends State<SourcesScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '${result.added ? '已导入' : '已更新'}「${result.name}」${result.webview ? ' · 需内置浏览器嗅探（不支持下载）' : ''}',
+          '${result.added ? '已导入' : '已更新'}「${result.name}」'
+          '${result.playApi
+              ? ' · 可直连取流（全平台可播、支持下载）'
+              : result.webview
+              ? ' · 需内置浏览器嗅探（不支持下载）'
+              : ''}',
         ),
       ),
     );
@@ -1984,8 +1996,10 @@ class _KazumiOfficialDialogState extends State<_KazumiOfficialDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              '官方库多数规则已废弃或依赖 XPath 页面解析，本项目跑不了——'
-              '导入失败时会给出明确原因，已有的规则不受影响。',
+              '官方库 2026-11 共 18 条，完整 api 模式只有 3 条（sorani 与已'
+              '停用的青空同源，仍受上游登录限制）；列表按可导入性排序，'
+              '灰色条目依赖 XPath / 网页解析，本项目暂不支持，导入时会给出'
+              '明确原因，已有规则不受影响。',
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 8),
@@ -1998,13 +2012,12 @@ class _KazumiOfficialDialogState extends State<_KazumiOfficialDialog> {
                     key: ValueKey('kazumi-official-${rule.name}'),
                     dense: true,
                     leading: Icon(
-                      rule.deprecated
-                          ? Icons.block
-                          : Icons.check_circle_outline,
+                      rule.supported ? Icons.check_circle_outline : Icons.block,
+                      color: rule.supported ? null : theme.colorScheme.outline,
                     ),
                     title: Text(rule.name),
                     subtitle: Text(
-                      rule.deprecated ? '官方标记废弃' : '规则 v${rule.version}',
+                      '规则 v${rule.version} · ${rule.capabilityLabel}',
                     ),
                     trailing: const Icon(Icons.download_outlined),
                     onTap: () => Navigator.pop(context, rule),
