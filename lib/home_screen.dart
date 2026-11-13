@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+// [+194] ScrollDirection 定义在 rendering 库，material.dart 不导出它。
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
@@ -48,7 +50,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   static const _recommendationCategory = 'app:recommendations';
 
   /// [+159] 「重载分组」的判定阈值。
@@ -102,10 +105,27 @@ class _HomeScreenState extends State<HomeScreen> {
   final _categorySelections = <String, String>{};
   late final CatalogBrowser _browser;
 
-  /// [+190] 首页搜索框常驻，不再有「展开 / 收起」状态；这里只记输入框是否
-  /// 获得焦点，用来决定「最近搜索」要不要出现，避免常驻搜索框之外再常显
-  /// 一行历史把首屏挤高。电视端不走页面输入框（用对话框），此值恒 false。
+  /// [+190] 搜索框默认常驻；[+194] 增加「按纵向滚动方向自动收起 / 展开」，
+  /// 但只作用于搜索框本身——品牌头（AppBar）和分类 tag 栏始终常驻不收起。
+  /// 这里只记输入框是否获得焦点，用来决定「最近搜索」要不要出现，避免常驻
+  /// 搜索框之外再常显一行历史把首屏挤高。电视端不走页面输入框（用对话框），
+  /// 此值恒 false。
   bool _searchFocused = false;
+
+  /// [+194] 搜索框显隐动画：value=1 完全展开（初始常驻）、0 完全收起。
+  /// 用显式 AnimationController 而不是隐式动画，是为了在快速反向滑动时能
+  /// 从当前进度 reverse / forward 平滑接续，不会跳一下。
+  late final AnimationController _searchBarController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1,
+  );
+  late final Animation<double> _searchBarSize = CurvedAnimation(
+    parent: _searchBarController,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeInCubic,
+  );
+  bool _searchBarHidden = false;
   bool _categoriesLoading = false;
   String? _categoriesError;
   int _categoryGeneration = 0;
@@ -369,6 +389,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _changeGroup(SourceGroup group) {
     if (_group.id == group.id) return;
+    // [+194] 切站源后重新展开搜索框，避免新站源首页一进来就少一行搜索。
+    _setSearchBarHidden(false);
     // [+158] 多源分组按整组聚合展示：目录同时请求组内每个源，标题保持组名
     // （与「全部站源」同机制，先回来的源先渲染）。必须把组 id 记下来交给
     // [CatalogView.groupId]，否则分组会被「当前源」反推掉——点「动漫源集合」
@@ -390,6 +412,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _changeCategory(String category) {
+    // [+194] 切分类 / 档位回到新内容顶部时，把搜索框恢复常驻。推荐态是自己
+    // 的 ScrollController，不走 _scroll.jumpTo(0) 的那条通知路径。
+    _setSearchBarHidden(false);
     if (category == _recommendationCategory && _group.id == 'hongguo') {
       if (_showRecommendations) return;
       _pauseCatalog();
@@ -599,6 +624,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _heavyNoticeTimer?.cancel();
     _heavyNoticeHideTimer?.cancel();
     _search.dispose();
+    _searchBarController.dispose();
     _scroll.removeListener(_onCatalogScroll);
     _scroll.dispose();
     super.dispose();
@@ -629,6 +655,58 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       unawaited(_load(more: true));
     });
+  }
+
+  /// [+194] 搜索框「随纵向滚动方向收起 / 展开」。
+  ///
+  /// 用 [NotificationListener] 而不是给每个 ScrollController 挂回调：目录态
+  /// [_mobileCatalogScroll] 的 CustomScrollView 和推荐态内嵌
+  /// RecommendationsScreen 的 CustomScrollView 都会把 ScrollNotification
+  /// 冒泡到 [_catalog] 这一层，一套逻辑同时覆盖两种首页状态，也不用碰已有的
+  /// [_onCatalogScroll] 分页监听（它直接读 _scroll.position）。
+  ///
+  /// 只有搜索框自己参与显隐；品牌头（AppBar）与分类 tag 栏是 [_catalog] 里
+  /// 的独立兄弟节点，始终常驻、不收起，只是 tag 栏会随搜索框占位收缩平滑上移。
+  bool _onSearchBarScroll(ScrollNotification notification) {
+    // 分类 chips、继续观看横卡、最近搜索都是横向滚动，不该触发收起。
+    if (notification.metrics.axis != Axis.vertical) return false;
+    // 电视端搜索走对话框，页面上没有常驻输入框，也没有触摸方向滚动。
+    if (AppLayout.isTelevision(context)) return false;
+    // 正在输入时强制保持展开：键盘弹起后把输入框滑走会很难用。
+    if (_searchFocused) {
+      _setSearchBarHidden(false);
+      return false;
+    }
+    if (notification is UserScrollNotification) {
+      // reverse = 手指向上滑、内容上移（往后翻剧集）→ 收起搜索框；
+      // forward = 手指向下滑、内容下移（往回看）→ 展开搜索框。
+      switch (notification.direction) {
+        case ScrollDirection.reverse:
+          _setSearchBarHidden(true);
+        case ScrollDirection.forward:
+          _setSearchBarHidden(false);
+        case ScrollDirection.idle:
+          break;
+      }
+    } else if (notification is ScrollUpdateNotification &&
+        notification.metrics.pixels <= 0 &&
+        (notification.scrollDelta ?? 0) < 0) {
+      // 向下滚到顶时的兜底展开（scrollDelta < 0 = 手指向下滑）。避免惯性
+      // fling 结束后仍停在收起态；带方向判断是为了不让「向上滑但还在顶部」
+      // 时收起 / 展开互相打架抖动。
+      _setSearchBarHidden(false);
+    }
+    return false; // 不拦截，分页加载与 RefreshIndicator 照常收通知
+  }
+
+  void _setSearchBarHidden(bool hide) {
+    if (!mounted || hide == _searchBarHidden) return;
+    setState(() => _searchBarHidden = hide);
+    if (hide) {
+      _searchBarController.reverse();
+    } else {
+      _searchBarController.forward();
+    }
   }
 
   void _metadataChanged() {
@@ -963,11 +1041,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _changeTab(int tab) => setState(() {
-    _tab = tab;
-    _selectionMode = false;
-    _selectedDramas.clear();
-  });
+  void _changeTab(int tab) {
+    // [+194] 切走再回来时不应让搜索框停留在收起态。
+    _setSearchBarHidden(false);
+    setState(() {
+      _tab = tab;
+      _selectionMode = false;
+      _selectedDramas.clear();
+    });
+  }
 
   /// 连点「最近观看」6 次弹出站源密码锁（用于启用 / 关闭密码功能）。
   /// 仅多源包（真果鉴）生效；红果鉴单源包无密码功能。
@@ -1704,9 +1786,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _catalogWithLoadFeedback({required bool selectionInBody}) {
     final overlay = _heavyNotice && _loading;
-    final catalog = _catalog(
-      selectionInBody: selectionInBody,
-      hideEmptyLoading: overlay,
+    // [+194] 只包首页 tab0：目录态与推荐态的滚动通知都冒泡到这里，统一驱动
+    // 搜索框显隐；其他 tab 的滚动完全不参与，切走再回来也不会串状态。
+    final catalog = NotificationListener<ScrollNotification>(
+      onNotification: _onSearchBarScroll,
+      child: _catalog(
+        selectionInBody: selectionInBody,
+        hideEmptyLoading: overlay,
+      ),
     );
     if (!overlay) return catalog;
     return Stack(fit: StackFit.expand, children: [catalog, _loadOverlay()]);
@@ -1791,33 +1878,48 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       children: [
         // [+190] 搜索框常驻（电视端仍走对话框，不在页面上放输入框）。
+        // [+194] 手机端按纵向滚动方向收起 / 展开：SizeTransition 让占位高度
+        // 平滑归零（tag 栏随之上移），FadeTransition 淡出，动画可从任意进度
+        // 反向接续。品牌头与 tag 栏不参与这一层，始终常驻。
         if (!television)
-          Padding(
-            // [+192] 定稿 `.search { margin-top:17px }`，之前 10 把搜索框
-            // 往上提了 7px，是顶部留白累积错位的起点之一。
-            padding: const EdgeInsets.fromLTRB(
-              CinemaTokens.pageGutter,
-              17,
-              CinemaTokens.pageGutter,
-              4,
-            ),
-            child: SearchInput(
-              key: ValueKey('search-${_group.id}'),
-              controller: _search,
-              // 常驻输入框不能一进页面就弹键盘。
-              autofocus: false,
-              hint: _searchHint,
-              suggestions: _searchSuggestions
-                  ? widget.repository.suggestions
-                  : null,
-              onChanged: _searchChanged,
-              onCancel: () => unawaited(widget.repository.cancelSuggestions()),
-              onSearch: _submitSearch,
-              onFocusChange: (focused) {
-                if (mounted && _searchFocused != focused) {
-                  setState(() => _searchFocused = focused);
-                }
-              },
+          SizeTransition(
+            sizeFactor: _searchBarSize,
+            // 顶部对齐：收缩时从底部往上收，视觉上是搜索框向上收进顶部。
+            // 用 alignment 而非已废弃的 axisAlignment（Flutter 3.41+ / CI 3.47）。
+            alignment: Alignment.topCenter,
+            child: FadeTransition(
+              opacity: _searchBarSize,
+              child: Padding(
+                // [+192] 定稿 `.search { margin-top:17px }`，之前 10 把搜索框
+                // 往上提了 7px，是顶部留白累积错位的起点之一。
+                padding: const EdgeInsets.fromLTRB(
+                  CinemaTokens.pageGutter,
+                  17,
+                  CinemaTokens.pageGutter,
+                  4,
+                ),
+                child: SearchInput(
+                  key: ValueKey('search-${_group.id}'),
+                  controller: _search,
+                  // 常驻输入框不能一进页面就弹键盘。
+                  autofocus: false,
+                  hint: _searchHint,
+                  suggestions: _searchSuggestions
+                      ? widget.repository.suggestions
+                      : null,
+                  onChanged: _searchChanged,
+                  onCancel: () =>
+                      unawaited(widget.repository.cancelSuggestions()),
+                  onSearch: _submitSearch,
+                  onFocusChange: (focused) {
+                    if (mounted && _searchFocused != focused) {
+                      setState(() => _searchFocused = focused);
+                    }
+                    // 聚焦（键盘弹起）时无条件展开，避免输入框被滑走。
+                    if (focused) _setSearchBarHidden(false);
+                  },
+                ),
+              ),
             ),
           ),
         // [+190] 最近搜索只在输入框获得焦点时出现，避免常驻搜索框之外
