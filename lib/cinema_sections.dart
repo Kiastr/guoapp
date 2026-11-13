@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'cinema_tokens.dart';
@@ -190,24 +192,44 @@ class ContinueWatchingStrip extends StatelessWidget {
             ),
           ],
         ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(
-            horizontal: CinemaTokens.pageGutter,
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final entry in entries)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: _ContinueCard(
-                    entry: entry,
-                    onTap: () => onOpen(entry.drama),
-                  ),
-                ),
-            ],
-          ),
+        // [+195] 横卡数量与宽度按可用宽度算，不再固定 2 条 / 174 宽。
+        // 之前竖屏 2 条还能凑满一行，横屏平板上右侧会空出一大片；现在
+        // 竖屏仍是 2 条但铺满（每张 171），平板横屏约 5 条、超宽屏封顶
+        // 8 条，卡片等宽均分可用宽度。实际条数仍受未看完记录数限制。
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final available =
+                constraints.maxWidth - 2 * CinemaTokens.pageGutter;
+            // 目标卡片宽 174 + 间距 12（设计稿 `wide-art` 尺寸）。
+            final target = ((available + 12) / (174 + 12)).floor().clamp(2, 8);
+            // 宽度按**目标列数**均分而不是实际条数：只有 2 条历史时也保持
+            // 正常卡片宽度左对齐，不会把两张卡拉成超宽色块。
+            final cardWidth = ((available - 12 * (target - 1)) / target).clamp(
+              140.0,
+              240.0,
+            );
+            final count = math.min(target, entries.length);
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(
+                horizontal: CinemaTokens.pageGutter,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final entry in entries.take(count))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: _ContinueCard(
+                        entry: entry,
+                        width: cardWidth,
+                        onTap: () => onOpen(entry.drama),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
         ),
       ],
     );
@@ -215,9 +237,17 @@ class ContinueWatchingStrip extends StatelessWidget {
 }
 
 class _ContinueCard extends StatelessWidget {
-  const _ContinueCard({required this.entry, required this.onTap});
+  const _ContinueCard({
+    required this.entry,
+    required this.width,
+    required this.onTap,
+  });
 
   final WatchEntry entry;
+
+  /// [+195] 由 [ContinueWatchingStrip] 按可用宽度均分传入（原来固定 174）。
+  final double width;
+
   final VoidCallback onTap;
 
   // [+193] 对齐设计稿 wide-art 的 arts 六组三色渐变（145deg / 中段 55%）。
@@ -244,7 +274,7 @@ class _ContinueCard extends StatelessWidget {
         : 0.0;
     final rounded = BorderRadius.circular(CinemaTokens.posterRadius);
     return SizedBox(
-      width: 174,
+      width: width,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

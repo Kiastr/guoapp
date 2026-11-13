@@ -2048,10 +2048,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// 目录态（手机滚动区）与推荐态（作为 leading sliver）都复用它。
   Widget _continueWatching() => ContinueWatchingStrip(
     key: const ValueKey('continue-watching-strip'),
-    entries: widget.store.history
-        .where((entry) => !entry.finished)
-        .take(2)
-        .toList(),
+    // [+195] 不再在这里 take(2)：横屏平板 / 桌面一屏能放 5~8 张，固定 2 条
+    // 会让右侧空一大片。条数与卡片宽度由横卡组件按可用宽度自己算，只取
+    // 未看完的记录（继续观看的语义不变）。
+    entries: widget.store.history.where((entry) => !entry.finished).toList(),
     onOpen: (drama) => _openDrama(drama, resume: true),
     onViewAll: () => _changeTab(2),
   );
