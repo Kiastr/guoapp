@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import 'cinema_tokens.dart';
@@ -161,8 +159,8 @@ class CinemaTextLink extends StatelessWidget {
 /// 「继续观看」横卡区：标题行 + 横向滚动的 16:10 卡片。
 ///
 /// [entries] 由调用方筛好（未看完、按更新时间倒序），组件本身不碰 LocalStore，
-/// 保持纯展示；这样 widget test 里可以直接喂假数据。整体条数由可用宽度决定
-/// （见下方 LayoutBuilder），调用方不再截断。
+/// 保持纯展示；这样 widget test 里可以直接喂假数据。列数由可用宽度决定
+/// （见下方 LayoutBuilder），条目本身不截断，多出的可横向滑动。
 /// 无记录时返回零尺寸，不占首屏一行空白。
 class ContinueWatchingStrip extends StatelessWidget {
   const ContinueWatchingStrip({
@@ -211,7 +209,9 @@ class ContinueWatchingStrip extends StatelessWidget {
               140.0,
               200.0,
             );
-            final count = math.min(target, entries.length);
+            // [+197] 不截断到目标列数：多于一屏的记录全部渲染，第一屏末尾会
+            // 自然露出下一张的边缘，作为「还能往右滑」的提示；少于一屏时按
+            // 实际条数左对齐，不拉伸、不补位。
             return SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(
@@ -220,7 +220,7 @@ class ContinueWatchingStrip extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final entry in entries.take(count))
+                  for (final entry in entries)
                     Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: _ContinueCard(
