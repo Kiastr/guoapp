@@ -115,6 +115,29 @@ func (d *Downloader) resolveHuangdouPlayback(ctx context.Context, client *huangd
 	if duration, err := strconv.ParseFloat(mapString(data, "duration"), 64); err == nil && duration > 0 {
 		result.Duration = time.Duration(duration * float64(time.Second))
 	}
+	// [+202] 黄豆的 /drama/play 会返回多条候选线路（data.lines，如 free / line2 / line3），
+	// 每条都是完整的 m3u8 地址，共用同一个 hls_key。此前只取 m3u8 一条，播放层因此看到
+	// 「线路 1/1」，某条线路在当前网络下回源不稳时无法自动切换，只能反复重解析重开、表现
+	// 为「有流量却一直转圈」。这里把其余线路填进 Variants，播放层会合并去重后按线路表
+	// 逐个探活/切换（首帧看门狗、错误恢复），-key 与 referer 保持一致。
+	seen := map[string]bool{result.URL: true}
+	for _, line := range huangdouList(data["lines"]) {
+		lineURL := firstNonEmpty(mapString(line, "url"), mapString(line, "m3u8"))
+		if lineURL == "" {
+			continue
+		}
+		lineURL = resolveProviderURL(client.host+"/", lineURL)
+		if !isProviderHTTPMediaURL(lineURL) || seen[lineURL] {
+			continue
+		}
+		seen[lineURL] = true
+		result.Variants = append(result.Variants, providerMedia{
+			URL:      lineURL,
+			Referer:  result.Referer,
+			HLSKey:   result.HLSKey,
+			Duration: result.Duration,
+		})
+	}
 	return result, nil
 }
 
