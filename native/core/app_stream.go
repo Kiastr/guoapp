@@ -478,7 +478,13 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 			}
 		}
 	}
-	playlist := strings.Contains(asset.contentType, "mpegurl") || strings.Contains(contentType, "mpegurl") || nativeHLSManifest(finalURL.String()) || len(session.key) > 0
+	// [+205] playlist 判定不得把「本会话持有 HLS key」当成依据。黄豆等 AES-128 源的
+	// 每个分片请求都带着 session.key，若据此判定，分片 .ts 会被当成 m3u8 读取并检查
+	// #EXTM3U 前缀，二进制分片必然不匹配 -> 返回「播放列表无效」502 -> 播放器打不开分片、
+	// 永远等不到首帧，表现就是「有流量却一直转圈」。playlist 只由三个文档类型信号决定：
+	// asset 预设类型、上游 Content-Type、URL 是否 .m3u8；三者都不确定时，下方 Peek 首个
+	// 字节判断 #EXTM3U 已足够兜底，key 只是加密标志、与文档类型无关。
+	playlist := strings.Contains(asset.contentType, "mpegurl") || strings.Contains(contentType, "mpegurl") || nativeHLSManifest(finalURL.String())
 	reader := bufio.NewReader(response.Body)
 	if playlist {
 		rewriteRange = false
