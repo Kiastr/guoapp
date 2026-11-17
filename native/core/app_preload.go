@@ -18,13 +18,17 @@ type nativePreloadKey struct{}
 const nativePreloadLimit = 4 << 20
 
 // nativePreloadBudget 预加载的时间预算（两条线路共享，不因切线路而翻倍）。
-const nativePreloadBudget = 6 * time.Second
+// [+204] 6s → 10s：给需代理访问的慢源留出两次探测的余量。
+const nativePreloadBudget = 10 * time.Second
 
 // nativePreloadFirstByteLimit 首字节（首个分片/播放列表）超过这个时长即判定
 // 「该线路慢/不通」，切下一条再试。判定放在预加载窗口里，是为了让试错不占用
 // 播放窗口——切线路本身是本地操作（nativeNextPlayback 只递增 index），
 // 不产生新的解析请求。
-const nativePreloadFirstByteLimit = 1500 * time.Millisecond
+// [+204] 1.5s → 3s：黄豆等源在代理/慢网络下首字节常超 1.5s，原阈值把所有线路
+// 都判成 unverified，导致播放层 watchdog 走最短档（3s）在首帧前就误杀慢线。
+// 放宽到 3s 后，正常慢线能被判为 verified，播放层改用更长的首帧等待。
+const nativePreloadFirstByteLimit = 3 * time.Second
 
 // nativePrefetchResult 一次预取的结果。
 type nativePrefetchResult struct {

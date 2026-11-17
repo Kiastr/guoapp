@@ -909,13 +909,17 @@ class _PlayerScreenState extends State<PlayerScreen>
   /// 起播后若在阈值内拿不到首帧，直接切下一条线路。
   ///
   /// 切线路走 fallback = 本地 index++，不重新解析、不新增请求，所以早切的
-  /// 代价远小于"用户盯着转圈十几秒"。已验证线路放宽到 6 秒，避免误杀慢线。
+  /// 代价远小于"用户盯着转圈十几秒"。
+  /// [+204] 放宽首帧等待：黄豆等需代理访问的源，HLS 首帧要拉 m3u8 + 若干分片
+  /// + key，慢网络下超过 3s 很常见。原 3s/6s 会在首帧到来前就误杀慢线，且
+  /// _fastSwitched 只允许快切一次，之后要等 20s stall，表现为"一直转圈"。
+  /// 现放宽到未验证 6s / 已验证 10s，给慢线足够的首帧时间。
   void _armFirstFrameWatchdog(PlaybackPlan plan, int ticket) {
     _cancelFirstFrameWatchdog();
     if (plan.local || !plan.hasAlternative || _fastSwitched) return;
     final delay = plan.verified
-        ? const Duration(seconds: 6)
-        : const Duration(seconds: 3);
+        ? const Duration(seconds: 10)
+        : const Duration(seconds: 6);
     _firstFrameTimer = Timer(delay, () {
       if (_closed || ticket != _generation || _error != null) return;
       final state = _player.state;
@@ -929,6 +933,22 @@ class _PlayerScreenState extends State<PlayerScreen>
   void _cancelFirstFrameWatchdog() {
     _firstFrameTimer?.cancel();
     _firstFrameTimer = null;
+  }
+
+  /// [+204] 播放彻底失败后，把本地代理记录的请求/响应摘要写入诊断日志。
+  /// 探针缓冲最多 64 条，足够覆盖一次起播的 m3u8 + 分片 + key 交换；
+  /// 本地文件播放没有代理，probe 为空，直接跳过。
+  Future<void> _dumpPlaybackProbe(PlaybackPlan plan) async {
+    if (plan.local) return;
+    try {
+      final entries = await widget.repository.playbackProbe();
+      if (entries.isEmpty) return;
+      DiaryService.add('[Play] ---- 本地代理探针 (${entries.length}) ----');
+      for (final entry in entries) {
+        DiaryService.add('[Probe] $entry');
+      }
+      DiaryService.add('[Play] ---- 探针结束 ----');
+    } catch (_) {}
   }
 
   Future<void> _recover() async {
@@ -968,6 +988,9 @@ class _PlayerScreenState extends State<PlayerScreen>
           }
         });
       } catch (_) {}
+      // [+204] 所有线路都失败时，把本地代理最近的请求/响应探针写入诊断日志，
+      // 便于区分"首帧超时误杀"与"代理重写出错"。失败路径只读一次，不阻塞 UI。
+      unawaited(_dumpPlaybackProbe(current));
       if (mounted && !_closed && ticket == _generation) {
         setState(() {
           _loading = false;
