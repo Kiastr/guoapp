@@ -372,6 +372,65 @@ func (d *Downloader) fetchHuangguoAIDetail(ctx context.Context, sourceID string)
 	return drama, uniqueChapters(chapters), nil
 }
 
+// resolveHuangguoAIPlayback 通过新版 playback 接口兑换 huangguoai 的播放地址。
+//
+// [+200] 站点改版后，详情页 HTML 里已不再内嵌明文 m3u8（旧 parseAIVideoURL 从此失效），
+// 取而代之的是独立接口 POST /api/videos/{id}/episodes/{ep}/playback。
+// 实测（2026-11）：空 body `{}`、无需登录/加密握手即可拿到明文：
+//
+//	{"data":{"streams":{"main":"https://.../x.m3u8?auth_key=...","hevc":"...","preview":"..."}}}
+//
+// 设计要点：
+//   - 域名沿用主域（d.providerBaseURL：配置位 HuangguoAIURL，默认 huangguoai.com），
+//     不做镜像轮换/自动探测——用户侧开代理可达主域即可。
+//   - main → hevc → preview 依次兜底，优先主线路。
+//   - Referer/UA 沿用现有请求链：Referer 用主域首页，UA 用 userAgent，
+//     与 fetchProviderText 保持一致，避免被站点指纹拦截。
+//   - 返回空串交给调用方回退到旧的 HTML 解析，保证老镜像/旧页面仍可用。
+func (d *Downloader) resolveHuangguoAIPlayback(ctx context.Context, sourceID string, ep int) string {
+	if strings.TrimSpace(sourceID) == "" || ep < 1 {
+		return ""
+	}
+	base := strings.TrimRight(d.providerBaseURL(sourceHuangguoAI), "/")
+	endpoint := fmt.Sprintf("%s/api/videos/%s/episodes/%d/playback", base, url.PathEscape(sourceID), ep)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader("{}"))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", base)
+	req.Header.Set("Referer", base+"/")
+	resp, err := d.doCatalogRequestWithTimeout(req, providerTimeout)
+	if err != nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, providerMaxBodyBytes+1))
+	closeErr := resp.Body.Close()
+	if err != nil || closeErr != nil || len(body) > providerMaxBodyBytes {
+		return ""
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	var envelope struct {
+		Data struct {
+			Streams map[string]any `json:"streams"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	// 优先主线 main，依次 hevc / preview 兜底。
+	for _, key := range []string{"main", "hevc", "preview"} {
+		if media := mapString(envelope.Data.Streams, key); isProviderHTTPMediaURL(media) {
+			return media
+		}
+	}
+	return ""
+}
+
 func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
 	drama, chapters, err := d.fetchHuangguoVideoDetail(ctx, sourceID)
 	return drama.DisplayTitle(), chapters, err

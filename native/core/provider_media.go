@@ -203,22 +203,43 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 		}
 	}
 	if chapter.PageURL != "" && (chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo) {
-		responses := &playbackResponseURLs{}
-		pageContext := context.WithValue(ctx, playbackResponseURLsKey{}, responses)
-		body, err := d.fetchProviderText(pageContext, chapter.PageURL, media.Referer)
-		if err != nil {
-			return providerMedia{}, err
-		}
-		pageURL := chapter.PageURL
-		if actual, ok := responses.values.Load(chapter.PageURL); ok {
-			pageURL = actual.(string)
-		}
+		// [+200] huangguoai 改版后明文地址不再内嵌在详情页，优先走 playback 接口兑换；
+		// 只有兑换失败（接口异常/老页面仍带明文）时才回退旧的 HTML 解析。
+		// huangguo-video 未接入该接口，保持原 parseDataHLS 逻辑不变。
+		playbackOK := false
 		if chapter.Source == sourceHuangguoAI {
-			media.URL = parseAIVideoURL(body, pageURL)
-		} else {
-			media.URL = parseDataHLS(body, pageURL)
+			if _, sourceID, valid := splitProviderDramaID(task.DramaID); valid {
+				ep, err := strconv.Atoi(chapter.EpisodeString(task.Index))
+				if err != nil || ep < 1 {
+					ep = chapterEpisodeNumber(chapter, task.Index+1)
+				}
+				if ep >= 1 {
+					if stream := d.resolveHuangguoAIPlayback(ctx, sourceID, ep); stream != "" {
+						media.URL = stream
+						media.Referer = d.providerBaseURL(sourceHuangguoAI) + "/"
+						playbackOK = true
+					}
+				}
+			}
 		}
-		media.Referer = pageURL
+		if !playbackOK {
+			responses := &playbackResponseURLs{}
+			pageContext := context.WithValue(ctx, playbackResponseURLsKey{}, responses)
+			body, err := d.fetchProviderText(pageContext, chapter.PageURL, media.Referer)
+			if err != nil {
+				return providerMedia{}, err
+			}
+			pageURL := chapter.PageURL
+			if actual, ok := responses.values.Load(chapter.PageURL); ok {
+				pageURL = actual.(string)
+			}
+			if chapter.Source == sourceHuangguoAI {
+				media.URL = parseAIVideoURL(body, pageURL)
+			} else {
+				media.URL = parseDataHLS(body, pageURL)
+			}
+			media.Referer = pageURL
+		}
 	}
 	return d.finishProviderMedia(ctx, media, chapter.Source)
 }
