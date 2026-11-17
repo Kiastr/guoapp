@@ -144,7 +144,11 @@ func (c *huangdouAPIClient) call(ctx context.Context, path string, data map[stri
 			return lastErr
 		}
 		if c.host == huangdouBaseURL && c.d.cfg.HuangdouURL == "" {
-			c.host = "https://xqjurgek.top"
+			// [+201] 原备用域名 xqjurgek.top 的 TLS 证书 2026-11-06 已过期，
+			// Go 侧证书校验会直接拒绝（certificate has expired）。换成当前发布页清单里
+			// 探活通过、证书有效的线路；更长久的方案是设置页「获取黄豆最新地址」动态写回
+			// HuangdouURL（见 resolveHuangdouLatestAddress），此处仅作静态兜底。
+			c.host = "https://lozmglzt.cc"
 		}
 	}
 	return lastErr

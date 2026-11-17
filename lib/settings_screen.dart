@@ -48,6 +48,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _message;
 
+  /// [+201] 黄豆「获取最新地址」：从官方发布页清单取当前线路并探活，写回本机。
+  bool _huangdouBusy = false;
+  String _huangdouNote = '证书过期或连不上时点此更新；需能访问发布页与线路域名（一般开代理）';
+
+  Future<void> _resolveHuangdouAddress() async {
+    if (_huangdouBusy) return;
+    setState(() {
+      _huangdouBusy = true;
+      _huangdouNote = '正在获取黄豆最新地址…';
+    });
+    try {
+      final result = await widget.repository.resolveHuangdouAddress();
+      if (!mounted) return;
+      final message = (result['message'] as String?)?.trim();
+      final address = (result['address'] as String?)?.trim();
+      setState(() {
+        _huangdouBusy = false;
+        _huangdouNote = message ??
+            (address != null && address.isNotEmpty
+                ? '已更新：$address'
+                : '未取得可用线路，请检查网络后重试');
+      });
+    } on AppFailure catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _huangdouBusy = false;
+        _huangdouNote = '获取失败：${e.message}';
+      });
+    }
+  }
+
   /// 账号同步的进行态与一次性提示。手动按钮与启动自动同步共用
   /// [syncHongguoAccount]，这里只负责把结果画出来。
   bool _syncingAccount = false;
@@ -322,6 +353,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
+              ListTile(
+                key: const ValueKey('huangdou-address-setting'),
+                leading: const Icon(Icons.link_outlined),
+                title: const Text('获取黄豆最新地址'),
+                subtitle: Text(_huangdouNote),
+                trailing: _huangdouBusy
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+                onTap: _huangdouBusy ? null : _resolveHuangdouAddress,
+              ),
               ListTile(
                 key: const ValueKey('site-verification-setting'),
                 leading: const Icon(Icons.verified_user_outlined),

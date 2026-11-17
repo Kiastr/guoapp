@@ -68,7 +68,7 @@ func providerSourceForURL(raw string) string {
 		return sourceHuangguoAI
 	case host == "huangguo.video":
 		return sourceHuangguoVideo
-	case host == "tideember.cc" || host == "xqjurgek.top":
+	case host == "tideember.cc" || host == "xqjurgek.top" || host == "lozmglzt.cc":
 		return sourceHuangdou
 	case host == "hongguoduanju.com" || host == "www.hongguoduanju.com":
 		return sourceHongguo

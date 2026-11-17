@@ -89,6 +89,12 @@ abstract class AppRepository {
     ResourceSettings settings,
   ) async => throw AppFailure('当前环境不支持资源设置');
 
+  /// [+201] 黄豆源：读取已保存的最新地址 / 一键从官方发布页清单获取并探活最新地址。
+  /// 返回 map 含 address / candidates / updatedAt / message，失败抛 AppFailure。
+  Future<Map<String, dynamic>> huangdouAddress() async => {};
+  Future<Map<String, dynamic>> resolveHuangdouAddress() async =>
+      throw AppFailure('当前环境不支持获取黄豆最新地址');
+
   /// 站点验证：哪些源需要验证、当前存了哪份凭据。
   Future<SiteVerificationView> siteVerifications() async =>
       const SiteVerificationView();
@@ -372,6 +378,18 @@ class NativeRepository extends AppRepository {
         'settings': settings.toJson(),
       }),
     );
+  }
+
+  @override
+  Future<Map<String, dynamic>> huangdouAddress() async {
+    _adminPermission();
+    return await _call({'action': 'huangdouAddress'});
+  }
+
+  @override
+  Future<Map<String, dynamic>> resolveHuangdouAddress() async {
+    _adminPermission();
+    return await _call({'action': 'resolveHuangdouAddress'});
   }
 
   @override

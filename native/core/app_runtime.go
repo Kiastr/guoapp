@@ -346,6 +346,8 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 		}}
 	engine := &nativeEngine{downloader: d, directory: directory, catalogs: map[string][]nativeDrama{}, catalogStates: map[string]nativeCatalogState{}}
 	engine.loadResourceSettings()
+	// [+201] 启动时灌回用户「获取黄豆最新地址」保存的线路，避免回退到写死的旧域名。
+	engine.applyHuangdouAddress()
 	d.siteVerifications = loadSiteVerificationStore(directory)
 	d.libretv = loadLibreTVStore(directory)
 	d.drpy = loadDrpyStore(directory)
@@ -463,6 +465,11 @@ func nativeDispatch(input nativeInput) (any, error) {
 		return engine.resourceSettings(), nil
 	case "saveResourceSettings":
 		return engine.saveResourceSettings(input.Settings)
+	case "huangdouAddress":
+		store := loadHuangdouAddress(engine.directory)
+		return huangdouAddressResult{Address: store.Address, Candidates: nil, UpdatedAt: store.UpdatedAt}, nil
+	case "resolveHuangdouAddress":
+		return engine.resolveHuangdouLatestAddress(ctx)
 	case "siteVerifications":
 		return engine.siteVerifications(), nil
 	case "saveSiteVerification":
