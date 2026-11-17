@@ -1046,41 +1046,20 @@ class LocalStore extends ChangeNotifier {
       var changed = 0;
 
       // 顺序契约：`_favorites` 的插入顺序代表「旧 → 新」，列表页用
-      // `favorites` getter 反转成「新 → 旧」再展示。账号快照按收藏时间
-      // 倒序下发（最新在前），照原样 append 会让最新收藏沉到「我的追剧」
-      // 最底，所以这里先整理成「旧 → 新」的顺序。
+      // `favorites` getter 反转成「新 → 旧」再展示——末尾即展示顶部。
+      // 账号同步是**只读增量合并**（规则 1 只增不删、规则 2 本地为准）：
+      // 本地顺序就是用户的真实操作顺序（例如刚标记「想看」的剧在顶部），
+      // 绝不能被账号的 collectedAt 重排覆盖，否则一同步就把刚标记的剧
+      // 压下去。因此账号里本地已有的剧一律不动，只有本地还没有的新剧
+      // 才按账号顺序（旧 → 新）追加到末尾。
       final ordered = _orderedAccountFavorites(snapshot.favorites);
-
-      // 同一批账号收藏要按账号顺序整体落到末尾。旧版本按倒序落过库，
-      // 这批条目会夹在本地其它收藏中间、内部次序还是反的，先摘出来再
-      // 按序追加——非本批条目保持原有相对顺序。
-      final batch = <String>{
-        for (final entry in ordered)
-          if (entry.seriesId.isNotEmpty)
-            '${SourceSite.hongguo.id}:${entry.seriesId}',
-      };
       final before = entries.keys.toList();
-      final kept = <String, Drama>{};
-      for (final row in entries.entries) {
-        if (batch.contains(row.key) && allowsSource(row.value.source)) {
-          continue;
-        }
-        kept[row.key] = row.value;
-      }
-      entries
-        ..clear()
-        ..addAll(kept);
       for (final entry in ordered) {
         final drama = entry.toDrama();
         if (!allowsSource(drama.source)) continue;
-        final existing = _favorites[drama.id];
-        if (existing != null) {
-          // 规则 2：本地元数据不动，只把它按账号顺序重新排位。
-          entries[drama.id] = existing;
-          continue;
-        }
-        // 用 continue 而不是 break：后面可能还有「已存在、只是需要重排」
-        // 的条目，break 会把它们一起丢掉。
+        // 本地已有：位置与元数据都不动，直接跳过。这是修复的关键——
+        // 旧版本在这里按账号顺序重新排位，导致用户本地标记的顺序被冲掉。
+        if (entries.containsKey(drama.id)) continue;
         if (entries.length >= 20000) continue;
         entries[drama.id] = drama;
         states.putIfAbsent(
@@ -1125,11 +1104,12 @@ class LocalStore extends ChangeNotifier {
     });
   }
 
-  /// 账号收藏落库前的顺序整理。
+  /// 账号新增收藏的追加顺序整理。
   ///
-  /// 本地 `_favorites` 的插入顺序是「旧 → 新」，列表页用 `favorites`
-  /// getter 反转成「新 → 旧」再展示。账号快照按收藏时间**倒序**下发，
-  /// 直接 append 会让最新收藏沉到最底，所以这里按时间升序重排。
+  /// 只用于决定**本地还没有**的新剧按什么顺序追加到末尾（末尾=展示顶部）。
+  /// 本地已有的收藏不经过这里、位置保持不动，所以这里不会冲掉用户本地
+  /// 标记的顺序。账号快照按收藏时间**倒序**下发（新 → 旧），要追加到末尾
+  /// 就得先整理成「旧 → 新」，追加后展示才是「新 → 旧」。
   ///
   /// 接口一条时间都没给（`collect_time` 缺失、全为 0）时没法排序，只能
   /// 按快照顺序反转兜底——服务端本来就是「新 → 旧」。

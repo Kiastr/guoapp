@@ -249,59 +249,84 @@ void main() {
     ]);
   });
 
-  test('按倒序落过库的账号收藏会被重排回正确顺序', () async {
+  test('账号同步不改变本地已有收藏的顺序（本地顺序为准）', () async {
     final prefs = await SharedPreferences.getInstance();
     final store = LocalStore(prefs);
-    // 旧版本留下的状态：倒序写入，列表里最早的在最上面。
-    for (final row in [
-      ('7300000000000000023', '最新', 1760000003000),
-      ('7300000000000000022', '中间', 1760000002000),
-      ('7300000000000000021', '最早', 1760000001000),
-    ]) {
+    // 用户本地的收藏顺序：先「最早」、再「中间」，最后手动标记「刚想看」
+    // 的剧——它排在末尾，即展示在「我的追剧」顶部。
+    for (final title in ['最早', '中间', '刚想看']) {
       await store.toggleFavorite(
         Drama(
-          id: 'hongguo:${row.$1}',
+          id: 'hongguo:$title',
           source: 'hongguo',
-          sourceId: row.$1,
-          title: row.$2,
+          sourceId: title,
+          title: title,
         ),
       );
     }
     expect(store.favorites.map((drama) => drama.title).toList(), [
-      '最早',
+      '刚想看',
       '中间',
-      '最新',
+      '最早',
     ]);
 
+    // 账号快照里这三部都有，collectedAt 与本地顺序完全相反（刚想看是老收藏）。
+    // 旧逻辑会按账号时间重排，把「刚想看」压到底部；修复后本地顺序必须保持不动。
     final merged = await store.mergeHongguoAccount(
       const HongguoAccountSnapshot(
         signedIn: true,
         favorites: [
           HongguoAccountEntry(
-            seriesId: '7300000000000000023',
-            title: '最新',
+            seriesId: '最早',
+            title: '最早',
             collectedAt: 1760000003000,
           ),
           HongguoAccountEntry(
-            seriesId: '7300000000000000022',
+            seriesId: '中间',
             title: '中间',
             collectedAt: 1760000002000,
           ),
           HongguoAccountEntry(
-            seriesId: '7300000000000000021',
-            title: '最早',
+            seriesId: '刚想看',
+            title: '刚想看',
             collectedAt: 1760000001000,
           ),
         ],
       ),
     );
 
-    // 没有新增条目，但顺序变了，也要写盘。
+    // 三部本地都已有：无新增、顺序不变，不应写盘、不应触发通知。
     expect(merged, 0);
     expect(store.favorites.map((drama) => drama.title).toList(), [
-      '最新',
+      '刚想看',
       '中间',
       '最早',
+    ]);
+  });
+
+  test('账号里本地没有的新收藏仍按账号时间追加到顶部', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final store = LocalStore(prefs);
+    await store.toggleFavorite(
+      const Drama(id: 'hongguo:本地老剧', source: 'hongguo', sourceId: '本地老剧', title: '本地老剧'),
+    );
+
+    // 快照倒序下发：账号新剧 > 账号次新；追加后展示应为「新剧、次新、本地老剧」。
+    final merged = await store.mergeHongguoAccount(
+      const HongguoAccountSnapshot(
+        signedIn: true,
+        favorites: [
+          HongguoAccountEntry(seriesId: '账号新剧', title: '账号新剧', collectedAt: 1760000003000),
+          HongguoAccountEntry(seriesId: '账号次新', title: '账号次新', collectedAt: 1760000002000),
+        ],
+      ),
+    );
+
+    expect(merged, 2);
+    expect(store.favorites.map((drama) => drama.title).toList(), [
+      '账号新剧',
+      '账号次新',
+      '本地老剧',
     ]);
   });
 }
