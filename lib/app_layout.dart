@@ -6,7 +6,11 @@ import 'package:flutter/services.dart';
 
 export 'app_build.dart';
 
-const appVersion = '0.2.74';
+// 版本前缀不再写死：由构建脚本从 pubspec.yaml 的 version: x.y.z+N 提取
+// 并经 --dart-define=APP_VERSION 注入（见 scripts/app_build.py），与 BUILD_NUMBER
+// 同源，避免发版只升 +N 而前缀停在旧值（历史故障：日志出现 0.2.74+204）。
+// defaultValue 仅兜底绕过构建脚本直接 flutter build 的场景。
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.5.21');
 
 ThemeData televisionTheme(ThemeData theme) {
   final colors = theme.colorScheme;

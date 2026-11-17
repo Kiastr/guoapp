@@ -4,6 +4,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def app_version_from_pubspec():
+    """从仓库根 pubspec.yaml 的 version: x.y.z+N 提取版本前缀 x.y.z。
+
+    版本前缀此前写死在 lib/app_layout.dart（'0.2.74'），发版时只升了 +N，
+    前缀停更，导致启动日志/关于页出现 '0.2.74+204' 这类前后不一致。
+    此处与 build_number_from_pubspec 同源提取，经 APP_VERSION 注入 Dart 侧。
+    提取不到时返回 None，由 Dart 侧 defaultValue 兜底。
+    """
+    pubspec = Path(__file__).resolve().parents[1] / 'pubspec.yaml'
+    match = re.search(r'^version:\s*(\S+?)\+(\d+)\s*$',
+                      pubspec.read_text(encoding='utf-8'), re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def build_number_from_pubspec():
     """从仓库根 pubspec.yaml 的 version: x.y.z+N 提取构建号 N。
 
@@ -46,6 +60,11 @@ class BuildVariant:
         build_number = build_number_from_pubspec()
         if build_number:
             arguments.append('--dart-define=BUILD_NUMBER=' + build_number)
+        # APP_VERSION 从 pubspec.yaml 的 x.y.z 提取，与 BUILD_NUMBER 同源，
+        # 保证日志/关于页的版本前缀与实际版本一致，不再写死在 app_layout.dart。
+        app_version = app_version_from_pubspec()
+        if app_version:
+            arguments.append('--dart-define=APP_VERSION=' + app_version)
         return arguments
 
     @property
