@@ -67,7 +67,19 @@ func (downloader *Downloader) resolveHongguoDrpyMedia(ctx context.Context, video
 	if err != nil {
 		return providerMedia{}, err
 	}
-	firstBody, err := downloader.hgDrpyVideoModelAt(ctx, payload)
+	var firstBody map[string]any
+	if hongguoPlaybackV5 {
+		// 【v5 协议接入】2026-11-16 起旧播放模型接口（明文 body + 551 签名）
+		// 被服务端换代为 v5：返回 HTTP 200 空体，取流转圈。这里把第一段取源
+		// 换成 v5（gzip body + v04.10.03 Medusa/Helios），响应结构 data[videoID]
+		// .video_model 与旧版一致，后续 fallback 解析/第二段/选清晰度全部复用。
+		// 仍走 hongguoAnonPlayback 编排，共享匿名身份注册与空体重试/换号策略。
+		firstBody, _, err = hongguoAnonPlayback(ctx, downloader, func(ctx context.Context, identity hongguoAnonDevice) (map[string]any, error) {
+			return downloader.hgV5SignAndFetch(ctx, videoID, identity)
+		})
+	} else {
+		firstBody, err = downloader.hgDrpyVideoModelAt(ctx, payload)
+	}
 	if err != nil {
 		return providerMedia{}, err
 	}
