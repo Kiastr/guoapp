@@ -432,6 +432,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           _error == null &&
           _health.stalled(
             position: _player.state.position,
+            buffer: _player.state.buffer,
             playing: _player.state.playing && _playIntent,
             foreground: _foreground,
             now: DateTime.now(),

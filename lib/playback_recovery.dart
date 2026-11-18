@@ -46,21 +46,34 @@ class PlaybackRecovery {
 class PlaybackHealth {
   static const stallTimeout = Duration(seconds: 20);
   Duration? _position;
+  Duration? _buffer;
   DateTime? _lastProgress;
 
   void reset() {
     _position = null;
+    _buffer = null;
     _lastProgress = null;
   }
 
+  /// [buffer] 是播放器已缓冲到的位置（mpv 的 `demuxer-cache-time`）。
+  ///
+  /// 慢网络下缓存供不上时，播放位置会停在缓存末端等分片，但缓存本身仍在
+  /// 推进——这是「正在缓冲」，不是「卡死」。只盯 position 会把正常缓冲误判
+  /// 成 stall 并强制重开整条流，表现为进度条反复从头加载、已缓冲进度全丢。
+  /// 位置或缓存任一前进都算有进展；两者同时 20 秒不动才是真的卡死。
   bool stalled({
     required Duration position,
+    required Duration buffer,
     required bool playing,
     required bool foreground,
     required DateTime now,
   }) {
-    if (!playing || !foreground || position != _position) {
+    if (!playing ||
+        !foreground ||
+        position != _position ||
+        buffer != _buffer) {
       _position = position;
+      _buffer = buffer;
       _lastProgress = now;
       return false;
     }

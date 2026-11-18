@@ -58,8 +58,10 @@ void main() {
         bool playing = true,
         bool foreground = true,
         int position = 5,
+        int buffer = 10,
       }) => health.stalled(
         position: Duration(seconds: position),
+        buffer: Duration(seconds: buffer),
         playing: playing,
         foreground: foreground,
         now: start.add(Duration(seconds: seconds)),
@@ -69,12 +71,15 @@ void main() {
       expect(stalled(20), isTrue);
       expect(stalled(21, position: 6), isFalse);
       expect(stalled(40, position: 6), isFalse);
-      expect(stalled(60, playing: false, position: 6), isFalse);
-      expect(stalled(80, playing: false, position: 6), isFalse);
-      expect(stalled(100, foreground: false, position: 6), isFalse);
-      expect(stalled(101, position: 6), isFalse);
+      // 慢网络正在缓冲：位置停住但缓存仍在推进，不算卡死。
+      expect(stalled(41, position: 6, buffer: 12), isFalse);
+      expect(stalled(60, position: 6, buffer: 12), isFalse);
+      expect(stalled(61, position: 6, buffer: 12), isTrue);
+      expect(stalled(80, playing: false, position: 6, buffer: 12), isFalse);
+      expect(stalled(100, foreground: false, position: 6, buffer: 12), isFalse);
+      expect(stalled(101, position: 6, buffer: 12), isFalse);
       health.reset();
-      expect(stalled(200, position: 6), isFalse);
+      expect(stalled(200, position: 6, buffer: 12), isFalse);
     },
   );
 }
