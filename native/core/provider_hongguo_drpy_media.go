@@ -18,6 +18,26 @@ package core
 //   - 接口请求域名限 fqnovel.com / snssdk.com；
 //   - 最终 CDN 域名限 qznovelvod.com / fqnovelvod.com / douyinvod.com；
 //   - 请求不跟随重定向到白名单外（POST 遇跳转直接按不安全处理）。
+//
+// 【上游源头仓库（GPL-3.0，按依赖层次；2026-11-18 汇总）】
+//   - woshishiq1/drpys 提交 22261adfa314「up 2.0.4」—— drpys 原始 JS 框架：
+//     两段式取址、download-quality.js 选档、checkedUrl 白名单的源头。本文件第三段
+//     选档策略与域名校验逐行对齐它。
+//   - N3urda/hongguoTV 提交 6672b55d5308ea1（0.16.6，GPL-3.0-only）—— v5 协议
+//     （v04.10.03）签名常量与算法的直接来源。本项目移植其 AesV3 / hashF13 / Medusa
+//     / Helios 到 provider_hongguo_v5.go，用上游黄金向量逐字节对拍通过。
+//   - tsukiyo-zero/hongguoTV 提交 d3389947f —— PLAYBACK_V5.md 文档与 Kotlin 移植，
+//     其「实现及来源」段注明源自 N3urda@6672b55，并保留 drpys 来源声明。
+//   - 签名底层的 SM3 / proto / xmxor 复用本仓库已有的 drpy 实现；未引入第三方 VM、
+//     研究工具、原生 SDK 或远程签名服务。
+//
+// 【上游更新跟踪（截至 2026-11-18，公开仓库提交历史实证）】
+//   - N3urda/hongguoTV：锁定 6672b55（11-16）后上游更新到 c3fb7e5d（11-17，0.16.8），
+//     但 216fd3e / babf301 / ea05fe 等提交只改 TV 播放控制与远程切集 UI，签名文件零改动
+//     → 本项目移植的 v5 签名仍是上游最新，无需跟进。
+//   - tsukiyo-zero/hongguoTV：d3389947（11-16 v5 修复）之后只有 merge 与 0.1.32
+//     发版准备，签名文件无新变化。
+//   - 结论：v5 协议自 11-16 稳定至今，+209 移植与上游当前实现一致。
 
 import (
 	"bytes"

@@ -1,5 +1,34 @@
 package core
 
+// ============================================================================
+// App 兜底线路（resolveHongguoAppMedia）上游源头与跟踪
+// ============================================================================
+//
+// 【线路本质】模拟红果官方 App（com.phoenix.read / novelread，aid=8662）直接请求
+// 批量播放接口 multi_video_model/v1/，用真 551 签名 + device_register 匿名设备身份。
+// 全链路无登录态——红果扫码登录只用于收藏/观看记录同步（provider_hongguo_account.go），
+// 与取流无关；曾有一个 NeedsSession 标记误以为本线路必须登录，早已删除。
+//
+// 【上游源头仓库（GPL-3.0，按依赖层次）】
+//   1. jackotom/hongguo-drama —— fetchAppPlayUrl：批量端点 + mixed_video_id_map
+//      （键 1004 = 内容类型编码）的请求结构来源，见本文件 hongguoAppPlaybackPayload。
+//   2. tsukiyo-zero/hongguoTV 提交 269c6d887「播放模型改用真签名」—— 551 Argus/Ladon。
+//   3. jackotom/hongguo-drama 6.9 提交 b364419c2 —— 只调整模型签名族，其余协议不动。
+//   4. ch6vip/fqapp —— 551 签名算法最初源头（rust/src/sign/{argus,simon,ladon,protobuf}.rs）。
+//      该仓库已改名/迁移为 ch6vip/novel-sound（默认分支 master）。本项目的 551 实现是
+//      独立 Go 重写，见 provider_hongguo_playback_sign.go，未引入第三方运行时代码。
+//
+// 【上游更新跟踪（截至 2026-11-18，公开仓库提交历史实证）】
+//   - jackotom/hongguo-drama 仍活跃：11-16 发 7.5（playback recovery，署名
+//     N3urda / ermilylu / WEP-56），11-18 发 7.6；播放签名族无新变化。
+//   - ch6vip/novel-sound 的 rust/src/sign/ 仍在，并新增 v5.rs / v5_tables.rs，
+//     说明它也跟进了 v5；本项目的 551 实现取自较早的 argus/simon/ladon，不受影响。
+//   - 结论：本线路仍是换代前的 v04.04.05 旧签名。红果 2026-11-16 起换代到 v5 后，
+//     这套签名实测返回 HTTP 200 空体（见 provider_hongguo_live_test.go），属已知降级
+//     兜底；+209 的 v5 加固只作用于 drpys 线路，未改本线路。
+//
+// 记录出处是为了将来维护时能对照上游版本、判断是否又换代，不靠盲改。
+
 import (
 	"context"
 	"encoding/json"
