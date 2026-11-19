@@ -22,10 +22,25 @@
 //   上游用 mpv user-shader parameters 块（PARAM / TYPE DEFINE 块）暴露三个
 //   参数。本仓库全部现有 shader 均未使用该特性，且旧版 mpv 会把参数值行当作
 //   shader 代码导致编译失败——为消除版本依赖，这里把官方默认值直接展开成
-//   预处理宏。要调参改下面三个 #define：
+//   预处理宏。要调参改 hook 块下方（COMPONENTS 指令之后）的三个 #define：
 //     UseEdgeDirection  1     方向感知上采样（关掉更快，边缘会糊）
 //     EdgeThreshold     4.0   边缘判定阈值（1..16，越低细节越多也越慢）
 //     EdgeSharpness     2.0   边缘锐化强度（1..2，过高会振铃）
+//
+// 【#define 位置是硬约束，不要挪回文件头】mpv 解析 user shader 时，把每个
+// pass 的 body 定义为「HOOK 指令行之后」到下一个 HOOK 指令之间的内容；文件开头
+// 到第一个 HOOK 指令之间的文本属于无 hook 的空 pass，**整段丢弃**。曾经把三个
+// #define 写在文件头，结果宏没有进入编译单元，着色器报
+//   error: `EdgeThreshold' undeclared
+// 编译失败后 Android GLES 驱动仍会执行该 pass，输出整幅网格噪点、色彩发灰的
+// 花屏（俗称「X 光」效果）。桌面 mpv 会打印 compile log 并可回退，移动端没有
+// 控制台，只能靠肉眼看到花屏，因此这里写死注释防止回退。
+//
+// 【同样不能把指令标记写进注释】mpv 切分 pass 用的是子串查找（找三字符
+// 前缀），不看是否在行首。注释里只要出现完整的三字符前缀 + 指令名，就会被
+// 当成真的 header 去解析，报
+//   Error while parsing COMPONENTS!
+// 并整段拒绝该文件。描述这些指令时一律去掉那三个字符，只写指令名。
 //
 // 算法特征（选档依据）：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，
 // 不做多 pass 神经网络重建，开销约为 Anime4K 极简档的五分之一；只处理亮度
@@ -34,10 +49,6 @@
 // 神经网络档。
 //============================================================================================================
 
-#define UseEdgeDirection 1
-#define EdgeThreshold 4.0
-#define EdgeSharpness 2.0
-
 //!HOOK LUMA
 //!BIND HOOKED
 //!DESC Snapdragon Game Super Resolution (GSR) v1
@@ -45,6 +56,12 @@
 //!WIDTH OUTPUT.w
 //!HEIGHT OUTPUT.h
 //!COMPONENTS 1
+
+// 三个宏必须在这里（HOOK 指令之后）。放到文件头会被 mpv 当作空 pass 丢弃，
+// 导致 EdgeThreshold / EdgeSharpness 未声明、着色器编译失败、画面花屏。
+#define UseEdgeDirection 1
+#define EdgeThreshold 4.0
+#define EdgeSharpness 2.0
 
 // Shader code
 

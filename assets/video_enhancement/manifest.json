@@ -90,11 +90,11 @@
       "note": "上游原版（+89 引入的质量档链组件）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
     },
     "SGSR.glsl": {
-      "sha256": "9d154ea996e491801065012919c146e4e05ae2b4a9d3e0667b4615df0c7b0938",
-      "bytes": 5666,
+      "sha256": "338d7538ad3eba0005b06a4c881143d2e1f45f2b9c7853831224f36bc154f14c",
+      "bytes": 7017,
       "source": "https://gist.github.com/agyild/7715b6b1f38427839d95828f84902cab",
       "license": "BSD-3-Clause",
-      "note": "高通 GSR v1 的 mpv 移植版（agyild，2025-07-13 初版 / 2025-12-23 hotfix：修正非 Edge Direction 分支的 std 计算）。写实档（photoreal）专用：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，//!HOOK LUMA（只放大亮度，色度交给 mpv 常规缩放），//!COMPONENTS 1 配合 HOOKED_gather 做 2×2 邻域采样（需 mpv >= 0.38）。与上游唯一差异：把 //!PARAM 参数块展开为 UseEdgeDirection / EdgeThreshold / EdgeSharpness 三个 #define——本仓库其余 shader 均未使用参数块，旧版 mpv 会把参数值行当代码导致编译失败。//!WHEN 保留：输出像素数须大于输入，表面未放大时自动跳过，_confirmEffect 的 desc 匹配据此判生效。"
+      "note": "高通 GSR v1 的 mpv 移植版（agyild，2025-07-13 初版 / 2025-12-23 hotfix）。写实档（photoreal）专用：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，HOOK 亮度平面（只放大亮度，色度交给 mpv 常规缩放），COMPONENTS 1 配合单通道 gather 做 2×2 邻域采样。与上游差异：PARAM 参数块展开为三个 #define，且必须放在 HOOK 指令之后（文件头内容会被 mpv 当作无 hook 的空 pass 丢弃，宏进不了编译单元，导致 EdgeThreshold 未声明、着色器编译失败、移动端出网格状花屏）。另注：mpv 按子串切分 pass，注释里禁止出现三字符指令前缀 + 指令名，否则会被当成真 header。WHEN 保留：输出面积须大于输入，未放大时自动跳过。"
     }
   }
 }
