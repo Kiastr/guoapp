@@ -12,6 +12,20 @@ class VideoEnhancementAssets {
   static const ravuRgb = 'ravu-r2-rgb.hook';
   static const ravuLuma = 'ravu-lite-ar-r2.hook';
   static const fsrcnnx = 'FSRCNNX_x2_8-0-4-1.glsl';
+
+  /// [+211] 写实档链：高通 Snapdragon GSR v1 的 mpv 移植，只有一个 pass。
+  /// 与上面几条 Anime4K 链的本质区别：
+  ///   - 不做神经网络重建，是 12 tap Lanczos 类上采样 + 边缘自适应锐化，
+  ///     成本约为极简档（972 MAC/px）的五分之一，七档里最便宜；
+  ///   - `//!HOOK LUMA` + `//!COMPONENTS 1`：只放大亮度平面，色度由 mpv
+  ///     常规缩放（spline36）承担——这是它便宜的另一半原因；
+  ///   - 无去压缩伪影能力，低码率源的块效应会被锐化放大。
+  /// 单元素链用 List 而非 String，是为了和 _apply 里其余分支同构，
+  /// 将来若上游拆出 denoise 前置 pass 可直接追加。
+  /// 依赖 HOOKED_gather（mpv >= 0.38）：media_kit 的 libmpv-android
+  /// v1.1.7（2025-10 构建）已满足；桌面端 libmpv 同理。
+  static const photorealChain = <String>['SGSR.glsl'];
+
   /// Anime4K 极简档链（+95：精细档的瘦身版，只留 S 档重建网络）。
   /// Clamp_Highlights 3 个 pass + Restore_CNN_S 4 个 pass，去掉精细档里的
   /// Restore_CNN_M（8 pass）与 Upscale 链；安卓端 Upscale 本就被 WHEN 跳过，
@@ -196,6 +210,13 @@ class VideoEnhancementAssets {
       yield LicenseEntryWithLineBreaks([
         'Anime4K',
       ], await rootBundle.loadString('$root/Anime4K-LICENSE.txt'));
+      // [+211] 写实档：高通 GSR v1 为 BSD-3-Clause（允许商用/修改，
+      // 要求保留版权声明与免责条款），与上面 GPL/LGPL 的 copyleft 不同，
+      // 因此单独成条目而不是并进 RAVU/FSRCNNX。
+      yield LicenseEntryWithLineBreaks(
+        ['Snapdragon Game Super Resolution'],
+        await rootBundle.loadString('$root/SGSR-LICENSE.txt'),
+      );
     });
   }
 }

@@ -44,6 +44,7 @@ VideoEnhancementDecision decide({
   Set<VideoEnhancementBackend> rejected = const {},
   int costLimit = 4,
   Size? fixedSurface,
+  bool luma = true,
 }) => chooseVideoEnhancement(
   preferences: preferences,
   parameters: parameters,
@@ -52,7 +53,7 @@ VideoEnhancementDecision decide({
   android: android,
   television: false,
   gpu: true,
-  luma: true,
+  luma: luma,
   hardware: false,
   animation: true,
   power: power,
@@ -268,6 +269,78 @@ void main() {
       expect(decision.backend, VideoEnhancementBackend.anime);
       expect(decision.output, const Size(762, 1344));
     });
+
+    // [+211] 写实档：高级模式里唯一走独立后端（sgsr）的档位。
+    // 它与 anime 的强制语义完全一致，只是链换成单 pass 的 GSR v1——
+    // 这里固定「选档即换后端」这一事实，防止将来被并回 anime 后端
+    // （并入后 _isOwnPass / _confirmEffect 会退化成按 tier 分支）。
+    test('写实档返回 sgsr 后端，且同样绕过全部不利条件', () {
+      final decision = decide(
+        parameters: params(width: 1080, height: 1920),
+        viewport: const Size(1080, 2400),
+        android: true,
+        preferences: const VideoEnhancementPreferences(
+          mode: VideoEnhancementMode.advanced,
+          tier: VideoEnhancementTier.photoreal,
+        ),
+        power: hostile,
+        rate: 3.0,
+        rejected: const {VideoEnhancementBackend.sgsr},
+      );
+      expect(decision.backend, VideoEnhancementBackend.sgsr);
+      expect(decision.reason, '高级模式：写实超分');
+    });
+
+    test('写实档沿用固定表面，换后端不改变 output 语义', () {
+      final decision = decide(
+        parameters: params(width: 1080, height: 1920),
+        viewport: const Size(1080, 2400),
+        android: true,
+        preferences: const VideoEnhancementPreferences(
+          mode: VideoEnhancementMode.advanced,
+          tier: VideoEnhancementTier.photoreal,
+        ),
+        fixedSurface: const Size(1440, 2560),
+      );
+      expect(decision.backend, VideoEnhancementBackend.sgsr);
+      // 表面必须大于源，SGSR 的 //!WHEN 才成立（与 Anime4K 的 Upscale 同条件）
+      expect(decision.output, const Size(1440, 2560));
+    });
+
+    test('自动族不会选中 sgsr：写实档只在高级模式生效', () {
+      // cost 与 anime 同为 3 且链更便宜，一旦混进自动族的候选路径，
+      // 省电/清晰优先会静默换成 GSR（观感与动漫链差异很大），故锁死。
+      for (final mode in const [
+        VideoEnhancementMode.economy,
+        VideoEnhancementMode.quality,
+      ]) {
+        final decision = decide(
+          parameters: params(width: 1080, height: 1920),
+          viewport: const Size(1080, 2400),
+          android: true,
+          preferences: VideoEnhancementPreferences(mode: mode),
+        );
+        expect(decision.backend, isNot(VideoEnhancementBackend.sgsr));
+      }
+    });
+
+    test('无独立亮度平面时写实档回退 Anime4K 链', () {
+      // Windows 的 d3d11 硬解 / RGB 输出没有 LUMA 平面，GSR 的
+      // //!HOOK LUMA 拿不到输入。这是管线能力问题，不是策略降级：
+      // 必须回退走 MAIN hook 的 Anime4K，而不是硬上一段空转的 shader。
+      final decision = decide(
+        parameters: params(width: 1080, height: 1920),
+        viewport: const Size(1080, 2400),
+        android: false,
+        preferences: const VideoEnhancementPreferences(
+          mode: VideoEnhancementMode.advanced,
+          tier: VideoEnhancementTier.photoreal,
+        ),
+        luma: false,
+      );
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.reason, contains('已改用 Anime4K'));
+    });
   });
 
   group('偏好迁移（2026-10 结构重构）', () {
@@ -411,8 +484,25 @@ void main() {
       }
     });
 
-    test('档位声明顺序即成本升序：质量 > 轻量 > 标准 > 均衡 > 极简超分 > 极简', () {
+    test('写实档往返序列化保持，且链只有单 pass', () {
+      const preferences = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        tier: VideoEnhancementTier.photoreal,
+      );
+      expect(
+        VideoEnhancementPreferences.fromJson(preferences.toJson()).tier,
+        VideoEnhancementTier.photoreal,
+      );
+      // 单元素链：SGSR 自己就是全部（不依赖 Clamp/Restore 等前置 pass）。
+      // 若将来上游拆出 denoise 前置 pass，这里会失败并提醒同步 manifest。
+      expect(VideoEnhancementAssets.photorealChain, ['SGSR.glsl']);
+    });
+
+    test('档位声明顺序即成本升序：写实 > 极简 > 极简超分 > 均衡 > 标准 > 精细 > 质量', () {
       expect(VideoEnhancementTier.values, [
+        // [+211] 写实档（单 pass GSR，全场最便宜）排在首位，但它是独立后端，
+        // 不参与下面这条 Anime4K 阶梯（见 nextCheaperTier 用例）。
+        VideoEnhancementTier.photoreal,
         VideoEnhancementTier.minimal,
         VideoEnhancementTier.minimalUpscale,
         VideoEnhancementTier.balanced,
@@ -448,6 +538,10 @@ void main() {
         VideoEnhancementTier.minimal,
       );
       expect(nextCheaperTier(VideoEnhancementTier.minimal), isNull);
+      // [+211] 写实档不在 Anime4K 阶梯上：它本身最便宜，返回 null 让调用方
+      // 直接降 costLimit 回高质量缩放；同时极简档也不会「降」到写实档，
+      // 避免一次降档同时换了算法（state/no 状态机都按单后端语义写的）。
+      expect(nextCheaperTier(VideoEnhancementTier.photoreal), isNull);
     });
 
     test('极简档往返序列化保持，且不影响 mode/content', () {

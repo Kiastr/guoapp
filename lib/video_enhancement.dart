@@ -409,11 +409,21 @@ class VideoEnhancementController extends ChangeNotifier {
         VideoEnhancementBackend.fsrcnnx => <String>[
           VideoEnhancementAssets.fsrcnnx,
         ],
+        // [+211] 写实档：单 pass 链，与 tier 无关（只有一个档，不存在
+        // 质量/精细之类的档内切换），所以不走 _effectiveTier 的 switch。
+        VideoEnhancementBackend.sgsr => VideoEnhancementAssets.photorealChain,
         // [档位·2026-10] 按 tier 选链：质量档=VL 链，精细档=M/S 链
         // （+87 引入；+144 起默认档为均衡档）。两链 WHEN 均保留，平台筛选由 mpv 完成。
         // [阶梯降档·+142] 用 _effectiveTier 而非 _preferences.tier：看门狗
         // 降档只改会话级覆盖，用户保存的偏好不变（见 _tierOverride 注释）。
         VideoEnhancementBackend.anime => switch (_effectiveTier) {
+          // [+211] 写实档本身走上面的 sgsr 分支。走到这里只有一种情况：
+          // 渲染管线没有独立亮度平面（d3d11 硬解 / RGB 输出 / mediacodec
+          // 直通），GSR 的 LUMA hook 拿不到输入，policy 已把它回退成 anime。
+          // 此时用均衡档兜底——它是默认档，算力与观感的平衡点，且带真超分；
+          // 不能沿用 GSR 链（MAIN hook 下 COMPONENTS 1 的取样语义会错）。
+          VideoEnhancementTier.photoreal =>
+            VideoEnhancementAssets.animeChainBalanced,
           VideoEnhancementTier.quality =>
             VideoEnhancementAssets.animeChainQuality,
           VideoEnhancementTier.fine => VideoEnhancementAssets.animeChainFine,
@@ -923,7 +933,8 @@ class VideoEnhancementController extends ChangeNotifier {
       // 用 _appliedTier（实际注入的链）而非 _preferences.tier（可能刚切档
       // 尚未重注），保证期望与链内容一致。
       // （+143 极简超分档带 Upscale_Denoise_S 链，expectsUpscale 为 true，
-      // 仍按 Depth-to-Space 判定；六档里只有极简档无超分链。）
+      // 仍按 Depth-to-Space 判定；七档里只有极简档无超分链（写实档的
+      // GSR 走 sgsr 后端，在上面的分支里单独判，不经过这里）。
       final expectsUpscale =
           fixed != null &&
           _appliedTier != VideoEnhancementTier.minimal &&
@@ -952,6 +963,14 @@ class VideoEnhancementController extends ChangeNotifier {
         VideoEnhancementBackend.fsrcnnx =>
           descriptions.contains('feature map') &&
               descriptions.contains('aggregation'),
+        // [+211] 写实档：vo-passes 只列**实际执行过**的 pass，被 //!WHEN
+        // 跳过的不会出现——所以 desc 出现即代表 GSR 真的跑了，等价于
+        // Anime4K 分支「Upscale 被 WHEN 跳过但仍命中 Restore」的宽松判定，
+        // 同时天然满足 expectsUpscale 的意图（表面没放大 → WHEN 不成立 →
+        // desc 不出现 → 确认失败，不会假装超分）。
+        VideoEnhancementBackend.sgsr => descriptions.contains(
+          'Snapdragon Game Super Resolution',
+        ),
         VideoEnhancementBackend.hardware => _hardwareFramesChanged(selected),
         _ => _gpu,
       };
@@ -1021,6 +1040,12 @@ class VideoEnhancementController extends ChangeNotifier {
   ) => switch (backend) {
     VideoEnhancementBackend.ravu => description.contains('RAVU'),
     VideoEnhancementBackend.anime => description.contains('Anime4K'),
+    // [+211] desc 取自 SGSR.glsl 的 `//!DESC Snapdragon Game Super
+    // Resolution (GSR) v1`。不匹配裸 'GSR'——太短，容易被其它 pass 的
+    // 描述误命中，导致把别人的渲染耗时算进写实档的过载判定。
+    VideoEnhancementBackend.sgsr => description.contains(
+      'Snapdragon Game Super Resolution',
+    ),
     VideoEnhancementBackend.fsrcnnx => RegExp(
       r'feature map [12]|mapping [1-4]_[12]|sub-band residuals [12]|sub-pixel convolution 1|aggregation',
     ).hasMatch(description),

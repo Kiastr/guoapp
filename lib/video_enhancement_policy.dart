@@ -12,6 +12,11 @@ enum VideoEnhancementBackend {
   ravu(2, '轻量增强'),
   fsrcnnx(3, '通用神经超分'),
   anime(3, '动漫神经超分'),
+  /// [+211] 写实档专用后端：高通 Snapdragon GSR v1 的 mpv 移植（单 pass）。
+  /// cost 与 anime 同为 3 只是为了不把自动族的成本上限撑破——它只在
+  /// 高级模式 + 写实档时才会被 chooseVideoEnhancement 返回，自动族从不选中，
+  /// 因此不会因为「更便宜」而在省电/清晰优先里被意外命中。
+  sgsr(3, '写实超分'),
   hardware(4, '硬件增强');
 
   const VideoEnhancementBackend(this.cost, this.label);
@@ -123,14 +128,23 @@ class VideoEnhancementDecision {
 /// 性能看门狗阶梯降档用的「下一个更便宜档位」（+142）。
 ///
 /// 依赖 [VideoEnhancementTier] 的声明顺序即算力升序（见该枚举的文档约定）：
-/// 极简 → 均衡 → 标准 → 轻量 → 质量。看门狗确认过载后逐级下移，到极简仍
+/// 极简 → 均衡 → 标准 → 精细 → 质量。看门狗确认过载后逐级下移，到极简仍
 /// 过载才由调用方放弃 anime 后端（降 costLimit 回落高质量缩放），避免
 /// 「一卡顿就整个失去增强」的断崖式体验。
 ///
-/// 返回 null 表示已在最低档（极简），没有更便宜的档可降。
+/// [+211] 阶梯只在 Anime4K 家族内生效：photoreal（写实档）虽排在全场首位
+/// （成本最低），但它走的是独立后端 sgsr、链结构完全不同，跨后端跳档会让
+/// 「降档」同时变成「换算法」，语义混乱且状态机难验证。因此这里显式返回
+/// null——写实档已是最便宜的一档，过载时本就该放弃增强，而不是继续下移。
+///
+/// 返回 null 表示没有更便宜的档可降（写实档，或 Anime4K 链的最低档极简）。
 VideoEnhancementTier? nextCheaperTier(VideoEnhancementTier tier) {
+  if (tier == VideoEnhancementTier.photoreal) return null;
   final index = VideoEnhancementTier.values.indexOf(tier);
-  return index > 0 ? VideoEnhancementTier.values[index - 1] : null;
+  // 极简档是 Anime4K 链的底：再往下就是写实档（换后端），不在本函数职责内。
+  return index > VideoEnhancementTier.minimal.index
+      ? VideoEnhancementTier.values[index - 1]
+      : null;
 }
 
 bool videoHasAnimationTags(String category, List<String> tags) => RegExp(
@@ -270,10 +284,28 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // 预算改按 surfaceOutput 计入（见下方 neuralMemory）。桌面端沿用放大的
   // output，与上游语义一致。
   if (preferences.mode == VideoEnhancementMode.advanced) {
+    // [+211] 写实档是唯一不走 Anime4K 的高档位：改用独立后端 sgsr
+    // （video_enhancement.dart 注入 SGSR.glsl，单 pass + LUMA hook）。
+    // 强制语义完全一致——同样绕过全部预检，只是链换了一条；
+    // 为什么不用 anime 后端 + 换链：两者的 pass 描述、生效确认条件、
+    // 性能采样匹配串都不同（Anime4K / Snapdragon GSR），混在一个后端里
+    // 会让 _isOwnPass、_confirmEffect 变成按 tier 分支的意大利面。
+    //
+    // 【唯一的例外：luma】GSR 是 //!HOOK LUMA，只吃亮度平面。渲染管线没有
+    // 独立亮度平面时（Windows 的 d3d11 硬解、RGB 输出、安卓 mediacodec 直通），
+    // 这条链注入了也是空转——不是「效果差」，而是根本拿不到输入。此时回退
+    // Anime4K 链（走 MAIN hook，RGB/YUV 都能跑）。这不违背「彻底强制」：
+    // 上面绕过的都是性能/内容判断，而这是管线能力判断，属于「能不能跑」。
+    final photoreal = preferences.tier == VideoEnhancementTier.photoreal;
+    final sgsr = photoreal && luma;
     return VideoEnhancementDecision(
-      VideoEnhancementBackend.anime,
+      sgsr ? VideoEnhancementBackend.sgsr : VideoEnhancementBackend.anime,
       surfaceOutput,
-      '高级模式：强制 Anime4K 超分',
+      sgsr
+          ? '高级模式：写实超分'
+          : photoreal
+          ? '当前解码无独立亮度平面，写实档已改用 Anime4K 链'
+          : '高级模式：强制 Anime4K 超分',
     );
   }
   // 以下预检仅对自动族生效（高级档已在上面直接返回，不看这些条件）。

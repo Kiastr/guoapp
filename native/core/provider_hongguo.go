@@ -292,14 +292,20 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 	// 冷却期内直接跳过——不再每次都先白试一次。记账只消费既有请求的结果，
 	// 不额外发起探测请求。
 	errs := make(map[string]error, len(hongguoRoutes))
-	for _, route := range hongguoRoutes {
+	// 执行计划：哪些线路本轮真正发请求（静态禁用 / 冷却中 = 跳过）。
+	// 冷却状态的判定与「全熔断兜底」都收在 hongguoRouteDispatch 里，
+	// 本函数只负责按计划执行、记账、聚合错误（见 provider_hongguo_routes.go）。
+	dispatch := hongguoRouteDispatch(hongguoRoutes, time.Now())
+	for index, route := range hongguoRoutes {
 		// 静态禁用：上游已证实停用，连冷却探测都不做（见表项注释）。
 		// 不记账：确定不通不是「本次失败」，记进去只会污染健康度统计。
 		if route.Disabled {
 			errs[route.Name] = fmt.Errorf("%w：%s", errHongguoRouteDisabled, route.DisabledReason)
 			continue
 		}
-		if hongguoRoutesHealth.skip(route.Name, time.Now()) {
+		// 冷却跳过。注意：全熔断时首选线路在 dispatch 里已被强制放行，
+		// 这里的 false 一定意味着「它还在冷却且不是本次放行的那一条」。
+		if !dispatch[index] {
 			errs[route.Name] = errHongguoRouteSkipped
 			continue
 		}
@@ -312,8 +318,8 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 			hongguoRoutesHealth.noteOK(route.Name)
 			// 带上来源线路：播放层探活失败时可据此把失败回流给线路健康度
 			media.Route = route.Name
-			for index := range media.Variants {
-				media.Variants[index].Route = route.Name
+			for variant := range media.Variants {
+				media.Variants[variant].Route = route.Name
 			}
 			return media, nil
 		}
@@ -323,12 +329,9 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 			return providerMedia{}, ctxErr
 		}
 	}
-	// 聚合错误沿用改造前的三段文案（App / 网页 / 备用），
-	// 保证既有日志与排查习惯不受本次改造影响。
-	return providerMedia{}, fmt.Errorf("红果 App 取流失败：%v；网页取流失败：%v；备用取流失败：%w",
-		publicError(routeErrorOrSkip(errs[hongguoRouteApp])),
-		publicError(routeErrorOrSkip(errs[hongguoRouteWeb])),
-		routeErrorOrSkip(errs[hongguoRouteDjapi]))
+	// 聚合错误：由 hongguoAggregateRouteError 统一生成，
+	// 逐段交代主线路 / App / 网页 / 备用的结局（见 provider_hongguo_routes.go）。
+	return providerMedia{}, hongguoAggregateRouteError(errs)
 }
 
 func (d *Downloader) resolveHongguoWebMedia(ctx context.Context, seriesID, videoID string) (providerMedia, error) {

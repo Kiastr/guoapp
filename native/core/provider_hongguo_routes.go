@@ -30,8 +30,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"sync"
+	"time"
 )
 
 // 线路标识：用于健康度记账与错误聚合。
@@ -114,6 +116,65 @@ var hongguoRoutes = []hongguoRoute{
 			return d.resolveHongguoPlaybackAPI(ctx, seriesID, videoID)
 		},
 	},
+}
+
+// hongguoRouteDispatch 计算本轮分发的执行计划：哪些线路真正发起请求。
+// 返回值与 routes 等长，true = 执行，false = 跳过（静态禁用或冷却中）。
+//
+// 【全熔断兜底：为什么必须有】
+// 熔断的价值是「别反复撞一堵墙」，但它有个前提——失败是同质的。
+// drpys(v5) 不满足这个前提：v5 的 branch 定序匹配与 _rticket 存在偶发不中，
+// 同一台设备同一张剧连点几次的实测结果是有时成功、有时空 body。这类抖动
+// 连输三次就触发 30 分钟熔断，而熔断状态跨进程持久化，重启也解不开——
+// 用户看到的是「刚才还能播，现在怎么点都报冷却」。
+//
+// 因此这里加一层兜底：本轮**一条线路都执行不了**时（即所有可用线路都在
+// 冷却），强制放行注册表里第一条可用线路一次。
+//
+// 【判定为什么是「本轮无线路可执行」而不是「所有线路都熔断」】
+// 后者会把「从未失败过的备选线路」当成健康项，导致 drpys 已经熔断、
+// 但 app/web 还没有失败记录时不肯放行——用户得先白点三次（让 app/web
+// 各自累计到阈值），第四次才轮到 drpys。而「一条都执行不了」直接对应
+// 用户真正感受到的死锁：这次点击注定什么都试不了，那就不如试首选。
+// 只要还有备选线路能试，就先让备选试，不放行冷却中的首选。
+//
+// 【三个必须守住的边界】
+//  1. 放行**不清状态、不延冷却**：成功由 noteOK 正常恢复，失败由 noteFail
+//     照常记账。兜底只改变「这次要不要发请求」，不改变健康度状态机。
+//  2. 只放行**一条**（首选）：其余冷却线路继续跳过。否则一次点击会连发
+//     三四个必然失败的请求，既慢又给风控加压。
+//  3. 触发源只有用户主动取流（点播放 / 点重试 / 切集 / 切线路 / 源检测），
+//     没有任何定时器或后台预取调用分发——所以这不会退化成「主动探测」，
+//     与 provider_hongguo_health.go 顶部「绝不额外发起探测请求」的原则不冲突。
+//
+// 【最坏代价】原本「立刻回一句冷却中」，变成「真发一次请求、等它超时再报错」。
+// 上界是明确的：drpys 单段 12s、匿名注册 10s，Dart 层 resolve 另有 70s 硬超时。
+func hongguoRouteDispatch(routes []hongguoRoute, now time.Time) []bool {
+	plan := make([]bool, len(routes))
+	executable := 0
+	for index, route := range routes {
+		if route.Disabled {
+			continue
+		}
+		// skip 的副作用只有「半开放行时标记 Probing」，冷却中（tripped）时不动状态
+		if hongguoRoutesHealth.skip(route.Name, now) {
+			continue
+		}
+		plan[index] = true
+		executable++
+	}
+	if executable > 0 {
+		return plan
+	}
+	// 本轮没有任何线路可执行 = 死锁：强制放行第一条未静态禁用的线路
+	for index, route := range routes {
+		if route.Disabled {
+			continue
+		}
+		plan[index] = true
+		break
+	}
+	return plan
 }
 
 // hongguoSigner 签名方案的接口（插槽位）。
@@ -208,6 +269,24 @@ func routeErrorOrSkip(err error) error {
 		return errors.New("未尝试该线路")
 	}
 	return err
+}
+
+// hongguoAggregateRouteError 把各线路的结局聚合成一条可读错误。
+//
+// 【为什么首段要单独列出 drpys】改造前这段文案只有 App / 网页 / 备用三段，
+// 因为当时首选被当成「必然先试」。但 drpys 一旦被熔断跳过，日志里就只剩
+// 「App 取流失败」——用户会误以为是 App 线路的问题，真正首选的失败原因
+// （v5 签名抖动 / 空 body / 网络）完全看不见，排查方向直接跑偏。
+// 因此补一段主线路，让「谁真失败了、谁只是被跳过」在一条日志里看清。
+//
+// 【为什么首段用 %v 而不是 %w】多条线路的错误无法用单条 wrap 链表达；
+// %w 只留给末位兜底（djapi），保持「最末位可被 errors.Is 追到」的既有行为。
+func hongguoAggregateRouteError(errs map[string]error) error {
+	return fmt.Errorf("红果主线路取流失败：%v；红果 App 取流失败：%v；网页取流失败：%v；备用取流失败：%w",
+		publicError(routeErrorOrSkip(errs[hongguoRouteDrpy])),
+		publicError(routeErrorOrSkip(errs[hongguoRouteApp])),
+		publicError(routeErrorOrSkip(errs[hongguoRouteWeb])),
+		routeErrorOrSkip(errs[hongguoRouteDjapi]))
 }
 
 // hongguoEmptyResponse 判定一次红果响应是否为「空响应」。

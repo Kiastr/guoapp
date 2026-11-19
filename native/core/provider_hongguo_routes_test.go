@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -256,8 +257,8 @@ func TestHongguoRoutesAllRegisteredHaveDistinctNames(t *testing.T) {
 		}
 		seen[route.Name] = true
 	}
-	// 聚合依赖这三个固定名字，缺一即会输出「未尝试该线路」
-	for _, name := range []string{hongguoRouteApp, hongguoRouteWeb, hongguoRouteDjapi} {
+	// 聚合依赖这四个固定名字，缺一即会输出「未尝试该线路」
+	for _, name := range []string{hongguoRouteDrpy, hongguoRouteApp, hongguoRouteWeb, hongguoRouteDjapi} {
 		if !seen[name] {
 			t.Fatalf("错误聚合依赖线路 %q，注册表中缺失", name)
 		}
@@ -507,5 +508,130 @@ func TestHongguoRouteDjapiStaticallyDisabled(t *testing.T) {
 	resetHongguoRouteHealth(t)
 	if hongguoRoutesHealth.skip(hongguoRouteDjapi, time.Now()) {
 		t.Fatalf("静态禁用不应走健康度熔断（两者语义不同）")
+	}
+}
+
+// ---- 全熔断兜底：所有可用线路都冷却时，强制放行首选一次 ----
+//
+// 【要防的回归】drpys(v5) 签名抖动导致连输三次 → 30 分钟冷却 → 冷却状态
+// 又跨进程持久化 → 用户重启也解不开，表现成「多点几次明明能播却一直报冷却」。
+// 下面四个用例锁死兜底的边界：放行几条、何时放行、成功率如何回流状态机。
+
+func TestHongguoRouteDispatchForcedReleaseWhenAllCoolingDown(t *testing.T) {
+	resetHongguoRouteHealth(t)
+	now := time.Now()
+	for _, name := range []string{hongguoRouteDrpy, hongguoRouteApp, hongguoRouteWeb} {
+		for i := 0; i < hongguoHealthFailFastStreak; i++ {
+			hongguoRoutesHealth.noteFail(name, now, hongguoFailSignature)
+		}
+	}
+	// 冷却期内（signature = 30min，取 1min 一定在窗口内）
+	inside := now.Add(time.Minute)
+	plan := hongguoRouteDispatch(hongguoRoutes, inside)
+	if !plan[0] || hongguoRoutes[0].Name != hongguoRouteDrpy {
+		t.Fatalf("全熔断时应强制放行首选线路 %q，plan=%v", hongguoRouteDrpy, plan)
+	}
+	// 只放行一条：其余冷却线路必须继续跳过，避免一次点击连发多个必然失败的请求
+	for i := 1; i < len(hongguoRoutes); i++ {
+		if plan[i] {
+			t.Fatalf("全熔断只应放行一条，第 %d 条（%s）不应执行，plan=%v", i, hongguoRoutes[i].Name, plan)
+		}
+	}
+	// 放行不得清状态：健康度仍处于熔断，等真实结果来裁决
+	if !hongguoRoutesHealth.skip(hongguoRouteDrpy, inside) {
+		t.Fatalf("强制放行不应清除熔断状态")
+	}
+}
+
+func TestHongguoRouteDispatchNoForcedReleaseWhenAnyHealthy(t *testing.T) {
+	resetHongguoRouteHealth(t)
+	now := time.Now()
+	for i := 0; i < hongguoHealthFailFastStreak; i++ {
+		hongguoRoutesHealth.noteFail(hongguoRouteDrpy, now, hongguoFailSignature)
+	}
+	// 阶段一：drpys 冷却中，但 app/web 还能试 → 不算死锁，按正常回退走备选，
+	// 不放行冷却中的首选（否则首选等于永不熔断）。
+	inside := now.Add(time.Minute)
+	plan := hongguoRouteDispatch(hongguoRoutes, inside)
+	if plan[0] {
+		t.Fatalf("存在可执行的备选线路时不应强制放行冷却中的 drpys，plan=%v", plan)
+	}
+	if !plan[1] || !plan[2] {
+		t.Fatalf("未熔断的 app/web 应执行，plan=%v", plan)
+	}
+	// 阶段二：备选也被记满 → 下次点击一条都执行不了 → 才放行首选。
+	// 这正是用户场景：冷却期内点几次能把备选试完，再点一次就能重新试到 drpys。
+	for _, name := range []string{hongguoRouteApp, hongguoRouteWeb} {
+		for i := 0; i < hongguoHealthFailFastStreak; i++ {
+			hongguoRoutesHealth.noteFail(name, inside, hongguoFailSignature)
+		}
+	}
+	plan = hongguoRouteDispatch(hongguoRoutes, inside.Add(time.Second))
+	if !plan[0] {
+		t.Fatalf("备选全部熔断后应强制放行首选线路，plan=%v", plan)
+	}
+}
+
+func TestHongguoRouteDispatchDisabledRouteNeverReleased(t *testing.T) {
+	resetHongguoRouteHealth(t)
+	// 只有一条线路且被静态禁用：没有「可用线路」可放行，不能凭空放行禁用项
+	routes := []hongguoRoute{{Name: "gone", Disabled: true, DisabledReason: "上游已停用"}}
+	plan := hongguoRouteDispatch(routes, time.Now())
+	if len(plan) != 1 || plan[0] {
+		t.Fatalf("静态禁用线路不应被执行，plan=%v", plan)
+	}
+}
+
+func TestHongguoForcedReleaseSuccessRestoresRoute(t *testing.T) {
+	resetHongguoRouteHealth(t)
+	now := time.Now()
+	for _, name := range []string{hongguoRouteDrpy, hongguoRouteApp, hongguoRouteWeb} {
+		for i := 0; i < hongguoHealthFailFastStreak; i++ {
+			hongguoRoutesHealth.noteFail(name, now, hongguoFailSignature)
+		}
+	}
+	if plan := hongguoRouteDispatch(hongguoRoutes, now.Add(time.Minute)); !plan[0] {
+		t.Fatalf("前置条件失败：死锁状态应放行 drpys，plan=%v", plan)
+	}
+	// 放行后成功（真实成功路径会调 noteOK）→ 状态完全清零，后续不再被跳过
+	hongguoRoutesHealth.noteOK(hongguoRouteDrpy)
+	if hongguoRoutesHealth.skip(hongguoRouteDrpy, now.Add(2*time.Minute)) {
+		t.Fatalf("强制放行成功后应完全恢复线路")
+	}
+}
+
+// ---- 错误聚合：主线路的真失败原因必须可见 ----
+
+func TestHongguoAggregateRouteErrorSurfacesPrimaryRoute(t *testing.T) {
+	// 场景就是用户日志里的那一行：主线路被熔断跳过，唯一可见的只有 App。
+	// 改造前这段文案压根没有主线路，真凶被藏起来；本用例锁死「必须出现」。
+	errs := map[string]error{
+		hongguoRouteDrpy: errHongguoEmptyBody,
+		hongguoRouteApp:  errHongguoRouteSkipped,
+		// web / djapi 缺省 → routeErrorOrSkip 补「未尝试该线路」
+	}
+	got := hongguoAggregateRouteError(errs).Error()
+	for _, want := range []string{
+		"红果主线路取流失败",
+		"红果接口返回空内容", // drpys 的真实失败原因
+		"红果 App 取流失败",
+		"该线路近期连续失败", // app 只是被跳过，不是真失败
+		"未尝试该线路",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("聚合文案缺少 %q：%s", want, got)
+		}
+	}
+}
+
+func TestHongguoAggregateRouteErrorKeepsDjapiWrapped(t *testing.T) {
+	// 末位仍是 %w：调用方可以 errors.Is 追到「静态禁用」这类确定事实，
+	// 用来区分「所有线路都试过但失败」与「备用线路根本没启用」。
+	errs := map[string]error{
+		hongguoRouteDjapi: fmt.Errorf("%w：%s", errHongguoRouteDisabled, "上游已停用"),
+	}
+	agg := hongguoAggregateRouteError(errs)
+	if !errors.Is(agg, errHongguoRouteDisabled) {
+		t.Fatalf("末位线路应保留 errors.Is 可追踪性：%v", agg)
 	}
 }

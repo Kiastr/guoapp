@@ -17,11 +17,12 @@ enum VideoEnhancementContent {
   final String label;
 }
 
-/// 高级模式（advanced）下的 Anime4K 链档位。
+/// 高级模式（advanced）下的增强档位。
 ///
 /// 各档链定义见 video_enhancement_assets.dart；成本量级按 //!DESC 层规格折算
 /// （Cout×Cin×k² 单像素 MAC，Clamp 约 20 忽略不计；+143 起数字为脚本重算值，
 /// 旧注释的 920/1604/2420 系口算偏差）：
+///   photoreal      ≈ 24    单 pass GSR v1（+211，非神经网络，独立 backend）
 ///   minimal        ≈ 972   Clamp + Restore_S（无超分）
 ///   minimalUpscale ≈ 972   Clamp + Upscale_Denoise_S（+143）
 ///   balanced       ≈ 1944  Clamp + Restore_S + Upscale_S（+142；+144 起默认档）
@@ -30,6 +31,12 @@ enum VideoEnhancementContent {
 ///                        （固定表面 1.333× 下两个 AutoDownscalePre 与末段
 ///                        Upscale_S 均被 WHEN 跳过；+144 前名 lite／轻量档）
 ///   quality        ≈ 17200 Clamp + Restore_VL + Upscale_VL（同上跳过规律）
+/// [photoreal] 写实档（+211）：不属 Anime4K 家族，走独立 backend sgsr
+/// （高通 Snapdragon GSR v1 的 mpv 移植）。单 pass、12 tap Lanczos 类上采样
+/// + 边缘自适应锐化，只处理亮度平面，开销约为极简档五分之一，是七档里最
+/// 便宜的一档；观感自然、不带神经网络的「塑料感」，适合真人/实拍内容。
+/// 它不参与 Anime4K 的阶梯降档（nextCheaperTier 到此为止），过载时由
+/// costLimit 直接退回高质量缩放，避免跨后端跳档造成语义混乱。
 /// [minimal] 极简档：只留高光钳制 + S 档重建，无超分链（+95）；
 /// [minimalUpscale] 极简超分档：与极简档完全同价，但把算力从「同分辨率重建」
 /// 挪到「2× 超分」——Clamp + Upscale_Denoise_S（官方 Mode C 的开链组件，
@@ -48,9 +55,12 @@ enum VideoEnhancementContent {
 /// 声明顺序即算力升序——这同时是性能看门狗的阶梯降档顺序
 /// （video_enhancement.dart 的 _watchPerformance 经 nextCheaperTier 逐级下移，
 /// 到极简仍过载才放弃 anime 后端）。新增档位必须按成本插队，不能追加到末尾。
+/// photoreal 是全场最低成本，故排在首位；但它是独立后端，nextCheaperTier 在
+/// 极简档即返回 null，不会从 Anime4K 链跳到它（跨后端的降级由 costLimit 承担）。
 /// minimalUpscale 与 minimal 成本持平（972），声明在其后是为了让看门狗把
 /// 过载的均衡档先降到「仍带超分」的极简超分档，而不是直接打回无超分的极简档。
 enum VideoEnhancementTier {
+  photoreal('写实档'),
   minimal('极简档'),
   minimalUpscale('极简超分档'),
   balanced('均衡档'),
