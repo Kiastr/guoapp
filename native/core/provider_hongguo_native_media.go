@@ -18,14 +18,18 @@ package core
 //      该仓库已改名/迁移为 ch6vip/novel-sound（默认分支 master）。本项目的 551 实现是
 //      独立 Go 重写，见 provider_hongguo_playback_sign.go，未引入第三方运行时代码。
 //
-// 【上游更新跟踪（截至 2026-11-18，公开仓库提交历史实证）】
+// 【上游更新跟踪（截至 2026-11-21，公开仓库提交历史实证）】
 //   - jackotom/hongguo-drama 仍活跃：11-16 发 7.5（playback recovery，署名
-//     N3urda / ermilylu / WEP-56），11-18 发 7.6；播放签名族无新变化。
-//   - ch6vip/novel-sound 的 rust/src/sign/ 仍在，并新增 v5.rs / v5_tables.rs，
-//     说明它也跟进了 v5；本项目的 551 实现取自较早的 argus/simon/ladon，不受影响。
+//     N3urda / ermilylu / WEP-56），11-18 发 7.6，11-20 发 7.7（92df757ed，
+//     video_tab 改用 v5 bodyless GET 签名）。551 播放签名族无新变化。
+//   - ch6vip/novel-sound 的 rust/src/sign/ 仍在，新增 v5.rs / v5_tables.rs，
+//     11-19（695712f3b）把空体回退到签名 GET video_tab；本项目的 551 实现取自较早的
+//     argus/simon/ladon，不受影响。
 //   - 结论：本线路仍是换代前的 v04.04.05 旧签名。红果 2026-11-16 起换代到 v5 后，
 //     这套签名实测返回 HTTP 200 空体（见 provider_hongguo_live_test.go），属已知降级
-//     兜底；+209 的 v5 加固只作用于 drpys 线路，未改本线路。
+//     兜底；+209 的 v5 加固与 +213 的 bodyless GET 空体回退都只作用于 drpys 线路，
+//     未改本线路。11-20 的加固再次印证：匿名 POST 门被静默拒绝，与本线路旧签名的
+//     困境同形，故本线路继续保留为末位兜底，不单独跟进。
 //
 // 记录出处是为了将来维护时能对照上游版本、判断是否又换代，不靠盲改。
 

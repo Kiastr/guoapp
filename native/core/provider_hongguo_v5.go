@@ -25,6 +25,19 @@ package core
 // 【黄金向量】上游提供可逐字节对拍的向量：signing-v5-carrier.json（AesV3 v5
 // 四个时间戳变体）与 signing-v5-f13.json（hashF13 v5 三十二组）。本文件移植后
 // 先用这两个原语对拍全绿，再接产品请求，避免盲改导致签名不匹配。
+//
+// 【2026-11-20 服务端加固：POST 空体 → bodyless v5 GET video_tab 回退】
+// 上游四家在同一时间窗各自跟进（提交历史实证）：
+//   - jackotom/hongguo-drama@92df757ed（7.7）：video_tab 改用 v5 bodyless GET 签名，
+//     实网同一集出 1080P HEVC；明确「旧 Argus/Ladon 打 video_tab 也是 200 空体」。
+//   - tsukiyo-zero/hongguoTV@dbe677e1c：匿名 POST（v1 与 :dr_scene 变体）全空，
+//     GET video_tab 仍出模型；把 GET 提到 POST 之前。
+//   - ch6vip/novel-sound@695712f3b：一次 v5 尝试后同身份回退带签名 GET video_tab。
+//   - N3urda/hongguoTV@478f00683：空体 + Retry-After 归为退避，签名文件零改动。
+// 结论：不是算法换代，是匿名 POST 门被静默拒绝；video_tab 仍可用，但必须用 v5
+// 签名族（body=null → 摘要按空 body，不发 x-ss-stub/Content-Type/Content-Encoding）。
+// 本文件 POST 空体后用**同一匿名身份**回退一次 GET video_tab，响应归一成 player
+// 形状（data[videoID].video_model）交回原解析链；GET 也空才交回换号编排。
 
 import (
 	"bytes"
@@ -59,6 +72,9 @@ const (
 	hgV5AppName     = "novelread"
 	hgV5VersionCode = "74332"
 	hgV5Endpoint    = "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1"
+	// hgV5VideoTabEndpoint 是 11-20 加固后仍可出模型的 GET 门。
+	// 来自 jackotom@92df757ed / tsukiyo@dbe677e1c 的实网验证，域名在同项目白名单内。
+	hgV5VideoTabEndpoint = "https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/video_tab/multi_video_model/v1/"
 )
 
 // hgV5MustHex 解析固定 hex 常量，非法直接 panic（编译期常量，正常不会发生）。
@@ -664,8 +680,152 @@ func (downloader *Downloader) hgV5SignAndFetch(ctx context.Context, videoID stri
 	for key, value := range hgV5SignHeader(fullURL, body, ts, nonce, started, who) {
 		headers[key] = value
 	}
-	return hgDrpyRequestJSON(ctx, httpMethodPost, fullURL, headers, body)
+	result, err := hgDrpyRequestJSON(ctx, httpMethodPost, fullURL, headers, body)
+	if errors.Is(err, errHongguoEmptyBody) {
+		// 2026-11-20 加固：匿名 POST 返回 200 空体。用**同一匿名身份**回退一次
+		// bodyless v5 GET video_tab；GET 也空才把空体错误交回外层换号编排。
+		return downloader.hgV5VideoTabFetch(ctx, videoID, identity)
+	}
+	return result, err
 }
 
-// httpMethodPost 避免在本文件再引入 net/http（保持 import 精简）。
-const httpMethodPost = "POST"
+// httpMethodPost / httpMethodGet 避免在本文件再引入 net/http（保持 import 精简）。
+const (
+	httpMethodPost = "POST"
+	httpMethodGet  = "GET"
+)
+
+// hgV5VideoTabQuery 构造 GET video_tab 的 query 参数（有序，签名对字节敏感）。
+//
+// 【参数出处】jackotom/hongguo-drama@92df757ed 的 videoTabRequest.values（实网出
+// 1080P HEVC 的版本）与 tsukiyo@dbe677e1c 的 tabVideoModel.extra 一致；两家差异
+// 只在版本画像（jackotom 74332 / tsukiyo 73932）。这里沿用本地 74332 画像，与
+// 本文件 POST 的 hgV5Query 完全相同，避免同一身份两套版本指纹。
+// 【顺序】身份/画像字段在前、业务字段（video_id 等）居中、_rticket 收尾——
+// 与 jackotom 的 `{...values, _rticket}` 展开顺序逐字节一致。
+func hgV5VideoTabQuery(videoID string, identity hongguoAnonDevice, ticket int64) [][2]string {
+	return [][2]string{
+		{"aid", hgV5Aid},
+		{"app_name", hgV5AppName},
+		{"version_code", hgV5VersionCode},
+		{"version_name", hgV5VersionName},
+		{"channel", hgV5Channel},
+		{"device_platform", "android"},
+		{"device_type", hgV5DeviceType},
+		{"os_version", hgV5OSVersion},
+		{"update_version_code", hgV5VersionCode},
+		{"iid", identity.InstallID},
+		{"cdid", identity.CDID},
+		{"device_id", identity.DeviceID},
+		{"video_id", videoID},
+		{"video_id_type", "0"},
+		{"device_level", "1"},
+		{"need_all_video_definition", "1"},
+		{"need_mp4_align", "0"},
+		{"use_os_player", "0"},
+		{"video_platform", "1024"},
+		{"source", "0"},
+		{"from_video_id", ""},
+		{"_rticket", strconv.FormatInt(ticket, 10)},
+	}
+}
+
+// hgV5VideoTabSignedHeaders 生成 bodyless GET 的完整请求头（可离线单测）。
+// 与 POST 头集合的差别：删掉 x-ss-stub，且不带 Content-Type / Content-Encoding。
+func hgV5VideoTabSignedHeaders(fullURL string, ticket int64, ts uint32, who map[string]string) map[string]string {
+	nonce, started := hgDrpyLoadProcess()
+	headers := hgV5SignHeader(fullURL, nil, ts, nonce, started, who) // medusa 绑定空摘要
+	delete(headers, "x-ss-stub")                                     // bodyless 不发摘要头
+	headers["User-Agent"] = hgV5PlayUA
+	headers["Accept"] = "application/json"
+	headers["x-ss-req-ticket"] = strconv.FormatInt(ticket, 10)
+	return headers
+}
+
+// hgV5VideoTabFetch 用指定匿名身份打一次 bodyless v5 GET video_tab。
+// 包装函数用生产端点；测试用 hgV5VideoTabFetchAt 注入 mock server。
+func (downloader *Downloader) hgV5VideoTabFetch(ctx context.Context, videoID string, identity hongguoAnonDevice) (map[string]any, error) {
+	return downloader.hgV5VideoTabFetchAt(ctx, videoID, identity, hgV5VideoTabEndpoint)
+}
+
+// hgV5VideoTabFetchAt 是 GET 回退的实现体。
+//
+// 【bodyless 签名与 POST 的三点差异】（jackotom@92df757ed / tsukiyo@dbe677e1c 实证）
+//  1. body 为 nil：摘要按空 body 的 md5 计算（md5.Sum(nil)），与 jackotom 的
+//     md5(Buffer.alloc(0)) 一致；签名头里的 x-medusa 随之绑定空摘要。
+//  2. 不发 x-ss-stub：hgV5SignHeader 会算并填上它，生成后必须 delete 掉——
+//     上游明确空体门带摘要头会被判伪造痕迹。
+//  3. 不发 Content-Type / Content-Encoding：这两个是 gzip POST 专用，GET 带上
+//     会被服务端按「声称有 body 却无 body」处理。
+//
+// 其余 x-khronos / x-helios / x-medusa / x-ss-req-ticket 与 POST 一致，且
+// x-khronos 与 URL 末尾 _rticket 同源（ticket/1000），否则签名对不上 query。
+func (downloader *Downloader) hgV5VideoTabFetchAt(ctx context.Context, videoID string, identity hongguoAnonDevice, endpoint string) (map[string]any, error) {
+	now := time.Now().UnixMilli()
+	ts := uint32(now / 1000)
+	who := hgV5IdentityMap(identity)
+	emptyMD5 := md5.Sum(nil) // bodyless：与 jackotom md5(Buffer.alloc(0)) 同值
+
+	// 抖动 _rticket 直到 branch==12（v5 只实现分支 12），用空 body 的 md5 判定。
+	var ticket int64
+	found := false
+	for offset := int64(0); offset < 1024; offset++ {
+		ticket = now + offset
+		query := hgDrpyPythonURLEncode(hgV5VideoTabQuery(videoID, identity, ticket))
+		qsm3 := hgDrpySM3([]byte(query))
+		tsLE := hgDrpyLe32(ts)
+		iv := hgDrpyGetIv(hgDrpyGetIv(hgDrpyGetIv(0x20230928, qsm3[:]), emptyMD5[:]), tsLE[:])
+		if iv&15 == 12 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, errors.New("v5 GET 无法生成合法签名票据")
+	}
+
+	fullURL := endpoint + "?" + hgDrpyPythonURLEncode(hgV5VideoTabQuery(videoID, identity, ticket))
+	headers := hgV5VideoTabSignedHeaders(fullURL, ticket, ts, who)
+
+	response, err := hgDrpyRequestJSON(ctx, httpMethodGet, fullURL, headers, nil)
+	if err != nil {
+		return nil, err
+	}
+	return hgV5NormalizeVideoTab(response, videoID)
+}
+
+// hgV5NormalizeVideoTab 把 GET video_tab 的响应归一成 POST player 的形状：
+// {"code":0,"data":{<videoID>:{"video_model":{...}}}}，让 hgDrpyFallbackFromModel
+// 与后续第二段（fallback_api 解密）零改动复用。
+//
+// 两种 data 形态都出现：新返回 data.video_model_data.<id>，旧/单集返回 data.<id>。
+// 单集场景下 id 缺失时回退首个条目（与 tsukiyo@tabVideoModel 的 firstOrNull 一致）；
+// 多集预告场景必须按 id 精确取，不能误取别集。
+func hgV5NormalizeVideoTab(response map[string]any, videoID string) (map[string]any, error) {
+	if hgDrpyResponseCode(response) != 0 {
+		return nil, errors.New("App 接口暂未提供本集播放信息")
+	}
+	data, _ := response["data"].(map[string]any)
+	if data == nil {
+		return nil, errHongguoEmptyBody
+	}
+	rows := data
+	if nested, ok := data["video_model_data"].(map[string]any); ok {
+		rows = nested
+	}
+	entry, _ := rows[videoID].(map[string]any)
+	if entry == nil {
+		// 仅当 data 里除 id 外只有一个候选时才回退，避免多集预告取错集。
+		if len(rows) == 1 {
+			for _, value := range rows {
+				if candidate, ok := value.(map[string]any); ok {
+					entry = candidate
+				}
+			}
+		}
+	}
+	if entry == nil {
+		return nil, errHongguoEmptyBody
+	}
+	return map[string]any{"code": 0, "data": map[string]any{videoID: entry}}, nil
+}

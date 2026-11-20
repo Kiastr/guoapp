@@ -31,13 +31,19 @@ package core
 //   - 签名底层的 SM3 / proto / xmxor 复用本仓库已有的 drpy 实现；未引入第三方 VM、
 //     研究工具、原生 SDK 或远程签名服务。
 //
-// 【上游更新跟踪（截至 2026-11-18，公开仓库提交历史实证）】
-//   - N3urda/hongguoTV：锁定 6672b55（11-16）后上游更新到 c3fb7e5d（11-17，0.16.8），
-//     但 216fd3e / babf301 / ea05fe 等提交只改 TV 播放控制与远程切集 UI，签名文件零改动
-//     → 本项目移植的 v5 签名仍是上游最新，无需跟进。
-//   - tsukiyo-zero/hongguoTV：d3389947（11-16 v5 修复）之后只有 merge 与 0.1.32
-//     发版准备，签名文件无新变化。
-//   - 结论：v5 协议自 11-16 稳定至今，+209 移植与上游当前实现一致。
+// 【上游更新跟踪（截至 2026-11-21，公开仓库提交历史实证）】
+//   - N3urda/hongguoTV：锁定 6672b55（11-16）后更新到 c3fb7e5d（11-17，0.16.8）与
+//     478f00683（11-19，0.16.10「playback recovery」）；后者只把空体+Retry-After 归为
+//     退避、干净 transport + strict 重试，签名文件零改动。
+//   - tsukiyo-zero/hongguoTV：d3389947（11-16 v5 修复）之后到 dbe677e1c（11-20，0.1.35）
+//     把 GET video_tab 提到 POST 之前，POST 版本画像试到 74532/去 dr_scene——属同一加固
+//     的不同应对，签名原语未变。
+//   - jackotom/hongguo-drama：92df757ed（11-20，7.7）video_tab 改用 v5 bodyless GET 签名，
+//     实网同一集出 1080P HEVC；ch6vip/novel-sound：695712f3b（11-19）同身份回退签名 GET。
+//   - woshishiq1/drpys：2.0.7（11-13）新增短剧库脚本，签名协议未变。
+//   - 结论：不是算法换代（v04.10.03 签名原语 11-16 起稳定），是匿名 POST 门被静默拒绝。
+//     +209 的 v5 签名仍是上游最新；+213 在其上补 bodyless GET video_tab 空体回退，
+//     与四家上游 11-19/20 的应对同向。
 
 import (
 	"bytes"
