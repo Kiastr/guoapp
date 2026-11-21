@@ -90,11 +90,11 @@
       "note": "上游原版（+89 引入的质量档链组件）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
     },
     "SGSR.glsl": {
-      "sha256": "338d7538ad3eba0005b06a4c881143d2e1f45f2b9c7853831224f36bc154f14c",
-      "bytes": 7017,
+      "sha256": "1e7b43fd48133621095060559b22aa121b26dd8c5813fa60ee718c5bb5d80bf8",
+      "bytes": 7179,
       "source": "https://gist.github.com/agyild/7715b6b1f38427839d95828f84902cab",
       "license": "BSD-3-Clause",
-      "note": "高通 GSR v1 的 mpv 移植版（agyild，2025-07-13 初版 / 2025-12-23 hotfix）。写实档（photoreal）专用：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，HOOK 亮度平面（只放大亮度，色度交给 mpv 常规缩放），COMPONENTS 1 配合单通道 gather 做 2×2 邻域采样。与上游差异：PARAM 参数块展开为三个 #define，且必须放在 HOOK 指令之后（文件头内容会被 mpv 当作无 hook 的空 pass 丢弃，宏进不了编译单元，导致 EdgeThreshold 未声明、着色器编译失败、移动端出网格状花屏）。另注：mpv 按子串切分 pass，注释里禁止出现三字符指令前缀 + 指令名，否则会被当成真 header。WHEN 保留：输出面积须大于输入，未放大时自动跳过。"
+      "note": "高通 GSR v1 的 mpv 移植版（agyild，2025-07-13 初版 / 2025-12-23 hotfix）。写实档（photoreal）专用：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，HOOK 亮度平面（只放大亮度，色度交给 mpv 常规缩放），COMPONENTS 1 配合单通道 gather 做 2×2 邻域采样。参数用上游原生的 PARAM 块暴露（+214 起）：三个 PARAM 位于第一个 HOOK 之前，默认值写在指令后一行，由 mpv 按官方机制注入。算法体与 agyild 上游及 Android 真机验证版（ravarage/vibeplayer）逐字一致。历史：+211 曾改手写 #define 放文件头导致 EdgeThreshold 未声明编译失败、真机 X 光花屏；+212 挪到 HOOK 后在桌面能过但非真机验证形态；+214 回归 PARAM 块。另注：mpv 按子串切分 pass，注释里禁止出现三字符指令前缀 + 指令名，否则会被当成真 header。WHEN 保留：输出面积须大于输入，未放大时自动跳过。"
     }
   }
 }

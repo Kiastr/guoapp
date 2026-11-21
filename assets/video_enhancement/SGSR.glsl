@@ -18,23 +18,22 @@
 //     https://gist.github.com/agyild/7715b6b1f38427839d95828f84902cab
 //   - 同源参考移植：Magpie（2025-08）
 //
-// 本仓库改动（仅此一处，其余逐字保留上游移植）：
-//   上游用 mpv user-shader parameters 块（PARAM / TYPE DEFINE 块）暴露三个
-//   参数。本仓库全部现有 shader 均未使用该特性，且旧版 mpv 会把参数值行当作
-//   shader 代码导致编译失败——为消除版本依赖，这里把官方默认值直接展开成
-//   预处理宏。要调参改 hook 块下方（COMPONENTS 指令之后）的三个 #define：
+// 参数暴露方式（+214 起回归上游原生形态，勿再改回手写宏）：
+//   三个参数用 mpv 官方的 user-shader parameters 块（PARAM / TYPE 指令）声明，
+//   块位于第一个 HOOK 指令之前，默认值就是紧跟指令的那一行（1 / 4.0 / 2.0）。
+//   这是 agyild 上游原版、也是 Android 端 vibeplayer 等真机验证版采用的形态；
+//   mpv 会把 PARAM 识别为指令并在编译每个 pass 时把默认值注入进去，算法体无需
+//   关心宏的位置。要调参改下方 PARAM 块里对应的默认值行即可：
 //     UseEdgeDirection  1     方向感知上采样（关掉更快，边缘会糊）
 //     EdgeThreshold     4.0   边缘判定阈值（1..16，越低细节越多也越慢）
 //     EdgeSharpness     2.0   边缘锐化强度（1..2，过高会振铃）
 //
-// 【#define 位置是硬约束，不要挪回文件头】mpv 解析 user shader 时，把每个
-// pass 的 body 定义为「HOOK 指令行之后」到下一个 HOOK 指令之间的内容；文件开头
-// 到第一个 HOOK 指令之间的文本属于无 hook 的空 pass，**整段丢弃**。曾经把三个
-// #define 写在文件头，结果宏没有进入编译单元，着色器报
-//   error: `EdgeThreshold' undeclared
-// 编译失败后 Android GLES 驱动仍会执行该 pass，输出整幅网格噪点、色彩发灰的
-// 花屏（俗称「X 光」效果）。桌面 mpv 会打印 compile log 并可回退，移动端没有
-// 控制台，只能靠肉眼看到花屏，因此这里写死注释防止回退。
+// 【历史坑，别再踩】+211 曾把这三个参数展开成手写 #define 放在文件头，结果
+// 报 error: `EdgeThreshold' undeclared 编译失败、真机出 X 光网格花屏——原因是
+// mpv 把「文件头到第一个 HOOK 之间」的非指令文本当作无 hook 空 pass 整段丢弃，
+// 手写宏随之丢失。+212 把 #define 挪到 HOOK 之后虽在桌面编译通过，但那种自造
+// 形态并非上游/真机验证形态，真机仍报花屏。+214 直接恢复上游 PARAM 块：参数
+// 由 mpv 按官方机制注入，与 agyild 上游及 vibeplayer 真机版算法逐字一致。
 //
 // 【同样不能把指令标记写进注释】mpv 切分 pass 用的是子串查找（找三字符
 // 前缀），不看是否在行首。注释里只要出现完整的三字符前缀 + 指令名，就会被
@@ -49,6 +48,27 @@
 // 神经网络档。
 //============================================================================================================
 
+//!PARAM UseEdgeDirection
+//!DESC Direction-aware upscaling; off is faster but blurs edges.
+//!TYPE DEFINE
+//!MINIMUM 0
+//!MAXIMUM 1
+1
+
+//!PARAM EdgeThreshold
+//!DESC Edge detection sensitivity; lower is sharper but slower.
+//!TYPE CONSTANT float
+//!MINIMUM 1.0
+//!MAXIMUM 16.0
+4.0
+
+//!PARAM EdgeSharpness
+//!DESC Edge sharpening strength; too high causes ringing.
+//!TYPE CONSTANT float
+//!MINIMUM 1.0
+//!MAXIMUM 2.0
+2.0
+
 //!HOOK LUMA
 //!BIND HOOKED
 //!DESC Snapdragon Game Super Resolution (GSR) v1
@@ -56,12 +76,6 @@
 //!WIDTH OUTPUT.w
 //!HEIGHT OUTPUT.h
 //!COMPONENTS 1
-
-// 三个宏必须在这里（HOOK 指令之后）。放到文件头会被 mpv 当作空 pass 丢弃，
-// 导致 EdgeThreshold / EdgeSharpness 未声明、着色器编译失败、画面花屏。
-#define UseEdgeDirection 1
-#define EdgeThreshold 4.0
-#define EdgeSharpness 2.0
 
 // Shader code
 
