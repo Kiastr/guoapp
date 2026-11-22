@@ -59,11 +59,20 @@ func (engine *nativeEngine) nativePreload(ctx context.Context, input nativeInput
 	return plan, nil
 }
 
-// nativePreloadWarm 预取并按可用性挑选线路。
+// nativePreloadWarm 预取并判断线路可用性。
 //
-// 首选线路若在预算内拿不到首字节（或完全失败），就本地切到下一条线路再探一次；
-// 两次都失败时保留**预取字节更多**的那一版（已有的预取不浪费）。
-// 全程串行、共享同一时间预算，因此请求总量与旧实现相当。
+// 【判据分两级，只有「完全取不到数据」才算失败】
+//   - result.OK（取到了字节）→ 线路可用，只是首字节可能慢；标记 Verified 与否
+//     只影响播放层首帧看门狗的档位（10s / 6s），不影响线路取舍。
+//   - !result.OK（一个字节都没取到）→ 真失败：回流健康度，并本地切下一条线再探。
+//
+// 【为什么不把「慢」当失败】预加载的首字节阈值（3s）比正式播放严格得多，
+// 若按它记账，连续几集预加载都慢就会把 drpys 累计到 3 次熔断 3 分钟，
+// 正式播放被迫走兜底线——预加载反而把好线记死。慢线的最终判决应交给
+// 播放层的首帧看门狗，预加载不越权。
+//
+// 【顺带减少请求】慢线不再触发第二次探活，说明预加载通常在 1 次请求内收敛；
+// 只有完全失败才会换线再探一次。全程串行、共享同一时间预算。
 func (engine *nativeEngine) nativePreloadWarm(
 	ctx context.Context,
 	stream *nativeStreamServer,
@@ -81,28 +90,34 @@ func (engine *nativeEngine) nativePreloadWarm(
 	cancel()
 	plan.PrefetchedBytes = result.Bytes
 	plan.Verified = result.OK && result.FirstByteMS > 0 && result.FirstByteMS <= nativePreloadFirstByteLimit.Milliseconds()
-	// 【回流】探活发现「解析得出来、但地址播不通」——这类失败只有播放层能观测到，
-	// 若不回流，下次解析还会优先选这条线路。归为 network（取不到首字节）。
-	if !plan.Verified && choice.route != "" {
+	// 【回流】只回流「一个字节都没取到」的失败。取到数据但首字节慢（>3s）
+	// 不记账：慢线仍然能播，只是首帧来得晚；把它记成 network 失败会让
+	// 连续几集预加载把整条线路熔断，正式播放也被迫改走兜底。
+	if !result.OK && choice.route != "" {
 		hongguoRoutesHealth.noteFail(choice.route, time.Now(), hongguoFailNetwork)
 	}
-	if plan.Verified || choice.index+1 >= len(choice.media) {
+	// 首探已取到数据就到此为止：慢线也已把数据写进会话缓存，再探一条
+	// 只会多一次请求（加重风控），换来的只是「可能更快」的不确定收益。
+	if result.OK || choice.index+1 >= len(choice.media) {
 		return plan, choice
 	}
 	if time.Until(deadline) <= 0 {
 		return plan, choice
 	}
 	// 下一条线路：本地切换，零解析请求。
+	// 【为什么原会话要等到确认 next 可用后才释放】提前释放会让「两条线都取不到
+	// 数据」的分支返回一个已失效的本地代理地址——Dart 侧照样 open 它，结果首帧
+	// 等到看门狗超时才切线路，比老实重新解析慢得多。先留着它，失败时才有退路。
 	previousSession := plan.Session
 	next, err := engine.nativeNextPlayback(ctx, previousSession)
 	if err != nil {
 		return plan, choice
 	}
-	engine.nativeReleasePlayback(previousSession)
 	engine.mu.Lock()
 	nextChoice, exists := engine.playbacks[next.Session]
 	engine.mu.Unlock()
 	if !exists || nextChoice.streamSession == "" {
+		engine.nativeReleasePlayback(next.Session)
 		return plan, choice
 	}
 	warming, cancel = context.WithTimeout(ctx, time.Until(deadline))
@@ -110,15 +125,13 @@ func (engine *nativeEngine) nativePreloadWarm(
 	cancel()
 	next.PrefetchedBytes = nextResult.Bytes
 	next.Verified = nextResult.OK && nextResult.FirstByteMS > 0 && nextResult.FirstByteMS <= nativePreloadFirstByteLimit.Milliseconds()
-	if !next.Verified && !nextResult.OK && result.OK {
-		// 新的更差：回收，保留原线路（已预取的字节仍然有效）。
+	if !nextResult.OK {
+		// 两条线都一个字节没取到：保留原线路。原地址来自一次成功的解析，
+		// 比「同样取不到数据的备选」更可信，且它的会话刚刚才被验证仍然有效。
 		engine.nativeReleasePlayback(next.Session)
 		return plan, choice
 	}
-	if !next.Verified && result.OK && nextResult.Bytes <= result.Bytes {
-		engine.nativeReleasePlayback(next.Session)
-		return plan, choice
-	}
+	engine.nativeReleasePlayback(previousSession)
 	return next, nextChoice
 }
 
