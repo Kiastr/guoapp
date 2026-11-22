@@ -185,7 +185,11 @@ Future<void> showAppUpdateDialog(
     await service.ignore(info);
   } else if (choice == 'download') {
     try {
-      await InAppBrowser().open(urlString: info.url);
+      // [+223] 用系统浏览器打开发布页。flutter_inappwebview 6.1.5 的 InAppBrowser
+      // 没有 5.x 的 open(urlString:) 方法（+221 误用了旧 API，CI 编译报
+      // "The method 'open' isn't defined"）；6.x 对应的是静态方法
+      // openWithSystemBrowser(url: WebUri(...))，无需应用内浏览器配置，最稳。
+      await InAppBrowser.openWithSystemBrowser(url: WebUri(info.url));
     } catch (_) {
       // 对话框已给出可复制的下载地址，打不开浏览器时静默。
     }
