@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_layout.dart';
 import 'cinema_sections.dart';
@@ -53,6 +54,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     CatalogCategory('feed', '公开推荐'),
     CatalogCategory('feed_personal', '账号推荐（实验）'),
   ];
+  // [+222] 推荐档位记忆的持久化 key。退出应用/杀后台后，下次进入默认打开
+  // 上次离开时选中的档位（个性推荐 / 公开推荐 / 账号推荐实验）。
+  // 【为什么用 SharedPreferences】它把修改写进平台持久化存储（Android 的
+  // SharedPreferences / iOS 的 NSUserDefaults），进程被系统杀掉后仍在；内存变量
+  // 做不到这一点。这里只存档位 id 字符串，三个 id 与 Go 侧常量逐字一致。
+  // 【为什么读回要校验】老版本可能遗留已下线的 id，直接赋值会让页面停在空档；
+  // 只有当 id 仍在 _genres 里才采纳，否则静默退回默认档。
+  static const _genrePrefKey = 'recommend.lastGenre';
+
   final _scroll = ScrollController();
   String _genre = 'feed_behavior';
   List<Drama> _items = [];
@@ -67,7 +77,39 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   void initState() {
     super.initState();
     widget.repository.catalogUpdates.addListener(_metadataChanged);
+    // [+222] 先恢复上次档位再取流：SharedPreferences 有进程内缓存，getInstance
+    // 只读本地、耗时可忽略；但读回是异步的，若先按默认档 _load() 再切档会白加载
+    // 一次（首屏闪一下默认内容）。所以把 _load() 放进恢复流程末尾，只加载一次。
+    _restoreGenreThenLoad();
+  }
+
+  /// [+222] 读取持久化档位后加载推荐。读取失败（存储不可用/被禁用）不阻塞推荐，
+  /// 静默退回默认档；mounted 检查避免用户秒退后对已销毁的 State 赋值。
+  Future<void> _restoreGenreThenLoad() async {
+    String? saved;
+    try {
+      saved = (await SharedPreferences.getInstance()).getString(_genrePrefKey);
+    } catch (_) {
+      saved = null;
+    }
+    if (!mounted) return;
+    if (saved != null && _genres.any((g) => g.id == saved)) {
+      _genre = saved;
+    }
     _load();
+  }
+
+  /// [+222] 写档位到持久化存储，供下次进入恢复。异常一律吞掉：记忆档位是锦上
+  /// 添花，不该因为存储被禁用（隐私模式/权限）而影响切换本身。await setString
+  /// 走 SharedPreferences 的 apply 语义，返回时修改已提交平台层，随后立刻杀
+  /// 后台也不丢。
+  Future<void> _persistGenre(String genre) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_genrePrefKey, genre);
+    } catch (_) {
+      // 静默降级：存储不可用时保持内存态，下次仍按默认档进入。
+    }
   }
 
   @override
@@ -160,7 +202,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   /// 避免两层 Tooltip 抢手势。
   Widget _genreMenu() => PopupMenuButton<String>(
     key: const ValueKey('recommend-genre-menu'),
-    tooltip: '切换推荐模式',
+    tooltip: '切换推荐模式（下次进入默认打开上次选择）',
     onSelected: _select,
     itemBuilder: (_) => [
       for (final genre in _genres)
@@ -207,6 +249,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _items = [];
       _hasMore = true;
     });
+    // [+222] 档位切换即落盘，退出/杀后台后下次进入会自动恢复这一档。
+    _persistGenre(genre);
     if (_scroll.hasClients) _scroll.jumpTo(0);
     _load();
   }
