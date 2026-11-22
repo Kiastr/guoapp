@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -69,13 +70,26 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	// 见 provider_hongguo_feed.go 里的说明）。未登录时 cookie 为空，请求
 	// 退化成匿名公开流，并在结果里给一条提示，不让实验档看起来像已生效。
 	cookie := ""
+	// [+221] 方案 A：账号档另取注册设备身份（device_id/iid/cdid 三件套），供 tab/v1
+	// 走签名链路启用服务端账号画像。同样只在内存里传递，不进落盘的 state.Query。
+	var device hongguoAccountDevice
 	if genre == hongguoPersonalFeedGenre {
 		session := engine.hongguoLoginLoad()
 		if hongguoLoginHasSession(session.Cookies) {
 			cookie = hongguoAccountCookieHeader(session.Cookies)
+			// 复用与账号同步同一套匿名注册身份；取号失败就让 device 保持零值，
+			// fetchHongguoFeed 会据此跳过签名、降级匿名，不影响该档可用性。
+			if anon, anonErr := engine.downloader.hongguoAnonDevice(ctx); anonErr == nil &&
+				strings.TrimSpace(anon.CDID) != "" {
+				device = hongguoAccountDevice{
+					DeviceID:  anon.DeviceID,
+					InstallID: anon.InstallID,
+					CDID:      anon.CDID,
+				}
+			}
 		}
 	}
-	page, err := engine.downloader.fetchHongguoRecommendations(ctx, state.Query, cookie)
+	page, err := engine.downloader.fetchHongguoRecommendations(ctx, state.Query, cookie, device)
 	if err != nil {
 		// 推荐兜底到官网首页四个板块（热播短剧 / 真人剧 / 漫剧 / AI 剧，
 		// 共 36 部，字段与分类页同构）。
@@ -171,8 +185,20 @@ func (engine *nativeEngine) nativeRecommendations(ctx context.Context, input nat
 	engine.hongguoCatalog = engine.downloader.hongguoCatalogSnapshot()
 	engine.catalogStates[key] = nativeCatalogState{UpdatedAt: time.Now(), Page: state.Page, HasMore: state.HasMore}
 	result := nativeCatalogResult{Items: append([]nativeDrama{}, items...), Page: state.Page, HasMore: state.HasMore, Fresh: true}
-	if genre == hongguoPersonalFeedGenre && cookie == "" {
-		result.Warning = joinNativeWarnings(result.Warning, "实验档未登录红果账号，当前按公开推荐取流")
+	// [+221] 账号档状态提示分三种：未登录 / 已登录但签名失败降级 / 签名档成功。
+	// 让用户看得见「这一档到底有没有真的个性化」，不再是一个说不清的实验开关。
+	if genre == hongguoPersonalFeedGenre {
+		switch {
+		case cookie == "":
+			result.Warning = joinNativeWarnings(result.Warning, "未登录红果账号，当前按公开推荐取流")
+		case !device.valid():
+			result.Warning = joinNativeWarnings(result.Warning, "账号设备身份未就绪，已降级为公开推荐")
+		case result.Warning != "":
+			// 签名链路报错但仍拿到了内容（fetchHongguoFeed 的降级分支），提示已降级。
+			result.Warning = joinNativeWarnings(result.Warning, "账号签名推荐暂不可用，已降级为公开推荐")
+		default:
+			result.Warning = joinNativeWarnings(result.Warning, "已按红果账号画像个性化")
+		}
 	}
 	if err := engine.writeCatalogDiskLocked(); err != nil {
 		result.Fresh, result.Warning, result.saveError = false, err.Error(), err

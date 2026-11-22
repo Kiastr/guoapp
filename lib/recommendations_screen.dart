@@ -9,6 +9,7 @@ import 'core_bridge.dart';
 import 'local_store.dart';
 import 'models.dart';
 import 'playback_launch_screen.dart';
+import 'recommendation_ranker.dart';
 import 'widgets.dart';
 
 class RecommendationsScreen extends StatefulWidget {
@@ -108,8 +109,21 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         force: force,
       );
       if (!mounted || generation != _generation) return;
+      // [+221] 方案 B：仅「个性推荐」档用本机看过/收藏的题材画像给这批剧重排，
+      // 让首批不再和公开推荐一模一样。公开推荐 / 账号推荐（实验）两档保持服务端
+      // 原顺序——前者要当纯净对照组，后者由 Go 侧方案 A 负责（见 provider_hongguo_feed.go）。
+      // 重排是纯本地、无副作用：没有历史/收藏时 ranker 原样返回，不假装个性化。
+      // 【为什么直接排 page.items】服务端按游标累积好的全量列表就在这里；ranker 用
+      // (分数, 原下标) 复合稳定排序，本地画像在一次会话里固定，同一批剧每次得分相同、
+      // 顺序稳定，more 时新剧按分数插入而已，不会把已滑过的内容随机打乱。
+      final ranked = genre == 'feed_behavior'
+          ? LocalTasteRanker.build(
+              history: widget.store.history,
+              favorites: widget.store.favorites,
+            ).rank(page.items)
+          : page.items;
       setState(() {
-        _items = page.items;
+        _items = ranked;
         _hasMore = page.hasMore;
         _error = page.warning.isEmpty ? null : page.warning;
         _loading = _more = false;
@@ -130,6 +144,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return '推荐';
   }
 
+  /// [+221] 档位一句话说明（app 内引导，和 README 保持一致）。
+  /// 让用户切档前就知道三档的区别——尤其「个性推荐」是本地题材排序、「账号推荐」
+  /// 需要登录才有服务端画像，避免再出现「感觉和公开一样」的困惑。
+  String _genreHint(String id) => switch (id) {
+        'feed_behavior' => '按你看过/收藏的题材本地排序，无需登录',
+        'feed' => '官方公开信息流，纯净无偏好',
+        'feed_personal' => '登录后按红果账号画像推荐，未登录降级公开流',
+        _ => '',
+      };
+
   /// [+190] 三档推荐模式：原本是第二行 ChoiceChip，现收编为标题行里的
   /// 文字超链接按钮，点击弹菜单，当前档打勾。passthrough 让外层
   /// PopupMenuButton 接管点击（见 cinema_sections.dart 注释）；tooltip 传空串
@@ -144,7 +168,23 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           value: genre.id,
           child: Row(
             children: [
-              Expanded(child: Text(genre.name)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(genre.name),
+                    const SizedBox(height: 2),
+                    Text(
+                      _genreHint(genre.id),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               if (genre.id == _genre)
                 const Icon(Icons.check_rounded, size: 18),
             ],

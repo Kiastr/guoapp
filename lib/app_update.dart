@@ -12,6 +12,22 @@ const _releasesLatestApi =
     'https://api.github.com/repos/$_repoFullName/releases/latest';
 const _releasesPageUrl = 'https://github.com/$_repoFullName/releases/latest';
 
+/// [+221] 更新检查的 API 候选源：直连优先，`gh-proxy.org` 兜底。
+///
+/// 【为什么只有一个镜像】实测（2026-11-22）绝大多数「国内 GitHub 镜像」是文件下载
+/// 加速器（只代理 release/raw/clone 的 github.com 域名），**不代理 api.github.com
+/// 这个 REST 端点**：gh-proxy.com / ghproxy.net / ghproxy.homeboyc.cn 返回 403，
+/// ghfast.top / mirror.ghproxy.com / moeyy.xyz / gitmirror 等直接超时。唯一稳定
+/// 可用的是 gh-proxy.org（3 连测均 200、约 1s）。硬编码一堆无效镜像只会制造
+/// 「做了多源」的假象、还拖慢每次检查，所以只保留实测可用的这一个。
+///
+/// 【为什么不自建 CDN】更新是低频只读查询、直连国内实测可达，为一个辅助功能引入
+/// 自建服务不划算；候选源逐个尝试、首个成功即止，镜像挂了也能自动直连，反过来亦然。
+const _releaseApiCandidates = <String>[
+  _releasesLatestApi,
+  'https://gh-proxy.org/$_releasesLatestApi',
+];
+
 class AppUpdateInfo {
   const AppUpdateInfo({
     required this.version,
@@ -67,10 +83,22 @@ class AppUpdateService {
   }
 
   Future<AppUpdateInfo?> checkLatest() async {
+    // [+221] 逐个候选源尝试：直连失败/被污染就换镜像，首个合法 releases JSON 即止。
+    for (final endpoint in _releaseApiCandidates) {
+      final info = await _checkOne(endpoint);
+      if (info != null) return info;
+    }
+    return null;
+  }
+
+  /// 从单个候选源取一次 releases/latest。返回 null 表示「这个源没拿到合法结果」，
+  /// 由 [checkLatest] 决定是否尝试下一个源。任何异常都吞掉——更新是辅助功能，
+  /// 不该因为网络抖动把用户打扰到。
+  Future<AppUpdateInfo?> _checkOne(String endpoint) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 8);
     try {
-      final request = await client.getUrl(Uri.parse(_releasesLatestApi));
+      final request = await client.getUrl(Uri.parse(endpoint));
       request.headers
         ..set('Accept', 'application/vnd.github+json')
         ..set('User-Agent', appSlug);
@@ -84,8 +112,10 @@ class AppUpdateService {
       final text = await utf8.decoder.bind(response).join();
       final data = jsonDecode(text) as Map<String, dynamic>;
       final tag = data['tag_name'] as String? ?? '';
-      // release tag 形如 app-v1.5.21-219：末尾数字即构建号。
-      final buildMatch = RegExp(r'-(\d+)$').firstMatch(tag);
+      // [+221] 严格校验：镜像/反代常返回 HTML 错误页或 403 JSON，即使 HTTP 200
+      // 也可能不是 releases 对象。tag_name 必須匹配本仓库的 app-vX.Y.Z-<build>
+      // 形态，否则判为被污染、换下一个源——绝不拿错误页去比版本号。
+      final buildMatch = RegExp(r'^app-v\d+\.\d+\.\d+-(\d+)$').firstMatch(tag);
       if (buildMatch == null) return null;
       final build = int.tryParse(buildMatch.group(1) ?? '') ?? 0;
       if (build <= 0) return null;

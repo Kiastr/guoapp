@@ -57,13 +57,35 @@ func isHongguoFeedGenre(genre string) bool {
 	return genre == hongguoFeedGenre || genre == hongguoPersonalFeedGenre
 }
 
+// [+221] 方案 A：账号推荐（实验）档的签名画像。
+//
+// 上游 N3urda/hongguoTV（1543★）core/RecommendationFeed.kt 证实：服务端真个性化
+// 靠「注册设备身份 + x-gorgon/x-medusa 全套签名 + 账号 Cookie」，need_personal_recommend=1
+// 只是开关；匿名拼曝光上下文（本地 feed_behavior 那条）服务端不采纳。本档复用本地
+// 已验证可用的账号签名设施（provider_hongguo_account.go 的 hongguoAccountQuery /
+// hongguoAccountSign 与取流同源），把 tab/v1 当账号请求签名，服务端据此启用账号画像。
+//
+// 【版本画像为什么是 74332】与上游 recommendationSigner 对齐：签名档用 phoenix.read
+// 播放器 UA + 74332，不能借用匿名 tab/v1 的 73532/novelread——x-medusa 内含
+// versionName，UA/参数/签名三者必须自洽，否则被判非法客户端。
+const (
+	hongguoFeedSignedVersionCode = "74332"
+	hongguoFeedSignedVersionName = "7.4.3.32"
+	hongguoFeedSignedUA          = "com.phoenix.read/74332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
+)
+
 // fetchHongguoFeed 连取若干批推荐流，攒到目标条数或连续无新增为止。
-// cookie 非空时每批请求都带账号 Cookie（账号推荐实验档），为空即匿名公开流。
+//
+// [+221] 方案 A 分流：genre=账号推荐(feed_personal) 且 device 有效时，每批走
+// fetchHongguoFeedSignedPage（签名 + Cookie，服务端启用账号画像）；任一签名批
+// 失败则**整档降级**到匿名 tab/v1（fetchHongguoFeedPage，仍带 Cookie 保兼容）——
+// 保证实验档最坏情况也不比匿名公开流差，不会因为签名/风控问题打不开。
+// 公开档(feed) 的 device 恒为空，全部走匿名，不受影响。
 //
 // 返回的 NextOffset/SessionID 是最后一批的游标，可直接用于下一次调用。
 // 中途某一批失败时：只要前面已经取到剧集就正常返回（网络抖动不该把整屏打掉），
 // 一部都没取到才把错误抛上去。
-func (downloader *Downloader) fetchHongguoFeed(ctx context.Context, query hongguoRecommendationQuery, cookie string) (hongguoRecommendationPage, error) {
+func (downloader *Downloader) fetchHongguoFeed(ctx context.Context, query hongguoRecommendationQuery, cookie string, device hongguoAccountDevice) (hongguoRecommendationPage, error) {
 	page := hongguoRecommendationPage{Dramas: []Drama{}}
 	seen := make(map[string]bool, len(query.Seen))
 	for _, id := range query.Seen {
@@ -71,8 +93,22 @@ func (downloader *Downloader) fetchHongguoFeed(ctx context.Context, query honggu
 	}
 	next := query
 	var lastErr error
+	// signed 为 true 表示本档本轮走签名链路；一旦某批签名失败即置 false 降级，
+	// 后续批不再重试签名（避免同一轮里账号态被拒还反复打签名接口）。
+	signed := query.Genre == hongguoPersonalFeedGenre && device.valid()
 	for batch := 0; batch < hongguoFeedBatchLimit; batch++ {
-		current, err := downloader.fetchHongguoFeedPage(ctx, next, cookie)
+		var current hongguoRecommendationPage
+		var err error
+		if signed {
+			current, err = downloader.fetchHongguoFeedSignedPage(ctx, next, device, cookie)
+			if err != nil {
+				// 签名链路失败 → 降级匿名重取这一批；匿名也失败才记 lastErr。
+				signed = false
+				current, err = downloader.fetchHongguoFeedPage(ctx, next, cookie)
+			}
+		} else {
+			current, err = downloader.fetchHongguoFeedPage(ctx, next, cookie)
+		}
 		if err != nil {
 			lastErr = err
 			break
@@ -275,6 +311,91 @@ func parseHongguoFeedPage(result map[string]any, query hongguoRecommendationQuer
 	// 推荐流没有可靠结束标记（has_more 恒 false 但仍有新卡片），保持可继续。
 	page.HasMore = true
 	return page, nil
+}
+
+// fetchHongguoFeedSignedPage 是方案 A 的单批取流：用注册设备身份给 tab/v1 签名。
+//
+// 【与匿名 fetchHongguoFeedPage 的区别】query 走 hongguoAccountQuery（含 iid /
+// device_id / cdid / ts / _rticket，设备三件套齐全），请求头走 hongguoAccountSign
+// 生成 x-gorgon / x-medusa / x-ladon / x-argus 等全套签名，并带账号 Cookie。
+// 服务端据此识别为「已登录的合法客户端」→ 启用账号画像调序。
+//
+// 【版本自洽】query 与签名头都用 74332 / 7.4.3.32，UA 用 phoenix.read/74332；
+// 三者与 x-medusa 内的 versionName 一致，避免 110 ILLEGAL_ACCESS。
+//
+// 【为什么复用账号签名器而不是新写】hongguoAccountQuery / hongguoAccountSign 已在
+// 收藏、历史接口实测可用（同一套 drpys 签名，取流链路也在用），它们与路径无关——
+// 签名对 query 字节与 fullURL 生效，tab/v1 只是换 path + extra。复用既省代码，
+// 又保证签名算法与已验证链路一致，不引入新的对拍风险。
+func (downloader *Downloader) fetchHongguoFeedSignedPage(ctx context.Context, query hongguoRecommendationQuery, device hongguoAccountDevice, cookie string) (hongguoRecommendationPage, error) {
+	page := hongguoRecommendationPage{Dramas: []Drama{}}
+	if !device.valid() {
+		return page, errors.New("账号设备身份无效，无法启用签名推荐")
+	}
+	// tab/v1 的业务参数作为 extra；设备/版本/时间戳由 hongguoAccountQuery 统一补齐，
+	// 顺序固定（业务在前、设备居中、iid/device_id/cdid/ts/_rticket 收尾）。
+	reqType := "2"
+	if query.Offset == 0 {
+		reqType = "1"
+	}
+	extra := [][2]string{
+		{"tab_type", hongguoCellTabType},
+		{"bottom_tab_type", "7"},
+		{"landing_bottom_tab_type", "7"},
+		{"offset", strconv.Itoa(query.Offset)},
+		{"client_req_type", reqType},
+	}
+	if query.SessionID != "" {
+		extra = append(extra, [2]string{"session_id", query.SessionID})
+	}
+
+	now := time.Now()
+	khronos := uint32(now.Unix())
+	ticket := now.UnixMilli()
+	queryString, fullURL := "", ""
+	for offset := int64(0); offset < hongguoBranchAttempts; offset++ {
+		queryString = hongguoAccountQuery(extra, device, hongguoFeedSignedVersionCode,
+			hongguoFeedSignedVersionName, int64(khronos), ticket+offset)
+		fullURL = hongguoFeedBaseURL + hongguoFeedPath + "?" + queryString
+		if hgDrpyBranchOf(fullURL, nil, khronos) == 0 {
+			break
+		}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	if err != nil {
+		return page, err
+	}
+	for name, value := range hongguoAccountSign(fullURL, queryString, nil, now, device,
+		hongguoFeedSignedVersionName, hongguoFeedSignedUA) {
+		request.Header.Set(name, value)
+	}
+	if cookie != "" {
+		request.Header.Set("Cookie", cookie)
+	}
+	response, err := downloader.doPreparedCatalogRequest(request, 20*time.Second, nil)
+	if err != nil {
+		return page, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return page, fmt.Errorf("红果账号推荐请求失败：HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, hongguoFeedBodyLimit))
+	if err != nil {
+		return page, err
+	}
+	if len(body) == 0 {
+		return page, errHongguoEmptyBody
+	}
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		return page, errors.New("红果账号推荐数据格式异常")
+	}
+	// 签名/账号态错误（110 ILLEGAL_ACCESS 等）交给上层降级到匿名流，不让整档打不开。
+	if code := mapString(result, "code"); code != "" && code != "0" {
+		return page, fmt.Errorf("红果账号推荐暂不可用（错误码 %s）", truncate(code, 20))
+	}
+	return parseHongguoFeedPage(result, query)
 }
 
 // hongguoFeedContentType 判断卡片是否为短剧。
