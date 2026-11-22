@@ -480,7 +480,20 @@ class VideoEnhancementController extends ChangeNotifier {
           //   +218 注释），与 FBO 格式无关。Anime4K / FSRCNNX 的神经网络中间
           //   激活值需要浮点精度，统一维持 rgba16f。
           // 该值经 _setOption 记入 _originalOptions，关闭增强/切档时会自动恢复。
-          _setOption('fbo-format', 'rgba16f');
+          //
+          // [+224] B 方案（TBDR 带宽）：仅「高级 + 极简超分档」把中间 FBO 降到
+          //   rgba8，4 字节/像素，所有 pass 的读写带宽减半；其余档维持 rgba16f。
+          //   【为什么不是 rgb10_a2】Anime4K 的 Conv 输出是 4 通道 2×2 子像素
+          //   （pixel shuffle），alpha 承载第 4 个子像素的数据而非透明度；rgb10_a2
+          //   的 alpha 只有 2bit，会毁掉 1/4 子像素。等宽降精度只能选 rgba8。
+          //   【代价】CNN 中间激活值 8bit 量化可能有轻微 banding（动漫大面积
+          //   平色通常无感）；+217 的 rgba8 曾伴随「首次应用 FBO 变更→超分
+          //   不可用/蓝屏」，真机若复现，把下面条件改成恒 false（统一 rgba16f）
+          //   即可整段回退，不影响其他逻辑。
+          final minimalUpscaleFbo =
+              selected.backend == VideoEnhancementBackend.anime &&
+              _effectiveTier == VideoEnhancementTier.minimalUpscale;
+          _setOption('fbo-format', minimalUpscaleFbo ? 'rgba8' : 'rgba16f');
           final current = _shaderList();
           _ownedShaders.addAll(shaderPaths);
           _mpv!.setStrings('glsl-shaders', [...current, ...shaderPaths]);

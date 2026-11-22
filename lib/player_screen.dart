@@ -221,7 +221,12 @@ class _PlayerScreenState extends State<PlayerScreen>
         enhancement.tier == VideoEnhancementTier.minimal) {
       return null;
     }
-    return androidFixedSurfacePolicy;
+    // [+224] C 方案：表面上限再按屏幕物理像素收紧（见
+    // androidFixedSurfacePolicyForScreen 的注释与已知副作用）。1080p 屏上
+    // 1080p 片源的倍率会落到 1.2 以下、Upscale 段被跳过——这是为省掉
+    // 「渲染 1440p 再缩回 1080p 屏」的纯带宽税，不是功能回退；需要超分
+    // 请用 720p 及以下片源或极简档。
+    return androidFixedSurfacePolicyForScreen();
   }
 
   PlaybackPreferences get _preferences => PlaybackPreferences(

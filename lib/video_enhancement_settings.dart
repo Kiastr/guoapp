@@ -154,7 +154,9 @@ class VideoEnhancementSettings extends StatelessWidget {
                 // 片源的 ringing 风险高于均衡档，靠 Denoise 训练 + Clamp 兜底。
                 VideoEnhancementTier.minimalUpscale =>
                   '极简超分档：只留高光钳制 + Denoise 版超分，与极简档同价但给真 2× 超分；'
-                      '为骁龙 865 一类跑不动均衡档的设备准备，重压缩片源请与均衡档对比观感。',
+                      '为骁龙 865 一类跑不动均衡档的设备准备，重压缩片源请与均衡档对比观感。'
+                      '表面不超过屏幕：1080p 屏配 1080p 片源时倍率不足 1.2，超分会被跳过，'
+                      '这类片源请改用极简档，或选 720p 及以下片源。',
                 VideoEnhancementTier.minimal =>
                   '极简档：只留高光钳制 + S 档重建，无超分链；'
                       '每帧 7 个 pass、负载最低，骁龙 865 一类设备也能跑。'
