@@ -284,27 +284,25 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // 预算改按 surfaceOutput 计入（见下方 neuralMemory）。桌面端沿用放大的
   // output，与上游语义一致。
   if (preferences.mode == VideoEnhancementMode.advanced) {
-    // [+211] 写实档是唯一不走 Anime4K 的高档位：改用独立后端 sgsr
-    // （video_enhancement.dart 注入 SGSR.glsl，单 pass + LUMA hook）。
-    // 强制语义完全一致——同样绕过全部预检，只是链换了一条；
-    // 为什么不用 anime 后端 + 换链：两者的 pass 描述、生效确认条件、
-    // 性能采样匹配串都不同（Anime4K / Snapdragon GSR），混在一个后端里
-    // 会让 _isOwnPass、_confirmEffect 变成按 tier 分支的意大利面。
-    //
-    // 【唯一的例外：luma】GSR 是 //!HOOK LUMA，只吃亮度平面。渲染管线没有
-    // 独立亮度平面时（Windows 的 d3d11 硬解、RGB 输出、安卓 mediacodec 直通），
-    // 这条链注入了也是空转——不是「效果差」，而是根本拿不到输入。此时回退
-    // Anime4K 链（走 MAIN hook，RGB/YUV 都能跑）。这不违背「彻底强制」：
-    // 上面绕过的都是性能/内容判断，而这是管线能力判断，属于「能不能跑」。
+    // [+216 止损] 写实档暂不使用 GSR(sgsr 后端)。
+    // 背景：+211~+215 连续五版真机花屏——截图证实放大时绿通道被清零
+    // （G 最大值仅个位数，R/B 正常），呈红蓝热成像伪彩；这是 GSR 的
+    // HOOK LUMA + COMPONENTS 1 单通道 pass 在该 app 内置 libmpv 上的
+    // 通道错配，非参数机制问题（宏位置/PARAM/字面量逐版试过均无效），
+    // 且沙箱软件 GL 无法复现真机 GLES 这一行为，无法在可控环境定位修复。
+    // 其余六档 Anime4K 链用户从未反馈花屏，证明它们在真机可用。
+    // 决定：写实档改走 anime 后端，由下方 switch 的
+    // photoreal => animeChainBalanced 映射落到均衡链（真超分、验证最充分、
+    // 对真人观感最平衡），保证「能用」。GSR 的后端枚举、SGSR.glsl 资源、
+    // manifest 条目与全部决策代码均保留，仅在决策层停用；待 libmpv 升级
+    // 或拿到真机 shader 日志确认根因后可恢复（把下面的 returning 改回原状）。
+    // 强制语义不变：仍绕过性能/内容预检，只换链、不引入拦截。
     final photoreal = preferences.tier == VideoEnhancementTier.photoreal;
-    final sgsr = photoreal && luma;
     return VideoEnhancementDecision(
-      sgsr ? VideoEnhancementBackend.sgsr : VideoEnhancementBackend.anime,
+      VideoEnhancementBackend.anime,
       surfaceOutput,
-      sgsr
-          ? '高级模式：写实超分'
-          : photoreal
-          ? '当前解码无独立亮度平面，写实档已改用 Anime4K 链'
+      photoreal
+          ? '高级模式：写实档暂用 Anime4K 均衡链（GSR 真机兼容性修复中）'
           : '高级模式：强制 Anime4K 超分',
     );
   }

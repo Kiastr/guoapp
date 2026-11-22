@@ -270,11 +270,10 @@ void main() {
       expect(decision.output, const Size(762, 1344));
     });
 
-    // [+211] 写实档：高级模式里唯一走独立后端（sgsr）的档位。
-    // 它与 anime 的强制语义完全一致，只是链换成单 pass 的 GSR v1——
-    // 这里固定「选档即换后端」这一事实，防止将来被并回 anime 后端
-    // （并入后 _isOwnPass / _confirmEffect 会退化成按 tier 分支）。
-    test('写实档返回 sgsr 后端，且同样绕过全部不利条件', () {
+    // [+216 止损] 写实档因 GSR 真机花屏暂改走 anime 后端（均衡链）。
+    // 强制语义仍与 anime 一致——绕过全部不利条件，只是 tier 落到均衡链。
+    // 这里固定「写实档在高级模式下不被任何预检拦截」这一事实。
+    test('写实档返回 anime 后端，且同样绕过全部不利条件', () {
       final decision = decide(
         parameters: params(width: 1080, height: 1920),
         viewport: const Size(1080, 2400),
@@ -285,13 +284,13 @@ void main() {
         ),
         power: hostile,
         rate: 3.0,
-        rejected: const {VideoEnhancementBackend.sgsr},
+        rejected: const {VideoEnhancementBackend.anime},
       );
-      expect(decision.backend, VideoEnhancementBackend.sgsr);
-      expect(decision.reason, '高级模式：写实超分');
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      expect(decision.reason, contains('写实档暂用 Anime4K'));
     });
 
-    test('写实档沿用固定表面，换后端不改变 output 语义', () {
+    test('写实档沿用固定表面，换链不改变 output 语义', () {
       final decision = decide(
         parameters: params(width: 1080, height: 1920),
         viewport: const Size(1080, 2400),
@@ -302,8 +301,8 @@ void main() {
         ),
         fixedSurface: const Size(1440, 2560),
       );
-      expect(decision.backend, VideoEnhancementBackend.sgsr);
-      // 表面必须大于源，SGSR 的 //!WHEN 才成立（与 Anime4K 的 Upscale 同条件）
+      expect(decision.backend, VideoEnhancementBackend.anime);
+      // 表面必须大于源，Anime4K 的 //!WHEN 才成立
       expect(decision.output, const Size(1440, 2560));
     });
 
@@ -324,10 +323,10 @@ void main() {
       }
     });
 
-    test('无独立亮度平面时写实档回退 Anime4K 链', () {
-      // Windows 的 d3d11 硬解 / RGB 输出没有 LUMA 平面，GSR 的
-      // //!HOOK LUMA 拿不到输入。这是管线能力问题，不是策略降级：
-      // 必须回退走 MAIN hook 的 Anime4K，而不是硬上一段空转的 shader。
+    test('写实档恒走 Anime4K（与 luma 无关，GSR 已停用）', () {
+      // [+216] GSR 因真机花屏在决策层停用，写实档无论有无独立亮度平面
+      // 都走 anime 后端。此处固定 luma=true 的极端情况也不回 sgsr，
+      // 防止将来误把 sgsr 分支接回来却不更新此用例。
       final decision = decide(
         parameters: params(width: 1080, height: 1920),
         viewport: const Size(1080, 2400),
@@ -336,10 +335,10 @@ void main() {
           mode: VideoEnhancementMode.advanced,
           tier: VideoEnhancementTier.photoreal,
         ),
-        luma: false,
+        luma: true,
       );
       expect(decision.backend, VideoEnhancementBackend.anime);
-      expect(decision.reason, contains('已改用 Anime4K'));
+      expect(decision.reason, contains('写实档暂用 Anime4K'));
     });
   });
 
