@@ -284,20 +284,20 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // 预算改按 surfaceOutput 计入（见下方 neuralMemory）。桌面端沿用放大的
   // output，与上游语义一致。
   if (preferences.mode == VideoEnhancementMode.advanced) {
-    // [+218 GSR 根因修复] 写实档走独立的 sgsr 后端（+217 已恢复，本版修其花屏根因）。
-    // 背景：+211~+215 连续五版真机花屏（绿通道被清零的红蓝伪彩/雪花），
-    // +216 止损在决策层停用、改走 Anime4K 均衡链；+217 恢复 GSR 并猜测是
-    // FBO 格式（单独改 rgba8），真机证伪——热成像照旧，还引入首次蓝屏副作用。
-    // +218 定位到真正根因（见 SGSR.glsl 注释）：SGSR 来自为 vo=gpu-next 写的
-    //   agyild 移植，return color 时非亮度通道是脏的（.y/.z 为 TEXOFF 原值、
-    //   .w=1.0）。gpu-next 只取 .x 故无害；app 内置 legacy vo=gpu 却让这些脏
-    //   通道参与 YUV 重建、污染色度→红蓝伪彩。对照项目内所有正常单通道 shader
-    //   （Anime4K Clamp / ravu-lite 末级）return 时都显式 `vec4(v,0,0,0)` 清零。
-    // 修复：SGSR.glsl 改为 `return vec4(color.x,0,0,0)`，亮度算法一字未动；
-    //   +217 的 rgba8 已撤销、FBO 统一回 rgba16f。仍无法在沙箱复现真机 GLES，
-    //   需真机验证。本函数语义不变：写实档 + 有独立亮度平面 => sgsr；无独立
-    //   亮度平面（mediacodec 硬解等）时 LUMA hook 拿不到输入，回退 Anime4K 均衡链
-    //   （渲染管线能力判断，非效果降级）。强制语义不变：绕过全部预检，不引入拦截。
+    // [+219 GSR 架构级重写] 写实档走独立的 sgsr 后端（决策语义与 +217 起一致）。
+    // 背景：+211~+218 连续八版真机花屏（绿通道被清零的红蓝伪彩/雪花）。
+    //   逐版排除：参数机制（#define/PARAM/字面量）、精度（mediump/highp）、
+    //   FBO 格式（rgba16f/rgba8）、返回通道脏值（只返回 .x）——全部无效。
+    // +219 最终结论（见 SGSR.glsl 注释）：问题在宿主管线组合。agyild 原版用
+    //   HOOK 亮度平面 + COMPONENTS 1 + HOOKED_gather，这套要求 vo=gpu-next
+    //   才完整支持（上游明示），而 app 内置 media_kit 1.2.6 的 libmpv 走
+    //   legacy vo=gpu，单通道亮度输出被错误重解释 -> 色彩平面错位 -> 红蓝伪彩。
+    // 修复：SGSR.glsl 重写为 HOOK MAIN + COMPONENTS 4 + 12 tap 显式采样
+    //   （不用 gather）、固定 2×、只把亮度差量注入 RGB（色度结构上不动）。
+    // 本函数语义不变：写实档 + 有独立亮度平面 => sgsr。+219 后 MAIN hook
+    //   理论上不再需要独立亮度平面，但该判断保守保留（未知硬解路径不冒险）；
+    //   无亮度平面时回退 Anime4K 均衡链（渲染管线能力判断，非效果降级）。
+    // 强制语义不变：绕过全部预检，不引入拦截。
     final photoreal = preferences.tier == VideoEnhancementTier.photoreal;
     final sgsr = photoreal && luma;
     return VideoEnhancementDecision(

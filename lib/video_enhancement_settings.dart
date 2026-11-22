@@ -130,12 +130,13 @@ class VideoEnhancementSettings extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               switch (preferences.tier) {
-                // [+218 根因修复] 写实档 GSR 花屏已修复（返回值脏通道污染色度），重新启用。
+                // [+219 架构级重写] 写实档 GSR 改走 MAIN/RGB 管线，彻底修复花屏。
                 VideoEnhancementTier.photoreal =>
                   '写实档：面向真人/实拍内容、兼顾省电的超分档，采用高通 GSR v1'
-                      '（单 pass 上采样 + 边缘锐化，最省电、观感自然）。此前花屏的根因是'
-                      '着色器返回值带入了脏的颜色通道、污染画面色彩，现已修正为只输出'
-                      '亮度。若当前解码无独立亮度平面（硬解直通），会自动改用 Anime4K 均衡链。',
+                      '（单 pass 上采样 + 边缘锐化，最省电、观感自然）。此前花屏源于旧版'
+                      '只处理亮度平面的渲染方式与内置播放器不兼容，现已改为在完整色彩平面上'
+                      '处理并只注入亮度细节，画面色彩不受影响。若当前解码无独立亮度平面'
+                      '（硬解直通），会自动改用 Anime4K 均衡链。',
                 VideoEnhancementTier.quality =>
                   '质量档：VL 重建 + VL 超分，效果最好，但负载约为精细档 3.4 倍；'
                       '1080p 源在中端 GPU 上基本跑不动，卡顿时会自动逐级降档。',

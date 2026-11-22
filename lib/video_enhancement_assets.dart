@@ -13,17 +13,19 @@ class VideoEnhancementAssets {
   static const ravuLuma = 'ravu-lite-ar-r2.hook';
   static const fsrcnnx = 'FSRCNNX_x2_8-0-4-1.glsl';
 
-  /// [+211] 写实档链：高通 Snapdragon GSR v1 的 mpv 移植，只有一个 pass。
-  /// 与上面几条 Anime4K 链的本质区别：
+  /// [+211 引入，+219 架构级重写] 写实档链：高通 Snapdragon GSR v1 的 mpv 移植，
+  /// 只有一个 pass。与上面几条 Anime4K 链的本质区别：
   ///   - 不做神经网络重建，是 12 tap Lanczos 类上采样 + 边缘自适应锐化，
   ///     成本约为极简档（972 MAC/px）的五分之一，七档里最便宜；
-  ///   - `//!HOOK LUMA` + `//!COMPONENTS 1`：只放大亮度平面，色度由 mpv
-  ///     常规缩放（spline36）承担——这是它便宜的另一半原因；
+  ///   - [+219] `//!HOOK MAIN` + `//!COMPONENTS 4`：在 RGB 平面上处理、四通道
+  ///     输出。旧版是 HOOK 亮度平面 + COMPONENTS 1 + gather（要求 vo=gpu-next），
+  ///     在 app 内置 legacy vo=gpu 上通道错乱、真机红蓝伪彩，八版未修好；
+  ///     现对齐 Anime4K/FSRCNNX/ravu 的写法，12 tap 用 HOOKED_tex 显式采样，
+  ///     不再依赖 gather（mpv >= 0.38 才有）与单通道输出路径；
+  ///   - 只重构亮度、色度完全不动：算出的 deltaY 同加三通道，色差不变；
   ///   - 无去压缩伪影能力，低码率源的块效应会被锐化放大。
   /// 单元素链用 List 而非 String，是为了和 _apply 里其余分支同构，
   /// 将来若上游拆出 denoise 前置 pass 可直接追加。
-  /// 依赖 HOOKED_gather（mpv >= 0.38）：media_kit 的 libmpv-android
-  /// v1.1.7（2025-10 构建）已满足；桌面端 libmpv 同理。
   static const photorealChain = <String>['SGSR.glsl'];
 
   /// Anime4K 极简档链（+95：精细档的瘦身版，只留 S 档重建网络）。

@@ -417,11 +417,11 @@ class VideoEnhancementController extends ChangeNotifier {
         // [阶梯降档·+142] 用 _effectiveTier 而非 _preferences.tier：看门狗
         // 降档只改会话级覆盖，用户保存的偏好不变（见 _tierOverride 注释）。
         VideoEnhancementBackend.anime => switch (_effectiveTier) {
-          // [+211] 写实档本身走上面的 sgsr 分支。走到这里只有一种情况：
-          // 渲染管线没有独立亮度平面（d3d11 硬解 / RGB 输出 / mediacodec
-          // 直通），GSR 的 LUMA hook 拿不到输入，policy 已把它回退成 anime。
-          // 此时用均衡档兜底——它是默认档，算力与观感的平衡点，且带真超分；
-          // 不能沿用 GSR 链（MAIN hook 下 COMPONENTS 1 的取样语义会错）。
+          // [+211 引入，+219 说明] 写实档本身走上面的 sgsr 分支。走到这里说明
+          // policy 判定当前解码没有独立亮度平面（d3d11 硬解 / RGB 输出 /
+          // mediacodec 直通）。+219 把 GSR 从 HOOK 亮度平面改成 HOOK MAIN 后，
+          // 理论上不再依赖独立亮度平面，但 policy 仍保守保留该判断（未知硬解
+          // 路径不做冒险），命中时用均衡档兜底——默认档、算力与观感平衡、带真超分。
           VideoEnhancementTier.photoreal =>
             VideoEnhancementAssets.animeChainBalanced,
           VideoEnhancementTier.quality =>

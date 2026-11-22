@@ -324,7 +324,8 @@ void main() {
     });
 
     test('写实档有独立亮度平面走 sgsr，无则回退 Anime4K', () {
-      // GSR 的 HOOK LUMA 必须有独立亮度平面才有输入。有 luma 时走
+      // [+219] GSR 已改为 MAIN hook、理论上不再依赖独立亮度平面，但 policy
+      // 仍保守保留 luma 判断（未知硬解路径不冒险）。有 luma 时走
       // sgsr；无独立亮度平面（mediacodec 硬解等）时 LUMA hook 拿不到输入，
       // 回退 anime 均衡链——这是管线能力判断，不是效果降级。
       final base = VideoEnhancementPreferences(
