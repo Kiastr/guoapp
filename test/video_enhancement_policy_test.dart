@@ -270,7 +270,7 @@ void main() {
       expect(decision.output, const Size(762, 1344));
     });
 
-    // [+217 恢复] 写实档重新走 sgsr 后端（GSR 的 rgba16f FBO 冲突已修复）。
+    // [+217 恢复/+218 修根因] 写实档走 sgsr 后端（花屏根因见 SGSR.glsl +218 注释）。
     // 强制语义仍与 anime 一致——绕过全部不利条件（rejected/温控/倍速等），
     // 只是链换成 GSR。这里固定「写实档在高级模式下不被任何预检拦截」。
     test('写实档返回 sgsr 后端，且同样绕过全部不利条件', () {
@@ -324,7 +324,7 @@ void main() {
     });
 
     test('写实档有独立亮度平面走 sgsr，无则回退 Anime4K', () {
-      // [+217] GSR 的 HOOK LUMA 必须有独立亮度平面才有输入。有 luma 时走
+      // GSR 的 HOOK LUMA 必须有独立亮度平面才有输入。有 luma 时走
       // sgsr；无独立亮度平面（mediacodec 硬解等）时 LUMA hook 拿不到输入，
       // 回退 anime 均衡链——这是管线能力判断，不是效果降级。
       final base = VideoEnhancementPreferences(

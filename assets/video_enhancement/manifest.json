@@ -90,11 +90,11 @@
       "note": "上游原版（+89 引入的质量档链组件）。Restore_CNN_VL 无 WHEN 恒生效；Upscale_CNN_x2_VL 带 18 处 WHEN（输出≥1.2×输入），安卓端表面恒源尺寸时被 mpv 自动跳过。质量档链 = Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M，顺序须与 lib/video_enhancement_assets.dart 的 animeChainQuality 一致。"
     },
     "SGSR.glsl": {
-      "sha256": "54906500a2b239c26341a63c7e36fa11a162c226cfc773223a35f221d198ae27",
-      "bytes": 6704,
+      "sha256": "7d628003b143584b0936285778e09a83bfd55e25614237622e9dca08131a076b",
+      "bytes": 7471,
       "source": "https://gist.github.com/agyild/7715b6b1f38427839d95828f84902cab",
       "license": "BSD-3-Clause",
-      "note": "高通 GSR v1 的 mpv 移植版（agyild，2025-07-13 初版 / 2025-12-23 hotfix）。写实档（photoreal）专用：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，HOOK 亮度平面（只放大亮度，色度交给 mpv 常规缩放），COMPONENTS 1 配合单通道 gather 做 2×2 邻域采样。+215 起三个参数（UseEdgeDirection=1/EdgeThreshold=4.0/EdgeSharpness=2.0）按默认值字面化内联、#if 分支内联为方向感知路径，彻底不依赖 PARAM 或 #define；算法体与 agyild 上游及 Android 真机验证版（ravarage/vibeplayer）逐字一致。另在 pass body 显式 precision highp float：GSR 常数 3.075740e-05 低于 mediump 最小正规数，若落到 mediump 会因下溢→inversesqrt(0) 出 NaN 花屏。历史：+211 手写 #define 放文件头被当空 pass 丢弃致 EdgeThreshold 未声明、+212 挪 HOOK 后桌面能过但真机仍花屏、+214 改 PARAM 被真机 libmpv 报 Unrecognized command 整条回退——三种参数机制均不可靠，故 +215 用字面量彻底消除。另注：mpv 按子串切分 pass，注释禁止出现三字符指令前缀 + 指令名。WHEN 保留：输出面积须大于输入，未放大时自动跳过。"
+      "note": "高通 GSR v1 的 mpv 移植版（agyild，2025-07-13 初版 / 2025-12-23 hotfix）。写实档（photoreal）专用：单 pass、12 tap Lanczos 类上采样 + 边缘自适应锐化，HOOK 亮度平面（只放大亮度，色度交给 mpv 常规缩放），COMPONENTS 1 配合单通道 gather 做 2×2 邻域采样。+215 起三个参数（UseEdgeDirection=1/EdgeThreshold=4.0/EdgeSharpness=2.0）按默认值字面化内联、#if 分支内联为方向感知路径，彻底不依赖 PARAM 或 #define；另在 pass body 显式 precision highp float 防常数下溢 NaN。+218 根因修复：上游为 vo=gpu-next 写的 `color.w=1.0; return color;` 让非亮度通道（.y/.z 为 TEXOFF 原值、.w=1）带脏数据；gpu-next 只取 .x 无害，但 app 内置 legacy vo=gpu 会让脏通道参与 YUV 重建、污染色度→红蓝伪彩。改为 `return vec4(color.x,0.0,0.0,0.0)`，与项目内所有正常单通道 shader（Anime4K Clamp、ravu-lite 末级）一致，亮度算法不动。历史：+211 #define 放文件头被丢弃、+212 挪 HOOK 后、+214 改 PARAM 被真机拒、+217 改 FBO 均无效（真机花屏照旧）；+216 曾止损停用，+217 恢复。另注：mpv 按子串切分 pass，注释禁止出现三字符指令前缀 + 指令名。WHEN 保留：输出面积须大于输入，未放大时自动跳过。"
     }
   }
 }

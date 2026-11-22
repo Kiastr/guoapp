@@ -147,7 +147,14 @@ vec4 hook()
 		color.x = clamp((color.x + deltaY), 0.0, 1.0);
 	}
 
-	color.w = 1.0;
-
-	return color;
+	// [+218 根因修复] 显式清零非亮度通道，对齐项目内所有能正常工作的
+	// 单通道 shader（Anime4K Clamp: vec4(gmax,0,0,0)、ravu-lite 末级:
+	// vec4(val,0,0,0)）。上游 agyild 版为 vo=gpu-next 写的是 `color.w=1.0;
+	// return color;`，gpu-next 下只取 .x、脏的 .y/.z/.w 无害；但 app 内置
+	// media_kit 1.2.6 的 legacy vo=gpu 会把 HOOK LUMA 输出的 vec4 多通道
+	// 参与后续 YUV 重建，TEXOFF 原样的 .y/.z 与被置 1 的 .w 污染色度，
+	// 表现为红蓝伪彩/绿通道清零（亮度 .x 其实一直是对的，所以全屏放大时
+	// 才明显、非放大时被下游常规缩放掩盖）。改为只返回亮度、其余清零，
+	// 亮度算法（.x 的全部计算）一字未动。
+	return vec4(color.x, 0.0, 0.0, 0.0);
 }

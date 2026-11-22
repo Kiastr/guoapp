@@ -130,13 +130,12 @@ class VideoEnhancementSettings extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               switch (preferences.tier) {
-                // [+217 恢复] 写实档 GSR 的浮点 FBO 冲突已修复，重新启用。
+                // [+218 根因修复] 写实档 GSR 花屏已修复（返回值脏通道污染色度），重新启用。
                 VideoEnhancementTier.photoreal =>
                   '写实档：面向真人/实拍内容、兼顾省电的超分档，采用高通 GSR v1'
-                      '（单 pass 上采样 + 边缘锐化，最省电、观感自然）。此前因内置播放器'
-                      '的浮点帧缓冲与 GSR 采样冲突出现花屏，现已为该档单独改用 8 位'
-                      '帧缓冲修复。若当前解码无独立亮度平面（硬解直通），会自动改用'
-                      'Anime4K 均衡链。',
+                      '（单 pass 上采样 + 边缘锐化，最省电、观感自然）。此前花屏的根因是'
+                      '着色器返回值带入了脏的颜色通道、污染画面色彩，现已修正为只输出'
+                      '亮度。若当前解码无独立亮度平面（硬解直通），会自动改用 Anime4K 均衡链。',
                 VideoEnhancementTier.quality =>
                   '质量档：VL 重建 + VL 超分，效果最好，但负载约为精细档 3.4 倍；'
                       '1080p 源在中端 GPU 上基本跑不动，卡顿时会自动逐级降档。',
@@ -278,7 +277,7 @@ class VideoEnhancementSettings extends StatelessWidget {
     VideoEnhancementMode.advanced =>
       '高级模式直接强制增强链，绕过全部自动判断（动画标签、温控、倍速、显存预算均不拦截）；'
           '渲染异常时仍会自动回退原画。下方可选七档：写实档为高通 GSR v1'
-          '（最省电、适合真人/实拍，已修复浮点帧缓冲冲突）；'
+          '（最省电、适合真人/实拍，已修复花屏）；'
           '其余六档是 Anime4K 链、算力依次递增：极简 / 极简超分 / 均衡 / 标准 / 精细 / 质量，'
           '追求性价比选均衡或标准；极简档不含超分链，给不了真超分。',
   };
