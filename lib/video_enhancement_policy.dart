@@ -284,25 +284,31 @@ VideoEnhancementDecision chooseVideoEnhancement({
   // 预算改按 surfaceOutput 计入（见下方 neuralMemory）。桌面端沿用放大的
   // output，与上游语义一致。
   if (preferences.mode == VideoEnhancementMode.advanced) {
-    // [+216 止损] 写实档暂不使用 GSR(sgsr 后端)。
-    // 背景：+211~+215 连续五版真机花屏——截图证实放大时绿通道被清零
-    // （G 最大值仅个位数，R/B 正常），呈红蓝热成像伪彩；这是 GSR 的
-    // HOOK LUMA + COMPONENTS 1 单通道 pass 在该 app 内置 libmpv 上的
-    // 通道错配，非参数机制问题（宏位置/PARAM/字面量逐版试过均无效），
-    // 且沙箱软件 GL 无法复现真机 GLES 这一行为，无法在可控环境定位修复。
-    // 其余六档 Anime4K 链用户从未反馈花屏，证明它们在真机可用。
-    // 决定：写实档改走 anime 后端，由下方 switch 的
-    // photoreal => animeChainBalanced 映射落到均衡链（真超分、验证最充分、
-    // 对真人观感最平衡），保证「能用」。GSR 的后端枚举、SGSR.glsl 资源、
-    // manifest 条目与全部决策代码均保留，仅在决策层停用；待 libmpv 升级
-    // 或拿到真机 shader 日志确认根因后可恢复（把下面的 returning 改回原状）。
-    // 强制语义不变：仍绕过性能/内容预检，只换链、不引入拦截。
+    // [+217 恢复 GSR] 写实档重新走独立的 sgsr 后端。
+    // 背景：+211~+215 连续五版真机花屏（绿通道被清零的红蓝伪彩/雪花），
+    // +216 先止损在决策层停用、改走 Anime4K 均衡链保证可用。
+    // +217 的证据：不是参数机制、也不是 HOOK LUMA 本身（ravu 同为 LUMA 却正常）。
+    //   - GSR 是全项目唯一同时具备「放大 pass(WIDTH/HEIGHT=OUTPUT) + COMPONENTS 1
+    //     + HOOKED_gather 把 2×2 邻域打包进单个 vec4」的 shader；
+    //   - 沙箱 llvmpipe 对照：GSR 在 rgba8 FBO 下渲染完全正常（增益与基准一致）；
+    //   - app 此前为 Anime4K 神经网络精度把所有档位一刀切成 rgba16f，而 GSR
+    //     只是 Lanczos + 锐化、根本不需要浮点 FBO。
+    //   - 限制：llvmpipe 对 rgba16f 整体支持残缺（Anime4K 链在其下同样全黑），
+    //     无法在沙箱复现真机 GLES 的红蓝伪彩完整链路，故本修复仍需真机验证。
+    // 修复：video_enhancement.dart 里 sgsr 后端单独用 rgba8 FBO，其余档位
+    // 仍用 rgba16f。本函数恢复「写实档 + 有独立亮度平面 => sgsr」的原语义；
+    // 无独立亮度平面（mediacodec 硬解等）时 LUMA hook 拿不到输入，仍回退
+    // Anime4K 均衡链（这是渲染管线能力判断，不是效果降级）。
+    // 强制语义不变：仍绕过性能/内容/温控预检，只换链、不引入拦截。
     final photoreal = preferences.tier == VideoEnhancementTier.photoreal;
+    final sgsr = photoreal && luma;
     return VideoEnhancementDecision(
-      VideoEnhancementBackend.anime,
+      sgsr ? VideoEnhancementBackend.sgsr : VideoEnhancementBackend.anime,
       surfaceOutput,
-      photoreal
-          ? '高级模式：写实档暂用 Anime4K 均衡链（GSR 真机兼容性修复中）'
+      sgsr
+          ? '高级模式：写实超分'
+          : photoreal
+          ? '当前解码无独立亮度平面，写实档已改用 Anime4K 链'
           : '高级模式：强制 Anime4K 超分',
     );
   }

@@ -270,10 +270,10 @@ void main() {
       expect(decision.output, const Size(762, 1344));
     });
 
-    // [+216 止损] 写实档因 GSR 真机花屏暂改走 anime 后端（均衡链）。
-    // 强制语义仍与 anime 一致——绕过全部不利条件，只是 tier 落到均衡链。
-    // 这里固定「写实档在高级模式下不被任何预检拦截」这一事实。
-    test('写实档返回 anime 后端，且同样绕过全部不利条件', () {
+    // [+217 恢复] 写实档重新走 sgsr 后端（GSR 的 rgba16f FBO 冲突已修复）。
+    // 强制语义仍与 anime 一致——绕过全部不利条件（rejected/温控/倍速等），
+    // 只是链换成 GSR。这里固定「写实档在高级模式下不被任何预检拦截」。
+    test('写实档返回 sgsr 后端，且同样绕过全部不利条件', () {
       final decision = decide(
         parameters: params(width: 1080, height: 1920),
         viewport: const Size(1080, 2400),
@@ -286,8 +286,8 @@ void main() {
         rate: 3.0,
         rejected: const {VideoEnhancementBackend.anime},
       );
-      expect(decision.backend, VideoEnhancementBackend.anime);
-      expect(decision.reason, contains('写实档暂用 Anime4K'));
+      expect(decision.backend, VideoEnhancementBackend.sgsr);
+      expect(decision.reason, contains('写实超分'));
     });
 
     test('写实档沿用固定表面，换链不改变 output 语义', () {
@@ -301,8 +301,8 @@ void main() {
         ),
         fixedSurface: const Size(1440, 2560),
       );
-      expect(decision.backend, VideoEnhancementBackend.anime);
-      // 表面必须大于源，Anime4K 的 //!WHEN 才成立
+      expect(decision.backend, VideoEnhancementBackend.sgsr);
+      // 表面原样透传（写实档 GSR 的 //!WHEN 由 OUTPUT/HOOKED 面积比判定）
       expect(decision.output, const Size(1440, 2560));
     });
 
@@ -323,22 +323,33 @@ void main() {
       }
     });
 
-    test('写实档恒走 Anime4K（与 luma 无关，GSR 已停用）', () {
-      // [+216] GSR 因真机花屏在决策层停用，写实档无论有无独立亮度平面
-      // 都走 anime 后端。此处固定 luma=true 的极端情况也不回 sgsr，
-      // 防止将来误把 sgsr 分支接回来却不更新此用例。
-      final decision = decide(
+    test('写实档有独立亮度平面走 sgsr，无则回退 Anime4K', () {
+      // [+217] GSR 的 HOOK LUMA 必须有独立亮度平面才有输入。有 luma 时走
+      // sgsr；无独立亮度平面（mediacodec 硬解等）时 LUMA hook 拿不到输入，
+      // 回退 anime 均衡链——这是管线能力判断，不是效果降级。
+      final base = VideoEnhancementPreferences(
+        mode: VideoEnhancementMode.advanced,
+        tier: VideoEnhancementTier.photoreal,
+      );
+      final withLuma = decide(
         parameters: params(width: 1080, height: 1920),
         viewport: const Size(1080, 2400),
         android: false,
-        preferences: const VideoEnhancementPreferences(
-          mode: VideoEnhancementMode.advanced,
-          tier: VideoEnhancementTier.photoreal,
-        ),
+        preferences: base,
         luma: true,
       );
-      expect(decision.backend, VideoEnhancementBackend.anime);
-      expect(decision.reason, contains('写实档暂用 Anime4K'));
+      expect(withLuma.backend, VideoEnhancementBackend.sgsr);
+      expect(withLuma.reason, contains('写实超分'));
+
+      final noLuma = decide(
+        parameters: params(width: 1080, height: 1920),
+        viewport: const Size(1080, 2400),
+        android: true,
+        preferences: base,
+        luma: false,
+      );
+      expect(noLuma.backend, VideoEnhancementBackend.anime);
+      expect(noLuma.reason, contains('无独立亮度平面'));
     });
   });
 

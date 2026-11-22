@@ -474,7 +474,22 @@ class VideoEnhancementController extends ChangeNotifier {
         _setOption('linear-downscaling', 'no');
         if (shaderPaths != null) {
           _step = 'shaders';
-          _setOption('fbo-format', 'rgba16f');
+          // [+217 GSR 修复] FBO 格式按后端区分：
+          //   - sgsr（写实档 GSR v1）：单 pass + COMPONENTS 1 + gather 把 2×2
+          //     邻域打包进一个 vec4 的采样技巧。沙箱 llvmpipe 对照证实 GSR 在
+          //     rgba8 FBO 下渲染完全正常（增益与基准一致），而它只是 Lanczos +
+          //     边缘锐化、8bit 精度足够，不需要 Anime4K 那种浮点 FBO。
+          //     注：llvmpipe 对 rgba16f 整体残缺（Anime4K 在其下同样全黑），
+          //     无法在沙箱复现真机红蓝伪彩，本改动仍需真机验证。
+          //   - 其余 Anime4K / FSRCNNX 链：神经网络中间激活值需要浮点精度，
+          //     维持 rgba16f。历史上正是「一刀切 rgba16f」把 GSR 推坏了。
+          // 该值经 _setOption 记入 _originalOptions，关闭增强/切档时会自动恢复。
+          _setOption(
+            'fbo-format',
+            selected.backend == VideoEnhancementBackend.sgsr
+                ? 'rgba8'
+                : 'rgba16f',
+          );
           final current = _shaderList();
           _ownedShaders.addAll(shaderPaths);
           _mpv!.setStrings('glsl-shaders', [...current, ...shaderPaths]);
