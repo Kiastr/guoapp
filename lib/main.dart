@@ -27,6 +27,7 @@ import 'drpy.dart';
 import 'libretv.dart';
 import 'kazumi.dart';
 import 'hongguo_account_sync.dart';
+import 'app_update.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -106,6 +107,21 @@ class _AppBootstrapState extends State<AppBootstrap>
     }
   }
 
+  /// 启动后延迟静默检查 GitHub 上的新版本：首屏之后 6 秒起跑，失败一律
+  /// 吞掉（不影响使用），24 小时内只主动查一次，用户忽略过的构建号不再弹。
+  Future<void> _maybeCheckUpdate(SharedPreferences preferences) async {
+    await Future<void>.delayed(const Duration(seconds: 6));
+    if (!mounted || store == null || store!.locked) return;
+    final service = AppUpdateService(preferences);
+    if (!service.shouldAutoCheck()) return;
+    final info = await service.checkLatest();
+    if (info == null || !mounted) return;
+    if (!info.isNewerThan(duanjuBuildNumber) || service.isIgnored(info)) return;
+    final context = navigator.currentContext;
+    if (context == null) return;
+    await showAppUpdateDialog(context, info, service: service);
+  }
+
   Future<void> _refreshDevice() async {
     final detected = await AppDevice.detect(fallback: device);
     if (!mounted ||
@@ -157,6 +173,7 @@ class _AppBootstrapState extends State<AppBootstrap>
     });
     try {
       final preferences = await SharedPreferences.getInstance();
+      unawaited(_maybeCheckUpdate(preferences).catchError((Object _) {}));
       await _refreshDevice();
       await repository.initialize();
       // LibreTV 片源与 drpy 脚本源由原生核心持久化（libretv.json / drpy.json），

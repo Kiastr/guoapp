@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core_bridge.dart';
 import 'app_theme.dart';
@@ -22,6 +23,7 @@ import 'hongguo_login_dialog.dart';
 import 'hongguo_account_sync.dart';
 import 'playback_settings_screen.dart';
 import 'site_verification_list_screen.dart';
+import 'app_update.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -47,6 +49,30 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _message;
+
+  /// [更新提醒] 手动检查 GitHub 上的最新发布，结果与启动自动检查共用
+  /// 同一套去重逻辑（记住上次检查时间、忽略过的构建号）。
+  Future<void> _checkUpdate() async {
+    final preferences = await SharedPreferences.getInstance();
+    final service = AppUpdateService(preferences);
+    if (mounted) {
+      setState(() {
+        _message = '正在检查更新…';
+      });
+    }
+    final info = await service.checkLatest();
+    if (!mounted) return;
+    if (info == null) {
+      setState(() => _message = '检查失败：网络不可达或暂时无法访问发布页，请稍后重试');
+      return;
+    }
+    if (!info.isNewerThan(duanjuBuildNumber)) {
+      setState(() => _message = '已是最新版本（$appVersion+$duanjuBuildNumber）');
+      return;
+    }
+    await showAppUpdateDialog(context, info, service: service, manual: true);
+    if (mounted) setState(() => _message = null);
+  }
 
   /// [+201] 黄豆「获取最新地址」：从官方发布页清单取当前线路并探活，写回本机。
   bool _huangdouBusy = false;
@@ -557,6 +583,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: _busy ? null : () => _backup(true),
                 ),
               ],
+              ListTile(
+                leading: const Icon(Icons.system_update_alt_rounded),
+                title: const Text('检查更新'),
+                subtitle: Text('当前版本 $appVersion+$duanjuBuildNumber，从 GitHub 发布页检查'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: _busy ? null : _checkUpdate,
+              ),
               ListTile(
                 leading: const Icon(Icons.info_outline_rounded),
                 title: Text('关于$appName'),
