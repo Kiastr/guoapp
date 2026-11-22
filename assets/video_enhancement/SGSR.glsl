@@ -18,24 +18,24 @@
 //     https://gist.github.com/agyild/7715b6b1f38427839d95828f84902cab
 //   - 同源参考移植：Magpie（2025-08）
 //
-// 参数暴露方式（+214 起回归上游原生形态，勿再改回手写宏）：
-//   三个参数用 mpv 官方的 user-shader parameters 块（PARAM / TYPE 指令）声明，
-//   块位于第一个 HOOK 指令之前，默认值就是紧跟指令的那一行（1 / 4.0 / 2.0）。
-//   这是 agyild 上游原版、也是 Android 端 vibeplayer 等真机验证版采用的形态；
-//   mpv 会把 PARAM 识别为指令并在编译每个 pass 时把默认值注入进去，算法体无需
-//   关心宏的位置。要调参改下方 PARAM 块里对应的默认值行即可：
-//     UseEdgeDirection  1     方向感知上采样（关掉更快，边缘会糊）
-//     EdgeThreshold     4.0   边缘判定阈值（1..16，越低细节越多也越慢）
-//     EdgeSharpness     2.0   边缘锐化强度（1..2，过高会振铃）
+// 参数（+215 起改为字面量内联，勿再改回 PARAM 或宏）：
+//   app 内置 libmpv 是裁剪/较老版本，实测不识别 user-shader 的 parameters 块
+//   （真机报 Unrecognized command 'PARAM UseEdgeDirection'!，整条增强被判失败
+//   回退原画，比花屏更糟）。而手写 #define 放文件头会被 mpv 当空 pass 丢弃、
+//   放 HOOK 后又在某些设备编译异常。故彻底去掉参数机制：把三个值按上游默认
+//   直接写死进算法，#if 分支按 UseEdgeDirection=1 内联。app 内无调参 UI，
+//   这三个值本就恒定，字面化零功能损失，且对任何 libmpv 版本都一致：
+//     UseEdgeDirection = 1   方向感知上采样（分支已内联为 true 路径）
+//     EdgeThreshold    = 4.0 边缘判定阈值，代码里是 4.0 / 255
+//     EdgeSharpness    = 2.0 边缘锐化强度，代码里是 2.0 * finalY
 //
-// 【历史坑，别再踩】+211 曾把这三个参数展开成手写 #define 放在文件头，结果
-// 报 error: `EdgeThreshold' undeclared 编译失败、真机出 X 光网格花屏——原因是
-// mpv 把「文件头到第一个 HOOK 之间」的非指令文本当作无 hook 空 pass 整段丢弃，
-// 手写宏随之丢失。+212 把 #define 挪到 HOOK 之后虽在桌面编译通过，但那种自造
-// 形态并非上游/真机验证形态，真机仍报花屏。+214 直接恢复上游 PARAM 块：参数
-// 由 mpv 按官方机制注入，与 agyild 上游及 vibeplayer 真机版算法逐字一致。
+// 【precision highp 兜底】GSR 含常数 3.075740e-05（edgeDirection 的防除零项），
+//   低于 mediump 最小正规数约 6.1e-5。若 pass 落在 mediump，该值下溢为 0，
+//   平坦区域 delta≈0 时 inversesqrt(0) → inf → 乘 0 得 NaN，输出即 X 光/雪花。
+//   桌面 mpv 会按 GL_FRAGMENT_PRECISION_HIGH 自动选 highp，但真机老 libmpv
+//   可能默认 mediump；故在 pass body 显式声明 highp，确保常数精度。
 //
-// 【同样不能把指令标记写进注释】mpv 切分 pass 用的是子串查找（找三字符
+// 【不能把指令标记写进注释】mpv 切分 pass 用的是子串查找（找三字符
 // 前缀），不看是否在行首。注释里只要出现完整的三字符前缀 + 指令名，就会被
 // 当成真的 header 去解析，报
 //   Error while parsing COMPONENTS!
@@ -48,27 +48,6 @@
 // 神经网络档。
 //============================================================================================================
 
-//!PARAM UseEdgeDirection
-//!DESC Direction-aware upscaling; off is faster but blurs edges.
-//!TYPE DEFINE
-//!MINIMUM 0
-//!MAXIMUM 1
-1
-
-//!PARAM EdgeThreshold
-//!DESC Edge detection sensitivity; lower is sharper but slower.
-//!TYPE CONSTANT float
-//!MINIMUM 1.0
-//!MAXIMUM 16.0
-4.0
-
-//!PARAM EdgeSharpness
-//!DESC Edge sharpening strength; too high causes ringing.
-//!TYPE CONSTANT float
-//!MINIMUM 1.0
-//!MAXIMUM 2.0
-2.0
-
 //!HOOK LUMA
 //!BIND HOOKED
 //!DESC Snapdragon Game Super Resolution (GSR) v1
@@ -76,6 +55,10 @@
 //!WIDTH OUTPUT.w
 //!HEIGHT OUTPUT.h
 //!COMPONENTS 1
+
+// pass body 内显式高精度：真机老 libmpv 可能默认 mediump，而 GSR 常数
+// 3.075740e-05 在 mediump 下会下溢为 0，导致 inversesqrt(0) 出 NaN 花屏。
+precision highp float;
 
 // Shader code
 
@@ -87,22 +70,14 @@ float fastLanczos2(float x)
 	return wB * wA;
 }
 
-#if (UseEdgeDirection == 1)
+// UseEdgeDirection = 1：方向感知路径（字面化内联；app 无调参 UI，仅此一条分支）。
 vec2 weightY(float dx, float dy, float c, vec3 data)
-#else
-vec2 weightY(float dx, float dy, float c, float data)
-#endif
 {
-#if (UseEdgeDirection == 1)
 	float std = data.x;
 	vec2 dir = data.yz;
 
 	float edgeDis = ((dx * dir.y) + (dy * dir.x));
 	float x = fma(edgeDis * edgeDis, (clamp(c * c * std, 0.0, 1.0) * 0.7 - 1.0), (dx * dx + dy * dy));
-#else
-	float std = data;
-	float x = fma((dx * dx + dy * dy), 0.55, clamp(abs(c) * std, 0.0, 1.0));
-#endif
 
 	float w = fastLanczos2(x);
 	return vec2(w, w * c);
@@ -127,7 +102,7 @@ vec4 hook()
 	vec4 left = HOOKED_gather(coord, 0);
 
 	float edgeVote = abs(left.z - left.y) + abs(color.x - left.y)  + abs(color.x - left.z) ;
-	if (edgeVote > (EdgeThreshold / 255))
+	if (edgeVote > (4.0 / 255))
 	{
 		coord.x += HOOKED_pt.x;
 
@@ -144,14 +119,10 @@ vec4 hook()
 
 		float sum = dot(abs(left) + abs(right) + abs(upDown), vec4(1.0));
 
-#if (UseEdgeDirection == 1)
+		// UseEdgeDirection = 1：方向感知路径（字面化内联）。
 		float sumMean = 1.014185e+01 / sum;
 		float std = sumMean * sumMean;
 		vec3 data = vec3(std, edgeDirection(left, right));
-#else
-		float std = 2.181818 / sum;
-		float data = std;
-#endif
 		vec2 aWY  = weightY(pl.x,       pl.y + 1.0, upDown.x, data);
 		     aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, data);
 		     aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, data);
@@ -168,7 +139,7 @@ vec4 hook()
 		float finalY = aWY.y / aWY.x;
 		float maxY = max(max(left.y, left.z), max(right.x, right.w));
 		float minY = min(min(left.y, left.z), min(right.x, right.w));
-		float deltaY = clamp(EdgeSharpness * finalY, minY, maxY) - color.w;
+		float deltaY = clamp(2.0 * finalY, minY, maxY) - color.w;
 
 		//smooth high contrast input
 		deltaY = clamp(deltaY, -23.0 / 255.0, 23.0 / 255.0);
