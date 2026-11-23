@@ -44,6 +44,13 @@ package core
 //   - 结论：不是算法换代（v04.10.03 签名原语 11-16 起稳定），是匿名 POST 门被静默拒绝。
 //     +209 的 v5 签名仍是上游最新；+213 在其上补 bodyless GET video_tab 空体回退，
 //     与四家上游 11-19/20 的应对同向。
+//   - 【+231 / 2026-11-23 协议再升级】服务端收紧 V5 身份+签名校验，上面四家全线空体
+//     （各自 issue 炸锅、维护者仍在修）。唯一当日仍可播的源头是
+//     Amor5207/lvguo-tv 提交 32fcdfdb54（v2.0.8，GPL-3.0）：完整设备注册画像
+//     （71932 注册 + klink_egdi + app_alert_check 激活）、扩展 Medusa + 25 位
+//     sec_device_token、9 安全头、36 字段 query、74332/7.4.3.32 取流画像。
+//     其纯 Go 签名栈（internal/sign + internal/lvguoplay）原样搬入 native/core/hgv5，
+//     实网验证 GET video_tab code=0 + 23KB video_model，端到端拿到可播 CDN 直链。
 
 import (
 	"bytes"
@@ -59,6 +66,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"duanjuapp/native/core/hgv5"
 )
 
 const (
@@ -95,14 +104,25 @@ func (downloader *Downloader) resolveHongguoDrpyMedia(ctx context.Context, video
 	}
 	var firstBody map[string]any
 	if hongguoPlaybackV5 {
-		// 【v5 协议接入】2026-11-16 起旧播放模型接口（明文 body + 551 签名）
-		// 被服务端换代为 v5：返回 HTTP 200 空体，取流转圈。这里把第一段取源
-		// 换成 v5（gzip body + v04.10.03 Medusa/Helios），响应结构 data[videoID]
-		// .video_model 与旧版一致，后续 fallback 解析/第二段/选清晰度全部复用。
-		// 仍走 hongguoAnonPlayback 编排，共享匿名身份注册与空体重试/换号策略。
-		firstBody, _, err = hongguoAnonPlayback(ctx, downloader, func(ctx context.Context, identity hongguoAnonDevice) (map[string]any, error) {
-			return downloader.hgV5SignAndFetch(ctx, videoID, identity)
-		})
+		// 【+231：V5 协议栈升级，对齐 Amor5207/lvguo-tv v2.0.8】
+		// 2026-11-23 起红果服务端再次收紧 V5 取流校验：旧精简 Medusa（3 签名头、
+		// 22 字段 query、无 klink_egdi）一律返回 HTTP 200 空 body，原 hgV5SignAndFetch
+		// 与其 GET video_tab 回退全部失效（沙箱实网 6 形态探测确认全空）。
+		// v2.0.8 用完整设备注册（含 klink_egdi + app_alert_check 激活）、扩展 Medusa
+		// + 25 位 sec_device_token、9 安全头、36 字段 query 解决。已把其纯 Go 签名栈
+		// 作为独立子包 native/core/hgv5 引入，并在沙箱实网验证 code=0 + 23KB video_model。
+		// 这里优先走新栈；仅当它没有给出可用 video_model 时才回退旧 v5 / Argus 链路，
+		// 保证新协议失效时行为不比升级前差。解析层/fallback 第二段/选档全部复用。
+		firstBody, err = hgv5.FetchModel(ctx, videoID)
+		if err == nil && !hgv5ModelUsable(firstBody, videoID) {
+			err = errors.New("v2.0.8 V5 栈返回空模型")
+		}
+		if err != nil {
+			// 回退：原 v5 签名栈（含换号编排），与升级前完全一致。
+			firstBody, _, err = hongguoAnonPlayback(ctx, downloader, func(ctx context.Context, identity hongguoAnonDevice) (map[string]any, error) {
+				return downloader.hgV5SignAndFetch(ctx, videoID, identity)
+			})
+		}
 	} else {
 		firstBody, err = downloader.hgDrpyVideoModelAt(ctx, payload)
 	}
@@ -123,6 +143,26 @@ func (downloader *Downloader) resolveHongguoDrpyMedia(ctx context.Context, video
 		return providerMedia{}, err
 	}
 	return hgDrpySelectMedia(info, videoID, requestedQuality)
+}
+
+// hgv5ModelUsable 判断 v2.0.8 栈返回的响应是否真的含本集 video_model。
+// 只做「有没有 model」的轻量判定，具体解析仍交给 hgDrpyFallbackFromModel，
+// 避免两处解析逻辑分叉。
+func hgv5ModelUsable(response map[string]any, videoID string) bool {
+	if response == nil {
+		return false
+	}
+	data, _ := response["data"].(map[string]any)
+	entry, _ := data[videoID].(map[string]any)
+	if entry == nil {
+		return false
+	}
+	model := entry["video_model"]
+	if encoded, ok := model.(string); ok {
+		model = hgDrpyJSONBody(encoded)
+	}
+	m, _ := model.(map[string]any)
+	return m != nil && len(m) > 0
 }
 
 // hgDrpyVideoModelAt 第一段：按端点池依次尝试 multi_video_model。
