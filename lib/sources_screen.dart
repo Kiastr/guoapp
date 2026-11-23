@@ -1614,52 +1614,70 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
     // 焦点走不到 actions 里的「导入」按钮，用户输完网址却无法确认。
     // 电视端改单行 + done 动作（软键盘/遥控器 OK 直接提交）；手机端保持原样。
     final isTv = AppLayout.isTelevision(context);
+    // [+229] 电视遥控器 OK 键是 LogicalKeyboardKey.select（Android DPAD_CENTER），
+    // 不会触发 TextField.onSubmitted——后者只响应软键盘的 IME action（done/go）。
+    // 且焦点在输入框时方向键被 EditableText 吞掉用于移动光标，走不到 actions 里的
+    // 「导入」按钮。按项目惯例用 CallbackShortcuts 在电视端把确认键直接绑到 _submit，
+    // 输入完网址按 OK 即可提交，无需移焦点。手机端不绑定，不影响软键盘行为。
+    final tvSubmitBindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(
+        LogicalKeyboardKey.select,
+        includeRepeats: false,
+      ): _submit,
+      const SingleActivator(
+        LogicalKeyboardKey.enter,
+        includeRepeats: false,
+      ): _submit,
+    };
     return AlertDialog(
       title: const Text('导入 LibreTV 片源 / drpy 脚本'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _controller,
-              // [+227] 电视端单行：多行输入框会吞掉遥控器上下方向键，光标走不到
-              // 「导入」按钮；单行下方向键可正常把焦点移到按钮。手机端仍为 6 行。
-              maxLines: isTv ? 1 : 6,
-              autofocus: true, // 电视端焦点也先落在输入框：先输入网址，再确认
-              // [+227] 电视端按软键盘/遥控器 OK 的「完成」键直接提交，不必先移焦点。
-              textInputAction: isTv ? TextInputAction.done : null,
-              // [+228] TextField 的提交回调是 onSubmitted；onFieldSubmitted 属于
-              // TextFormField，+227 误用导致 assembleRelease 编译失败。
-              onSubmitted: isTv ? (_) => _submit() : null,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址 / drpy 脚本',
-                hintText:
-                    'https://example.com/libretv/config.json\n'
-                    '或 {"sites":[{"key":"a","name":"A","type":1,'
-                    '"api":"https://example.com/provide/vod"}]}\n'
-                    '或 LunaTV-config 导出的 Base58 订阅（format=2 / format=3）\n'
-                    '或 https://example.com/api.php/provide/vod/at/xml/\n'
-                    '或含 var rule 的 drpy 脚本（JS 原文或 .js 地址）\n'
-                    '或 CatVod 蜘蛛的 .js 地址（如 ./cat/xxx_open.js，需填完整地址）\n'
-                    '订阅里的 csp_XBPQ / csp_XYQHiker / csp_Bili 规则源会自动导入',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            if (showSource) ...[
-              const SizedBox(height: 12),
+      content: CallbackShortcuts(
+        bindings: isTv ? tvSubmitBindings : const <ShortcutActivator, VoidCallback>{},
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               TextField(
-                controller: _sourceController,
+                controller: _controller,
+                // [+227] 电视端单行：多行输入框会吞掉遥控器上下方向键，光标走不到
+                // 「导入」按钮；单行下方向键可正常把焦点移到按钮。手机端仍为 6 行。
+                maxLines: isTv ? 1 : 6,
+                autofocus: true, // 电视端焦点也先落在输入框：先输入网址，再确认
+                // [+227] 电视端按软键盘/遥控器 OK 的「完成」键直接提交，不必先移焦点。
+                textInputAction: isTv ? TextInputAction.done : null,
+                // [+228] TextField 的提交回调是 onSubmitted；onFieldSubmitted 属于
+                // TextFormField，+227 误用导致 assembleRelease 编译失败。
+                onSubmitted: isTv ? (_) => _submit() : null,
+                onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
-                  labelText: '脚本来源链接（可选）',
-                  hintText: 'https://example.com/xxx.js',
-                  helperText: '粘贴脚本正文时填写：用于跨设备同步（WebDAV）按地址重建',
-                  helperMaxLines: 2,
+                  labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址 / drpy 脚本',
+                  hintText:
+                      'https://example.com/libretv/config.json\n'
+                      '或 {"sites":[{"key":"a","name":"A","type":1,'
+                      '"api":"https://example.com/provide/vod"}]}\n'
+                      '或 LunaTV-config 导出的 Base58 订阅（format=2 / format=3）\n'
+                      '或 https://example.com/api.php/provide/vod/at/xml/\n'
+                      '或含 var rule 的 drpy 脚本（JS 原文或 .js 地址）\n'
+                      '或 CatVod 蜘蛛的 .js 地址（如 ./cat/xxx_open.js，需填完整地址）\n'
+                      '订阅里的 csp_XBPQ / csp_XYQHiker / csp_Bili 规则源会自动导入',
                   border: OutlineInputBorder(),
                 ),
               ),
+              if (showSource) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _sourceController,
+                  decoration: const InputDecoration(
+                    labelText: '脚本来源链接（可选）',
+                    hintText: 'https://example.com/xxx.js',
+                    helperText: '粘贴脚本正文时填写：用于跨设备同步（WebDAV）按地址重建',
+                    helperMaxLines: 2,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
