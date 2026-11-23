@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import 'app_layout.dart';
 import 'core_bridge.dart';
 import 'lan_screen.dart';
 import 'local_store.dart';
+import 'remote_widgets.dart';
 import 'webdav_sync.dart';
 
 class WebDavSyncScreen extends StatefulWidget {
@@ -82,6 +85,126 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
     autoSync: _form.autoSync,
     lastSyncAt: _saved.lastSyncAt,
   );
+
+  /// [+230] 电视端 WebDAV 表单字段：只读展示 + 按 OK 弹输入对话框。
+  ///
+  /// 电视上直接放 TextField 有两个问题：
+  ///   1. 焦点一落到输入框就弹系统输入法，方向键被输入法吞掉，走不到下一个
+  ///      输入框和底部的「保存/测试/同步」按钮；
+  ///   2. 遥控器 OK（LogicalKeyboardKey.select）不会触发 TextField.onSubmitted，
+  ///      输完没法确认。
+  /// 这里电视端改用 RemoteTarget 包一层只读展示：方向键可在各字段与按钮间
+  /// 自由遍历且不弹输入法；按 OK 才弹输入对话框，对话框内用 CallbackShortcuts
+  /// 把 select/enter 绑到提交（同 +229 的导入对话框）。手机端仍用原生 TextField。
+  Widget _tvFieldTile({
+    required String label,
+    required String value,
+    required String hint,
+    required bool obscure,
+    required VoidCallback? onEdit,
+    bool autofocus = false,
+  }) {
+    final shown = obscure && value.isNotEmpty ? '••••••••' : value;
+    return RemoteTarget(
+      label: label,
+      autofocus: autofocus,
+      onPressed: onEdit,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 13)),
+                const SizedBox(height: 2),
+                Text(
+                  shown.isEmpty ? hint : shown,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: shown.isEmpty
+                        ? Theme.of(context).hintColor
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.edit_outlined, size: 18),
+        ],
+      ),
+    );
+  }
+
+  /// [+230] 电视端字段编辑对话框：一个可提交的 TextField。
+  /// 确认键绑 select/enter，输入完按 OK 即写回并返回，不必移焦点找按钮。
+  Future<void> _editTvField({
+    required String label,
+    required TextEditingController controller,
+    required bool obscure,
+  }) async {
+    final buffer = TextEditingController(text: controller.text);
+    var submitted = false;
+    void submit() {
+      // [+230] 遥控器连按 OK 会重复触发；置位后只 pop 一次，避免把
+      // 对话框下面的页面一起 pop 掉。
+      if (submitted) return;
+      submitted = true;
+      Navigator.pop(context, buffer.text);
+    }
+
+    final bindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(
+        LogicalKeyboardKey.select,
+        includeRepeats: false,
+      ): submit,
+      const SingleActivator(
+        LogicalKeyboardKey.enter,
+        includeRepeats: false,
+      ): submit,
+    };
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('编辑$label'),
+        content: CallbackShortcuts(
+          bindings: bindings,
+          child: TextField(
+            controller: buffer,
+            autofocus: true,
+            obscureText: obscure,
+            maxLines: 1,
+            onSubmitted: (_) => submit(),
+            decoration: InputDecoration(labelText: label),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(onPressed: submit, child: const Text('确定')),
+        ],
+      ),
+    );
+    buffer.dispose();
+    if (result == null || !mounted) return;
+    setState(() {
+      controller.text = result;
+      // 同步到 _form，让「保存设置」(_dirty) 与「测试/同步」(_form.configured)
+      // 按最新输入立即刷新；手机端原生 TextField 无 onChanged，行为不变。
+      _form = _form.copyWith(
+        url: _url.text.trim(),
+        username: _username.text.trim(),
+        password: _password.text,
+        directory: _directory.text.trim().isEmpty
+            ? WebDavSettings.defaultDirectory
+            : _directory.text.trim(),
+      );
+    });
+  }
 
   @override
   void dispose() {
@@ -259,6 +382,9 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.store,
     builder: (context, _) {
+      // [+230] 电视端 WebDAV 表单改用只读展示 + OK 编辑，避免聚焦即弹输入法
+      // 导致方向键走不到下一个输入框（详见 _tvFieldTile 注释）。
+      final isTv = AppLayout.isTelevision(context);
       final conflicts = widget.store.locked
           ? 0
           : widget.store.lanDocument.records.values
@@ -322,55 +448,116 @@ class _WebDavSyncScreenState extends State<WebDavSyncScreen> {
                       ? null
                       : (value) => setState(() => _form = _form.copyWith(autoSync: value)),
                 ),
-                TextField(
-                  controller: _url,
-                  enabled: !_busy,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: '服务器地址',
-                    hintText: 'https://dav.jianguoyun.com/dav/',
-                    helperText:
-                        '填到服务提供的 WebDAV 目录为止，坚果云要在域名后带上 /dav/，Nextcloud 通常形如 /remote.php/dav/files/用户名/',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _username,
-                  enabled: !_busy,
-                  decoration: const InputDecoration(
-                    labelText: '账号',
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  enabled: !_busy,
-                  obscureText: _obscure,
-                  decoration: InputDecoration(
-                    labelText: '密码',
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscure
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                      ),
-                      tooltip: _obscure ? '显示密码' : '隐藏密码',
-                      onPressed: () => setState(() => _obscure = !_obscure),
+                if (isTv)
+                  _tvFieldTile(
+                    label: '服务器地址',
+                    value: _url.text,
+                    hint: 'https://dav.jianguoyun.com/dav/',
+                    obscure: false,
+                    autofocus: true,
+                    onEdit: _busy
+                        ? null
+                        : () => _editTvField(
+                              label: '服务器地址',
+                              controller: _url,
+                              obscure: false,
+                            ),
+                  )
+                else
+                  TextField(
+                    controller: _url,
+                    enabled: !_busy,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      labelText: '服务器地址',
+                      hintText: 'https://dav.jianguoyun.com/dav/',
+                      helperText:
+                          '填到服务提供的 WebDAV 目录为止，坚果云要在域名后带上 /dav/，Nextcloud 通常形如 /remote.php/dav/files/用户名/',
                     ),
                   ),
-                ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _directory,
-                  enabled: !_busy,
-                  decoration: const InputDecoration(
-                    labelText: '同步目录',
-                    hintText: WebDavSettings.defaultDirectory,
-                    helperText: '服务器上用于存放各设备记录文件的目录',
+                if (isTv)
+                  _tvFieldTile(
+                    label: '账号',
+                    value: _username.text,
+                    hint: '未填写',
+                    obscure: false,
+                    onEdit: _busy
+                        ? null
+                        : () => _editTvField(
+                              label: '账号',
+                              controller: _username,
+                              obscure: false,
+                            ),
+                  )
+                else
+                  TextField(
+                    controller: _username,
+                    enabled: !_busy,
+                    decoration: const InputDecoration(
+                      labelText: '账号',
+                      isDense: true,
+                    ),
                   ),
-                ),
+                const SizedBox(height: 12),
+                if (isTv)
+                  _tvFieldTile(
+                    label: '密码',
+                    value: _password.text,
+                    hint: '未填写',
+                    obscure: _obscure,
+                    onEdit: _busy
+                        ? null
+                        : () => _editTvField(
+                              label: '密码',
+                              controller: _password,
+                              obscure: _obscure,
+                            ),
+                  )
+                else
+                  TextField(
+                    controller: _password,
+                    enabled: !_busy,
+                    obscureText: _obscure,
+                    decoration: InputDecoration(
+                      labelText: '密码',
+                      isDense: true,
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscure
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                        ),
+                        tooltip: _obscure ? '显示密码' : '隐藏密码',
+                        onPressed: () => setState(() => _obscure = !_obscure),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                if (isTv)
+                  _tvFieldTile(
+                    label: '同步目录',
+                    value: _directory.text,
+                    hint: WebDavSettings.defaultDirectory,
+                    obscure: false,
+                    onEdit: _busy
+                        ? null
+                        : () => _editTvField(
+                              label: '同步目录',
+                              controller: _directory,
+                              obscure: false,
+                            ),
+                  )
+                else
+                  TextField(
+                    controller: _directory,
+                    enabled: !_busy,
+                    decoration: const InputDecoration(
+                      labelText: '同步目录',
+                      hintText: WebDavSettings.defaultDirectory,
+                      helperText: '服务器上用于存放各设备记录文件的目录',
+                    ),
+                  ),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 12,
