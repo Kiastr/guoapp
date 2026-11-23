@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_layout.dart';
 import 'core_bridge.dart';
 import 'drpy.dart';
 import 'kazumi.dart';
@@ -1596,10 +1597,23 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
     super.dispose();
   }
 
+  /// [+227] 提交导入，输入框「完成」键与按钮共用，保证遥控器两条路径都能确认。
+  void _submit() {
+    if (!Navigator.of(context).canPop()) return;
+    Navigator.pop(
+      context,
+      _ImportInput(_controller.text.trim(), _sourceController.text.trim()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // 粘贴脚本文本时才需要「来源链接」：跨设备同步按该地址重建脚本源。
     final showSource = _looksLikeScriptText(_controller.text);
+    // [+227] 电视遥控器下，多行 TextField 会把方向键吞掉用于移动文本光标，
+    // 焦点走不到 actions 里的「导入」按钮，用户输完网址却无法确认。
+    // 电视端改单行 + done 动作（软键盘/遥控器 OK 直接提交）；手机端保持原样。
+    final isTv = AppLayout.isTelevision(context);
     return AlertDialog(
       title: const Text('导入 LibreTV 片源 / drpy 脚本'),
       content: SingleChildScrollView(
@@ -1608,8 +1622,13 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
           children: [
             TextField(
               controller: _controller,
-              maxLines: 6,
-              autofocus: true,
+              // [+227] 电视端单行：多行输入框会吞掉遥控器上下方向键，光标走不到
+              // 「导入」按钮；单行下方向键可正常把焦点移到按钮。手机端仍为 6 行。
+              maxLines: isTv ? 1 : 6,
+              autofocus: true, // 电视端焦点也先落在输入框：先输入网址，再确认
+              // [+227] 电视端按软键盘/遥控器 OK 的「完成」键直接提交，不必先移焦点。
+              textInputAction: isTv ? TextInputAction.done : null,
+              onFieldSubmitted: isTv ? (_) => _submit() : null,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址 / drpy 脚本',
@@ -1647,10 +1666,9 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(
-            context,
-            _ImportInput(_controller.text.trim(), _sourceController.text.trim()),
-          ),
+          // [+227] 电视端输入框单行后，方向键可从输入框 traverse 到本按钮，
+          // 焦点落在按钮上即可用 OK 确认；输完也可直接按软键盘「完成」键提交。
+          onPressed: _submit,
           child: const Text('导入'),
         ),
       ],
