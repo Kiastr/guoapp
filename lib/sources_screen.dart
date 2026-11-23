@@ -1628,7 +1628,9 @@ class _LibreTVImportDialogState extends State<_LibreTVImportDialog> {
               autofocus: true, // 电视端焦点也先落在输入框：先输入网址，再确认
               // [+227] 电视端按软键盘/遥控器 OK 的「完成」键直接提交，不必先移焦点。
               textInputAction: isTv ? TextInputAction.done : null,
-              onFieldSubmitted: isTv ? (_) => _submit() : null,
+              // [+228] TextField 的提交回调是 onSubmitted；onFieldSubmitted 属于
+              // TextFormField，+227 误用导致 assembleRelease 编译失败。
+              onSubmitted: isTv ? (_) => _submit() : null,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: '片源链接 / 配置 JSON / Base58 订阅 / 采集地址 / drpy 脚本',
