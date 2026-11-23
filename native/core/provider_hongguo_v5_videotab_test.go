@@ -32,13 +32,13 @@ func TestHgV5VideoTabQueryOrder(t *testing.T) {
 	want := [][2]string{
 		{"aid", "8662"},
 		{"app_name", "novelread"},
-		{"version_code", "74332"},
-		{"version_name", "7.4.3.32"},
+		{"version_code", "74532"},
+		{"version_name", "7.4.5.32"},
 		{"channel", "vivo_8662_64"},
 		{"device_platform", "android"},
 		{"device_type", "PGT-AN10"},
 		{"os_version", "12"},
-		{"update_version_code", "74332"},
+		{"update_version_code", "74532"},
 		{"iid", "9876543210"},
 		{"cdid", "test-cdid-v5-tab"},
 		{"device_id", "1234567890"},
@@ -71,7 +71,7 @@ func TestHgV5VideoTabQueryOrder(t *testing.T) {
 // 按 pythonUrlEncode（保留 * ~，空格等按 %XX 大写）输出，确保签名输入与发送一致。
 func TestHgV5VideoTabQueryEncoded(t *testing.T) {
 	encoded := hgDrpyPythonURLEncode(hgV5VideoTabQuery("123456", hgV5TestIdentity(), 1700000000456))
-	if !strings.HasPrefix(encoded, "aid=8662&app_name=novelread&version_code=74332") {
+	if !strings.HasPrefix(encoded, "aid=8662&app_name=novelread&version_code=74532") {
 		t.Fatalf("query 前缀不对: %s", encoded)
 	}
 	if !strings.HasSuffix(encoded, "&source=0&from_video_id=&_rticket=1700000000456") {

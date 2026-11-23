@@ -60,17 +60,25 @@ const hongguoPlaybackV5 = true
 
 // v5 固定协议常量（来自 N3urda V5Constants.kt，非用户凭据）。
 const (
-	hgV5License     = "646637794"
-	hgV5MagicHex    = "2d4b4fca49750d433fb5ae2c226dcc56"
-	hgV5SignKeyHex  = "b23c2a470a20d105dc3f8c4438f8272ed46d6c89ffdcdedd5108698d26e9489d"
-	hgV5VersionName = "7.4.3.32"
+	hgV5License    = "646637794"
+	hgV5MagicHex   = "2d4b4fca49750d433fb5ae2c226dcc56"
+	hgV5SignKeyHex = "b23c2a470a20d105dc3f8c4438f8272ed46d6c89ffdcdedd5108698d26e9489d"
+	// [+226] 2026-11-23 版本画像跟进：tsukiyo-zero/hongguoTV@ff4d1d205 实网对照，
+	// 三种 POST 形态全空后只有 GET video_tab 可用，而 GET 必须配 7.4.5.32/74532
+	// 参数（旧的 74332 画像被静默丢弃，返回空体）。version_code/name 两处都升到
+	// 74532/7.4.5.32；POST 仍沿用 73932 UA（与上游 MobilePlayback.model 一致），
+	// GET 单独用 74532 UA（与上游 getVideoTab 一致），故拆出两个 UA 常量。
+	hgV5VersionName = "7.4.5.32"
 	hgV5Channel     = "vivo_8662_64"
 	hgV5DeviceType  = "PGT-AN10"
 	hgV5OSVersion   = "12"
-	hgV5PlayUA      = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
+	// hgV5PlayUA 用于 gzip POST 播放模型（上游 11-23 仍用 73932 UA）。
+	hgV5PlayUA = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
+	// hgV5VideoTabUA 用于 bodyless GET video_tab（上游 11-23 实测可用画像）。
+	hgV5VideoTabUA  = "com.phoenix.read/74532 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
 	hgV5Aid         = "8662"
 	hgV5AppName     = "novelread"
-	hgV5VersionCode = "74332"
+	hgV5VersionCode = "74532"
 	hgV5Endpoint    = "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1"
 	// hgV5VideoTabEndpoint 是 11-20 加固后仍可出模型的 GET 门。
 	// 来自 jackotom@92df757ed / tsukiyo@dbe677e1c 的实网验证，域名在同项目白名单内。
@@ -698,9 +706,10 @@ const (
 // hgV5VideoTabQuery 构造 GET video_tab 的 query 参数（有序，签名对字节敏感）。
 //
 // 【参数出处】jackotom/hongguo-drama@92df757ed 的 videoTabRequest.values（实网出
-// 1080P HEVC 的版本）与 tsukiyo@dbe677e1c 的 tabVideoModel.extra 一致；两家差异
-// 只在版本画像（jackotom 74332 / tsukiyo 73932）。这里沿用本地 74332 画像，与
-// 本文件 POST 的 hgV5Query 完全相同，避免同一身份两套版本指纹。
+// 1080P HEVC 的版本）与 tsukiyo@dbe677e1c 的 tabVideoModel.extra 一致。
+// [+226] 2026-11-23：tsukiyo@ff4d1d205 实网测得旧 74332 画像被静默丢弃（空体），
+// 必须升到 74532/7.4.5.32 才有 22KB 响应；本地 query 与 POST 的 hgV5Query 共用
+// hgV5VersionCode/hgV5VersionName，一并升级，保持同一身份不出现两套版本指纹。
 // 【顺序】身份/画像字段在前、业务字段（video_id 等）居中、_rticket 收尾——
 // 与 jackotom 的 `{...values, _rticket}` 展开顺序逐字节一致。
 func hgV5VideoTabQuery(videoID string, identity hongguoAnonDevice, ticket int64) [][2]string {
@@ -736,7 +745,7 @@ func hgV5VideoTabSignedHeaders(fullURL string, ticket int64, ts uint32, who map[
 	nonce, started := hgDrpyLoadProcess()
 	headers := hgV5SignHeader(fullURL, nil, ts, nonce, started, who) // medusa 绑定空摘要
 	delete(headers, "x-ss-stub")                                     // bodyless 不发摘要头
-	headers["User-Agent"] = hgV5PlayUA
+	headers["User-Agent"] = hgV5VideoTabUA                           // [+226] GET 用 74532 UA，与 74532 版本画像自洽
 	headers["Accept"] = "application/json"
 	headers["x-ss-req-ticket"] = strconv.FormatInt(ticket, 10)
 	return headers
